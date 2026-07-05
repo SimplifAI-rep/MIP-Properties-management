@@ -38,7 +38,38 @@ SimplifAI/
 └── simplifai.db      # SQLite database (after import)
 ```
 
-## Quick Start — Web UI
+## Quick Start — One Command
+
+**Prerequisites:** Python 3.12+, Node.js 18+, git
+
+Clone the repo, then from the **project root**:
+
+```powershell
+# Windows
+.\start.ps1
+
+# macOS / Linux
+chmod +x start.sh
+./start.sh
+
+# Or directly with Python
+python scripts/start_dev.py
+```
+
+The script will:
+1. Create `backend/.venv` and install Python dependencies (first run)
+2. Run `npm install` in `frontend/` (first run)
+3. Seed the database and import sample deposits **if empty**
+4. Start the API on http://127.0.0.1:8000
+5. Start the web UI on http://localhost:5173
+
+Press **Ctrl+C** to stop both servers.
+
+> **Note:** If ports 8000/5173 are busy, the script automatically uses the next free port (e.g. 8002, 5174). Check the terminal output for the actual URLs.
+
+---
+
+## Quick Start — Manual Steps
 
 ### 1. Load sample data (first time only)
 
@@ -82,7 +113,32 @@ Open: **http://localhost:5173**
 | Dashboard | `/` | Total deposits, counts, March 2026 gap alert |
 | Properties | `/properties` | List properties, click row for detail panel |
 | Deposits | `/deposits` | Filter by property/owner/date, export CSV |
-| AI Query | `/ai` | Placeholder for Phase 4 |
+| AI Query | `/ai` | Ask natural-language questions about deposits |
+
+## Troubleshooting
+
+### Ports already in use / can't kill processes
+
+Old dev servers often run in **hidden Cursor or VS Code terminal tabs** — `netstat` shows PIDs that `Stop-Process` can't find because those terminals own the process.
+
+**Option 1 — Use the stop script:**
+```powershell
+.\stop.ps1
+```
+
+**Option 2 — Close terminal tabs in Cursor/VS Code** that are running `uvicorn` or `npm run dev` (look for old agent/background terminals).
+
+**Option 3 — Just run start anyway** — `.\start.ps1` now **automatically picks the next free port** if 8000 or 5173 are busy. Watch the output:
+```
+[start] Port 8000 is busy — using API port 8002
+  Web UI:  http://localhost:5173
+  API:     http://127.0.0.1:8002
+```
+Open the URLs printed in **your current terminal**, not an old bookmark.
+
+**Option 4 — Nuclear option (reboot)** clears ghost sockets if nothing else works.
+
+Always stop dev servers with **Ctrl+C** in the terminal where `.\start.ps1` is running.
 
 ## Utility Scripts
 

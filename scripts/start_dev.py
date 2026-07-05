@@ -88,7 +88,10 @@ def reexec_in_venv() -> None:
     if Path(sys.executable).resolve() == venv_python.resolve():
         return
     log(f"Switching to venv Python: {venv_python}")
-    os.execv(str(venv_python), [str(venv_python), str(Path(__file__).resolve()), *sys.argv[1:]])
+    script = str(Path(__file__).resolve())
+    args = [str(venv_python), script, *sys.argv[1:]]
+    # subprocess handles paths with spaces; os.execv does not on Windows.
+    sys.exit(subprocess.call(args))
 
 
 def ensure_backend_deps() -> None:
@@ -98,11 +101,17 @@ def ensure_backend_deps() -> None:
     run([str(py), "-m", "pip", "install", "-r", "requirements.txt"], cwd=BACKEND)
 
 
-def ensure_frontend_deps() -> None:
-    if not shutil.which("npm"):
+def npm_exe() -> str:
+    npm = shutil.which("npm")
+    if not npm:
         raise RuntimeError("npm not found. Install Node.js 18+ and try again.")
+    return npm
+
+
+def ensure_frontend_deps() -> None:
+    npm = npm_exe()
     if not (FRONTEND / "node_modules").exists():
-        run(["npm", "install"], cwd=FRONTEND)
+        run([npm, "install"], cwd=FRONTEND)
     env_file = FRONTEND / ".env"
     env_example = FRONTEND / ".env.example"
     if not env_file.exists() and env_example.exists():
@@ -220,7 +229,7 @@ def start_backend() -> subprocess.Popen:
 
 
 def start_frontend() -> subprocess.Popen:
-    npm = "npm.cmd" if platform.system() == "Windows" else "npm"
+    npm = npm_exe()
     env = os.environ.copy()
     env["VITE_API_BASE_URL"] = f"http://127.0.0.1:{API_PORT}/api/v1"
     log(f"Starting frontend on http://localhost:{UI_PORT}")

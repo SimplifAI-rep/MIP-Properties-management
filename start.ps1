@@ -1,19 +1,20 @@
 # One-command startup for SimplifAI (Windows PowerShell)
 Set-Location $PSScriptRoot
 
+$startScript = Join-Path $PSScriptRoot "scripts\start_dev.py"
 $venvPython = Join-Path $PSScriptRoot "backend\.venv\Scripts\python.exe"
 if (Test-Path $venvPython) {
-    & $venvPython scripts/start_dev.py @args
+    & $venvPython $startScript @args
     exit $LASTEXITCODE
 }
 
 if (Get-Command py -ErrorAction SilentlyContinue) {
-    & py -3.14 scripts/start_dev.py @args
+    & py -3.14 $startScript @args
     exit $LASTEXITCODE
 }
 
 if (Get-Command python -ErrorAction SilentlyContinue) {
-    & python scripts/start_dev.py @args
+    & python $startScript @args
     exit $LASTEXITCODE
 }
 

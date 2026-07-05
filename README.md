@@ -2,14 +2,14 @@
 
 A property asset management platform for tracking income, expenses, documents, and financial analysis on behalf of property owners.
 
-**Current status:** MVP web UI running — view deposits, properties, and gap detection via browser.
+**Current status:** MVP web UI + AI query layer — view deposits, ask natural-language questions.
 
 ## MVP Scope (Phase 1)
 
 - **Bank deposits** — import simulated deposit data from Excel, view and filter by property/owner/date
 - **Gap detection** — compare expected vs actual owner deposits per property
-- **Web UI** — Dashboard, Properties, Deposits pages
-- **AI querying** — planned for Phase 4 (placeholder page in UI)
+- **Web UI** — Dashboard, Properties, Deposits, AI Query pages
+- **AI querying** — natural-language deposit questions (rule-based parser; optional OpenAI via `LLM_API_KEY`)
 
 **Not yet implemented:** expenses, credit cards, document ingestion, alerts, trend analysis, multi-tenant auth.
 
@@ -107,6 +107,16 @@ cd backend
 | GET | `/api/v1/deposits/summary` | Dashboard summary |
 | GET | `/api/v1/deposits/gaps` | Missing expected deposits |
 | POST | `/api/v1/imports/deposits` | Upload Excel file |
+| POST | `/api/v1/ai/query` | Natural-language deposit query |
+
+### AI Query examples
+
+```json
+POST /api/v1/ai/query
+{ "question": "Show all deposits for Rothschild 12 in Q1 2026" }
+```
+
+Works without an API key (rule-based parser). Set `LLM_API_KEY` in `.env` for OpenAI-powered parsing.
 
 ## Environment
 

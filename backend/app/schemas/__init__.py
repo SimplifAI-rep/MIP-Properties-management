@@ -97,3 +97,37 @@ class ImportResultRead(BaseModel):
 class HealthResponse(BaseModel):
     status: str
     timestamp: datetime
+
+
+class PeriodRange(BaseModel):
+    date_from: date | None = None
+    date_to: date | None = None
+
+
+class DepositQueryIntent(BaseModel):
+    query_type: str
+    property_id: UUID | None = None
+    property_name: str | None = None
+    owner_id: UUID | None = None
+    owner_name: str | None = None
+    date_from: date | None = None
+    date_to: date | None = None
+    period_a: PeriodRange | None = None
+    period_b: PeriodRange | None = None
+    group_by: str | None = None
+    year: int | None = None
+    month: int | None = None
+    min_amount: Decimal | None = None
+    max_amount: Decimal | None = None
+
+
+class AIQueryRequest(BaseModel):
+    question: str = Field(min_length=1, max_length=500)
+
+
+class AIQueryResponse(BaseModel):
+    answer: str
+    data: list[dict]
+    query_used: DepositQueryIntent
+    parser: str = "rules"
+

@@ -23,6 +23,8 @@ DEPOSITS = [
     (ACCOUNT_DIZENGOFF, "2026-02-05", 6200.00, "ILS", "DEP-2026-007", "Owner deposit - February"),
     (ACCOUNT_DIZENGOFF, "2026-01-20", 500.00, "ILS", "DEP-2026-008", "Utility adjustment refund"),
     (ACCOUNT_DIZENGOFF, "2026-04-05", 6200.00, "ILS", "DEP-2026-009", "Owner deposit - April"),
+    # NEW: March deposit added — fills the previous gap
+    (ACCOUNT_DIZENGOFF, "2026-03-05", 6200.00, "ILS", "DEP-2026-016", "Owner deposit - March"),
     # Herzl 8 — monthly deposits on the 10th
     (ACCOUNT_HERZL, "2026-01-10", 4800.00, "ILS", "DEP-2026-010", "Owner deposit - January"),
     (ACCOUNT_HERZL, "2026-02-10", 4800.00, "ILS", "DEP-2026-011", "Owner deposit - February"),
@@ -30,6 +32,8 @@ DEPOSITS = [
     (ACCOUNT_HERZL, "2026-03-25", 300.00, "ILS", "DEP-2026-013", "Insurance refund"),
     (ACCOUNT_HERZL, "2026-04-10", 4800.00, "ILS", "DEP-2026-014", "Owner deposit - April"),
     (ACCOUNT_HERZL, "2026-05-10", 4800.00, "ILS", "DEP-2026-015", "Owner deposit - May"),
+    # NEW: extra deposit for Rothschild
+    (ACCOUNT_ROTHSCHILD, "2026-06-05", 8500.00, "ILS", "DEP-2026-017", "Owner deposit - June"),
 ]
 
 OUTPUT_PATH = Path(__file__).resolve().parents[1] / "data" / "seed" / "bank_deposits.xlsx"

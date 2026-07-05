@@ -69,6 +69,26 @@ export interface DepositGap {
   status: string;
 }
 
+export interface DepositQueryIntent {
+  query_type: string;
+  property_id: string | null;
+  property_name: string | null;
+  owner_id: string | null;
+  owner_name: string | null;
+  date_from: string | null;
+  date_to: string | null;
+  group_by: string | null;
+  year: number | null;
+  month: number | null;
+}
+
+export interface AIQueryResponse {
+  answer: string;
+  data: Record<string, unknown>[];
+  query_used: DepositQueryIntent;
+  parser: string;
+}
+
 export interface DepositFilters {
   property_id?: string;
   owner_id?: string;

@@ -20,6 +20,11 @@ class Settings(BaseSettings):
     import_amount_tolerance: float = 0.0
     default_currency: str = "ILS"
 
+    llm_provider: str = "openai"
+    llm_api_key: str = ""
+    llm_model: str = "gpt-4o-mini"
+    llm_base_url: str = "https://api.openai.com/v1"
+
 
 @lru_cache
 def get_settings() -> Settings:

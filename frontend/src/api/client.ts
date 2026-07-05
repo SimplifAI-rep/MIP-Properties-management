@@ -53,4 +53,10 @@ export const api = {
     request<DepositGap[]>(
       `/deposits/gaps${toQuery({ year, month })}`,
     ),
+  postAIQuery: (question: string) =>
+    request<import('../types').AIQueryResponse>('/ai/query', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question }),
+    }),
 };

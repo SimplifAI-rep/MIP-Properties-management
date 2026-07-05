@@ -1,0 +1,56 @@
+import type {
+  DepositFilters,
+  DepositGap,
+  DepositListResponse,
+  DepositSummary,
+  Owner,
+  Property,
+  PropertyDetail,
+} from '../types';
+
+const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000/api/v1';
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(`${API_BASE}${path}`, init);
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || `Request failed: ${response.status}`);
+  }
+  return response.json() as Promise<T>;
+}
+
+function toQuery(params: Record<string, string | number | undefined>): string {
+  const search = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== undefined && value !== '') {
+      search.set(key, String(value));
+    }
+  });
+  const query = search.toString();
+  return query ? `?${query}` : '';
+}
+
+export const api = {
+  getHealth: () => request<{ status: string }>('/health'),
+  getOwners: () => request<Owner[]>('/owners'),
+  getProperties: () => request<Property[]>('/properties'),
+  getProperty: (id: string) => request<PropertyDetail>(`/properties/${id}`),
+  getDeposits: (filters: DepositFilters = {}) =>
+    request<DepositListResponse>(
+      `/deposits${toQuery({
+        property_id: filters.property_id,
+        owner_id: filters.owner_id,
+        date_from: filters.date_from,
+        date_to: filters.date_to,
+        min_amount: filters.min_amount,
+        max_amount: filters.max_amount,
+        page: filters.page,
+        page_size: filters.page_size,
+      })}`,
+    ),
+  getDepositSummary: () => request<DepositSummary>('/deposits/summary'),
+  getDepositGaps: (year?: number, month?: number) =>
+    request<DepositGap[]>(
+      `/deposits/gaps${toQuery({ year, month })}`,
+    ),
+};

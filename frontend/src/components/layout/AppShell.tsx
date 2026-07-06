@@ -4,6 +4,7 @@ const navItems = [
   { to: '/', label: 'Dashboard', end: true },
   { to: '/properties', label: 'Properties' },
   { to: '/deposits', label: 'Deposits' },
+  { to: '/expenses', label: 'Expenses' },
   { to: '/ai', label: 'AI Query' },
 ];
 

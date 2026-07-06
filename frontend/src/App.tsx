@@ -4,6 +4,7 @@ import { AppShell } from './components/layout/AppShell';
 import { AIQueryPage } from './pages/AIQueryPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { DepositsPage } from './pages/DepositsPage';
+import { ExpensesPage } from './pages/ExpensesPage';
 import { PropertiesPage } from './pages/PropertiesPage';
 
 const queryClient = new QueryClient({
@@ -24,6 +25,7 @@ export default function App() {
             <Route index element={<DashboardPage />} />
             <Route path="properties" element={<PropertiesPage />} />
             <Route path="deposits" element={<DepositsPage />} />
+            <Route path="expenses" element={<ExpensesPage />} />
             <Route path="ai" element={<AIQueryPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>

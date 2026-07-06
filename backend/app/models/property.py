@@ -28,3 +28,4 @@ class Property(Base, TimestampMixin):
         back_populates="property"
     )
     deposits: Mapped[list["Deposit"]] = relationship(back_populates="property")
+    expenses: Mapped[list["Expense"]] = relationship(back_populates="property")

@@ -99,3 +99,64 @@ export interface DepositFilters {
   page?: number;
   page_size?: number;
 }
+
+export interface Expense {
+  id: string;
+  property_id: string;
+  property_name: string;
+  owner_name: string;
+  transaction_date: string;
+  amount: string;
+  currency: string;
+  category: string;
+  source: string;
+  payment_method: string;
+  vendor_name: string | null;
+  reference: string | null;
+  description: string | null;
+}
+
+export interface ExpenseListResponse {
+  items: Expense[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export interface ExpenseCategoryTotal {
+  category: string;
+  total_amount: string;
+  expense_count: number;
+}
+
+export interface ExpenseSummary {
+  total_amount: string;
+  expense_count: number;
+  property_count: number;
+  by_category: ExpenseCategoryTotal[];
+}
+
+export interface ExpenseFilters {
+  property_id?: string;
+  owner_id?: string;
+  category?: string;
+  source?: string;
+  payment_method?: string;
+  date_from?: string;
+  date_to?: string;
+  page?: number;
+  page_size?: number;
+}
+
+export interface ExpenseCreate {
+  property_id: string;
+  transaction_date: string;
+  amount: string;
+  currency?: string;
+  category: string;
+  source: string;
+  payment_method: string;
+  vendor_name?: string;
+  reference?: string;
+  description?: string;
+}

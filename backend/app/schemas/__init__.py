@@ -131,3 +131,54 @@ class AIQueryResponse(BaseModel):
     query_used: DepositQueryIntent
     parser: str = "rules"
 
+
+class ExpenseRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    property_id: UUID
+    property_name: str
+    owner_name: str
+    transaction_date: date
+    amount: Decimal
+    currency: str
+    category: str
+    source: str
+    payment_method: str
+    vendor_name: str | None = None
+    reference: str | None = None
+    description: str | None = None
+
+
+class ExpenseCreate(BaseModel):
+    property_id: UUID
+    transaction_date: date
+    amount: Decimal = Field(gt=0)
+    currency: str = "ILS"
+    category: str
+    source: str
+    payment_method: str
+    vendor_name: str | None = None
+    reference: str | None = None
+    description: str | None = None
+
+
+class ExpenseListResponse(BaseModel):
+    items: list[ExpenseRead]
+    total: int
+    page: int
+    page_size: int
+
+
+class ExpenseCategoryTotal(BaseModel):
+    category: str
+    total_amount: Decimal
+    expense_count: int
+
+
+class ExpenseSummary(BaseModel):
+    total_amount: Decimal
+    expense_count: int
+    property_count: int
+    by_category: list[ExpenseCategoryTotal] = Field(default_factory=list)
+

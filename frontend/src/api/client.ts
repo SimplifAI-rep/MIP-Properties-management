@@ -3,6 +3,10 @@ import type {
   DepositGap,
   DepositListResponse,
   DepositSummary,
+  ExpenseCreate,
+  ExpenseFilters,
+  ExpenseListResponse,
+  ExpenseSummary,
   Owner,
   Property,
   PropertyDetail,
@@ -58,5 +62,26 @@ export const api = {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ question }),
+    }),
+  getExpenses: (filters: ExpenseFilters = {}) =>
+    request<ExpenseListResponse>(
+      `/expenses${toQuery({
+        property_id: filters.property_id,
+        owner_id: filters.owner_id,
+        category: filters.category,
+        source: filters.source,
+        payment_method: filters.payment_method,
+        date_from: filters.date_from,
+        date_to: filters.date_to,
+        page: filters.page,
+        page_size: filters.page_size,
+      })}`,
+    ),
+  getExpenseSummary: () => request<ExpenseSummary>('/expenses/summary'),
+  createExpense: (payload: ExpenseCreate) =>
+    request<import('../types').Expense>('/expenses', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
     }),
 };

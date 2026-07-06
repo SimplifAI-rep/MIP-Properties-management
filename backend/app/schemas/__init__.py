@@ -106,6 +106,7 @@ class PeriodRange(BaseModel):
 
 class DepositQueryIntent(BaseModel):
     query_type: str
+    domain: str = "deposits"
     property_id: UUID | None = None
     property_name: str | None = None
     owner_id: UUID | None = None
@@ -119,6 +120,10 @@ class DepositQueryIntent(BaseModel):
     month: int | None = None
     min_amount: Decimal | None = None
     max_amount: Decimal | None = None
+    category: str | None = None
+    source: str | None = None
+    payment_method: str | None = None
+    search_text: str | None = None
 
 
 class AIQueryRequest(BaseModel):

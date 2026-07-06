@@ -3,7 +3,7 @@ from decimal import Decimal
 from uuid import UUID
 
 from fastapi import HTTPException
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.models.expense import (
@@ -70,6 +70,7 @@ def list_expenses(
     category: str | None = None,
     source: str | None = None,
     payment_method: str | None = None,
+    search_text: str | None = None,
     date_from: date | None = None,
     date_to: date | None = None,
     min_amount: Decimal | None = None,
@@ -97,6 +98,14 @@ def list_expenses(
         stmt = stmt.where(Expense.source == source)
     if payment_method:
         stmt = stmt.where(Expense.payment_method == payment_method)
+    if search_text:
+        pattern = f"%{search_text}%"
+        stmt = stmt.where(
+            or_(
+                Expense.description.ilike(pattern),
+                Expense.vendor_name.ilike(pattern),
+            )
+        )
     if date_from:
         stmt = stmt.where(Expense.transaction_date >= date_from)
     if date_to:

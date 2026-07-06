@@ -8,8 +8,9 @@ const EXAMPLE_PROMPTS = [
   'Show all deposits for Rothschild 12 in Q1 2026',
   'Which properties had no deposit in March 2026?',
   'Total deposits per owner this year',
-  'Compare deposits January vs February for Rothschild 12',
-  'How many deposits were made in 2026?',
+  'What were the electricity expenses in January 2026?',
+  'Total expenses per property this year',
+  'How many expenses were recorded in 2026?',
 ];
 
 function renderCell(value: unknown): string {
@@ -78,8 +79,8 @@ export function AIQueryPage() {
       <div>
         <h2 className="text-2xl font-bold text-slate-900">AI Query</h2>
         <p className="mt-1 text-sm text-slate-500">
-          Ask natural-language questions about deposits. Uses rule-based parsing by default; set
-          LLM_API_KEY for OpenAI-powered parsing.
+          Ask natural-language questions about deposits and expenses. Uses rule-based parsing by
+          default; set LLM_API_KEY for OpenAI-powered parsing.
         </p>
       </div>
 
@@ -111,7 +112,7 @@ export function AIQueryPage() {
             type="text"
             value={question}
             onChange={(event) => setQuestion(event.target.value)}
-            placeholder="Ask about deposits, e.g. Show deposits for Dizengoff 45 in April 2026"
+            placeholder="Ask about deposits or expenses, e.g. Total utilities expenses in 2026"
             className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm"
           />
           <button
@@ -142,7 +143,8 @@ export function AIQueryPage() {
             <h3 className="font-semibold text-slate-900">Answer</h3>
             <p className="mt-2 text-sm text-slate-700">{result.answer}</p>
             <p className="mt-2 text-xs text-slate-500">
-              Query type: {result.query_used.query_type} · Parser: {result.parser}
+              Domain: {result.query_used.domain ?? 'deposits'} · Query type:{' '}
+              {result.query_used.query_type} · Parser: {result.parser}
             </p>
           </div>
           <div>

@@ -71,6 +71,7 @@ export interface DepositGap {
 
 export interface DepositQueryIntent {
   query_type: string;
+  domain?: string;
   property_id: string | null;
   property_name: string | null;
   owner_id: string | null;
@@ -80,6 +81,8 @@ export interface DepositQueryIntent {
   group_by: string | null;
   year: number | null;
   month: number | null;
+  category?: string | null;
+  source?: string | null;
 }
 
 export interface AIQueryResponse {

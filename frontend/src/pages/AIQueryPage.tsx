@@ -3,6 +3,7 @@ import { useMutation } from '@tanstack/react-query';
 import { api } from '../api/client';
 import type { AIQueryResponse } from '../types';
 import { ErrorState, formatCurrency, formatDate, LoadingState } from '../components/ui/States';
+import { downloadAIQueryExcel } from '../utils/exportExcel';
 
 const EXAMPLE_PROMPTS = [
   'Show all deposits for Rothschild 12 in Q1 2026',
@@ -148,7 +149,16 @@ export function AIQueryPage() {
             </p>
           </div>
           <div>
-            <h3 className="mb-2 font-semibold text-slate-900">Data</h3>
+            <div className="mb-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <h3 className="font-semibold text-slate-900">Data</h3>
+              <button
+                type="button"
+                onClick={() => downloadAIQueryExcel(result, question)}
+                className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+              >
+                Export to Excel
+              </button>
+            </div>
             <QueryResultTable data={result.data} />
           </div>
         </section>

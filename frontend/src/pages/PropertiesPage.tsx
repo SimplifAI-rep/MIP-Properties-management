@@ -34,17 +34,15 @@ export function PropertiesPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-2xl font-bold text-slate-900">Properties</h2>
-        <p className="mt-1 text-sm text-slate-500">
-          View properties, linked bank accounts, and recent deposits.
-        </p>
+        <h2 className="page-heading">Properties</h2>
+        <p className="page-desc">View properties, linked bank accounts, and recent deposits.</p>
       </div>
 
       <div className="grid gap-6 xl:grid-cols-[2fr_1fr]">
-        <section className="rounded-xl border border-slate-200 bg-white shadow-sm">
+        <section className="panel">
           <div className="overflow-x-auto">
-            <table className="min-w-full text-sm">
-              <thead className="bg-slate-50 text-left text-slate-500">
+            <table className="table-shell">
+              <thead className="table-head">
                 <tr>
                   <th className="px-5 py-3 font-medium">Property</th>
                   <th className="px-5 py-3 font-medium">Owner</th>
@@ -58,8 +56,8 @@ export function PropertiesPage() {
                   <tr
                     key={property.id}
                     onClick={() => setSelectedId(property.id)}
-                    className={`cursor-pointer border-t border-slate-100 hover:bg-slate-50 ${
-                      selectedId === property.id ? 'bg-slate-50' : ''
+                    className={`table-row-interactive ${
+                      selectedId === property.id ? 'table-row-selected' : ''
                     }`}
                   >
                     <td className="px-5 py-3 font-medium">{property.name}</td>
@@ -79,9 +77,9 @@ export function PropertiesPage() {
           ) : null}
         </section>
 
-        <aside className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+        <aside className="panel-padded">
           {!selectedId ? (
-            <p className="text-sm text-slate-500">Select a property to view details.</p>
+            <p className="muted-text">Select a property to view details.</p>
           ) : detailQuery.isLoading ? (
             <LoadingState label="Loading property..." />
           ) : detailQuery.isError || !detailQuery.data ? (
@@ -89,15 +87,15 @@ export function PropertiesPage() {
           ) : (
             <div className="space-y-4">
               <div>
-                <h3 className="text-lg font-semibold text-slate-900">{detailQuery.data.name}</h3>
-                <p className="text-sm text-slate-500">{detailQuery.data.address}</p>
+                <h3 className="detail-title">{detailQuery.data.name}</h3>
+                <p className="muted-text">{detailQuery.data.address}</p>
               </div>
               <Card title="Owner" value={detailQuery.data.owner.name} />
               <div>
-                <h4 className="text-sm font-semibold text-slate-700">Bank Accounts</h4>
-                <ul className="mt-2 space-y-2 text-sm text-slate-600">
+                <h4 className="subheading">Bank Accounts</h4>
+                <ul className="mt-2 space-y-2 text-sm text-slate-600 dark:text-slate-300">
                   {detailQuery.data.bank_accounts.map((account) => (
-                    <li key={account.id} className="rounded-lg bg-slate-50 px-3 py-2">
+                    <li key={account.id} className="list-item-muted">
                       <p className="font-medium">{account.bank_name}</p>
                       <p>{account.account_number}</p>
                     </li>
@@ -105,12 +103,12 @@ export function PropertiesPage() {
                 </ul>
               </div>
               <div>
-                <h4 className="text-sm font-semibold text-slate-700">Recent Deposits</h4>
+                <h4 className="subheading">Recent Deposits</h4>
                 <ul className="mt-2 space-y-2 text-sm">
                   {detailQuery.data.recent_deposits.map((deposit) => (
-                    <li key={deposit.id} className="rounded-lg border border-slate-100 px-3 py-2">
+                    <li key={deposit.id} className="list-item">
                       <p className="font-medium">{formatCurrency(deposit.amount)}</p>
-                      <p className="text-slate-500">
+                      <p className="muted-text">
                         {formatDate(deposit.transaction_date)} · {deposit.description}
                       </p>
                     </li>

@@ -33,17 +33,17 @@ export function OwnersPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-2xl font-bold text-slate-900">Property Owners</h2>
-        <p className="mt-1 text-sm text-slate-500">
+        <h2 className="page-heading">Property Owners</h2>
+        <p className="page-desc">
           View owners, their properties, and aggregated deposit and expense totals.
         </p>
       </div>
 
       <div className="grid gap-6 xl:grid-cols-[2fr_1fr]">
-        <section className="rounded-xl border border-slate-200 bg-white shadow-sm">
+        <section className="panel">
           <div className="overflow-x-auto">
-            <table className="min-w-full text-sm">
-              <thead className="bg-slate-50 text-left text-slate-500">
+            <table className="table-shell">
+              <thead className="table-head">
                 <tr>
                   <th className="px-5 py-3 font-medium">Owner</th>
                   <th className="px-5 py-3 font-medium">Properties</th>
@@ -60,27 +60,27 @@ export function OwnersPage() {
                     <tr
                       key={owner.id}
                       onClick={() => setSelectedId(owner.id)}
-                      className={`cursor-pointer border-t border-slate-100 hover:bg-slate-50 ${
-                        selectedId === owner.id ? 'bg-slate-50' : ''
+                      className={`table-row-interactive ${
+                        selectedId === owner.id ? 'table-row-selected' : ''
                       }`}
                     >
                       <td className="px-5 py-3 font-medium">{owner.name}</td>
                       <td className="px-5 py-3">{owner.property_count}</td>
                       <td className="px-5 py-3">
                         {formatCurrency(owner.total_deposits)}
-                        <span className="ml-1 text-xs text-slate-400">
+                        <span className="ml-1 text-xs text-slate-400 dark:text-slate-500">
                           ({owner.deposit_count})
                         </span>
                       </td>
                       <td className="px-5 py-3">
                         {formatCurrency(owner.total_expenses)}
-                        <span className="ml-1 text-xs text-slate-400">
+                        <span className="ml-1 text-xs text-slate-400 dark:text-slate-500">
                           ({owner.expense_count})
                         </span>
                       </td>
                       <td
                         className={`px-5 py-3 font-medium ${
-                          net >= 0 ? 'text-emerald-700' : 'text-red-600'
+                          net >= 0 ? 'text-positive' : 'text-negative'
                         }`}
                       >
                         {formatCurrency(net)}
@@ -98,9 +98,9 @@ export function OwnersPage() {
           ) : null}
         </section>
 
-        <aside className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+        <aside className="panel-padded">
           {!selectedId ? (
-            <p className="text-sm text-slate-500">Select an owner to view details.</p>
+            <p className="muted-text">Select an owner to view details.</p>
           ) : detailQuery.isLoading ? (
             <LoadingState label="Loading owner..." />
           ) : detailQuery.isError || !detailQuery.data ? (
@@ -108,12 +108,12 @@ export function OwnersPage() {
           ) : (
             <div className="space-y-4">
               <div>
-                <h3 className="text-lg font-semibold text-slate-900">{detailQuery.data.name}</h3>
+                <h3 className="detail-title">{detailQuery.data.name}</h3>
                 {detailQuery.data.contact_email ? (
-                  <p className="text-sm text-slate-500">{detailQuery.data.contact_email}</p>
+                  <p className="muted-text">{detailQuery.data.contact_email}</p>
                 ) : null}
                 {detailQuery.data.contact_phone ? (
-                  <p className="text-sm text-slate-500">{detailQuery.data.contact_phone}</p>
+                  <p className="muted-text">{detailQuery.data.contact_phone}</p>
                 ) : null}
               </div>
 
@@ -139,18 +139,17 @@ export function OwnersPage() {
               </div>
 
               <div>
-                <h4 className="text-sm font-semibold text-slate-700">Properties</h4>
+                <h4 className="subheading">Properties</h4>
                 <ul className="mt-2 space-y-2 text-sm">
                   {detailQuery.data.properties.map((property) => (
-                    <li
-                      key={property.id}
-                      className="rounded-lg border border-slate-100 px-3 py-2"
-                    >
-                      <p className="font-medium text-slate-900">{property.name}</p>
+                    <li key={property.id} className="list-item">
+                      <p className="font-medium text-slate-900 dark:text-slate-100">
+                        {property.name}
+                      </p>
                       {property.address ? (
-                        <p className="text-slate-500">{property.address}</p>
+                        <p className="muted-text">{property.address}</p>
                       ) : null}
-                      <p className="mt-1 text-slate-600">
+                      <p className="mt-1 text-slate-600 dark:text-slate-300">
                         Deposits: {formatCurrency(property.total_deposits)} ({property.deposit_count})
                         · Expenses: {formatCurrency(property.total_expenses)} ({property.expense_count})
                       </p>

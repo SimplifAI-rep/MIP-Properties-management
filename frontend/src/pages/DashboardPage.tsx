@@ -24,10 +24,8 @@ export function DashboardPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-2xl font-bold text-slate-900">Dashboard</h2>
-        <p className="mt-1 text-sm text-slate-500">
-          Overview of property deposits and expected income gaps.
-        </p>
+        <h2 className="page-heading">Dashboard</h2>
+        <p className="page-desc">Overview of property deposits and expected income gaps.</p>
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -45,10 +43,10 @@ export function DashboardPage() {
         />
       </div>
 
-      <section className="rounded-xl border border-slate-200 bg-white shadow-sm">
-        <div className="border-b border-slate-200 px-5 py-4">
-          <h3 className="font-semibold text-slate-900">Missing Expected Deposits — March 2026</h3>
-          <p className="text-sm text-slate-500">
+      <section className="panel">
+        <div className="section-header">
+          <h3 className="section-title">Missing Expected Deposits — March 2026</h3>
+          <p className="section-subtitle">
             Properties where the expected monthly deposit was not received.
           </p>
         </div>
@@ -58,8 +56,8 @@ export function DashboardPage() {
           </div>
         ) : gapsQuery.data && gapsQuery.data.length > 0 ? (
           <div className="overflow-x-auto">
-            <table className="min-w-full text-sm">
-              <thead className="bg-slate-50 text-left text-slate-500">
+            <table className="table-shell">
+              <thead className="table-head">
                 <tr>
                   <th className="px-5 py-3 font-medium">Property</th>
                   <th className="px-5 py-3 font-medium">Owner</th>
@@ -70,15 +68,13 @@ export function DashboardPage() {
               </thead>
               <tbody>
                 {gapsQuery.data.map((gap) => (
-                  <tr key={gap.property_id} className="border-t border-slate-100">
+                  <tr key={gap.property_id} className="table-row">
                     <td className="px-5 py-3 font-medium">{gap.property_name}</td>
                     <td className="px-5 py-3">{gap.owner_name}</td>
                     <td className="px-5 py-3">{formatCurrency(gap.expected_amount)}</td>
                     <td className="px-5 py-3">{gap.due_day}</td>
                     <td className="px-5 py-3">
-                      <span className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-800">
-                        {gap.status}
-                      </span>
+                      <span className="badge-warning">{gap.status}</span>
                     </td>
                   </tr>
                 ))}
@@ -86,7 +82,7 @@ export function DashboardPage() {
             </table>
           </div>
         ) : (
-          <div className="p-5 text-sm text-slate-500">No missing deposits for March 2026.</div>
+          <div className="p-5 muted-text">No missing deposits for March 2026.</div>
         )}
       </section>
     </div>

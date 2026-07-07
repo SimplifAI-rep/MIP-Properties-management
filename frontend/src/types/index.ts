@@ -186,3 +186,50 @@ export interface ExpenseCreate {
   reference?: string;
   description?: string;
 }
+
+export interface FieldWarning {
+  field: string;
+  message: string;
+  severity: 'error' | 'warning';
+}
+
+export interface TransactionDraft {
+  row_number?: number | null;
+  transaction_type: 'deposit' | 'expense';
+  property_id?: string | null;
+  bank_account_id?: string | null;
+  account_number?: string | null;
+  transaction_date?: string | null;
+  amount?: string | null;
+  currency?: string;
+  category?: string | null;
+  source?: string | null;
+  payment_method?: string | null;
+  vendor_name?: string | null;
+  reference?: string | null;
+  description?: string | null;
+  status: 'ready' | 'needs_review' | 'error';
+  warnings: FieldWarning[];
+}
+
+export interface UploadAnalyzeResponse {
+  upload_id: string;
+  filename: string;
+  property_id: string;
+  owner_id: string;
+  transaction_type: 'deposit' | 'expense';
+  parser: string;
+  message?: string | null;
+  drafts: TransactionDraft[];
+  ready_count: number;
+  needs_review_count: number;
+  error_count: number;
+}
+
+export interface UploadConfirmResponse {
+  upload_id: string;
+  imported_deposit_count: number;
+  imported_expense_count: number;
+  skipped_count: number;
+  errors: string[];
+}

@@ -1,5 +1,6 @@
 from datetime import date, datetime
 from decimal import Decimal
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -211,4 +212,55 @@ class ExpenseSummary(BaseModel):
     expense_count: int
     property_count: int
     by_category: list[ExpenseCategoryTotal] = Field(default_factory=list)
+
+
+class FieldWarning(BaseModel):
+    field: str
+    message: str
+    severity: Literal["error", "warning"] = "warning"
+
+
+class TransactionDraft(BaseModel):
+    row_number: int | None = None
+    transaction_type: Literal["deposit", "expense"]
+    property_id: UUID | None = None
+    bank_account_id: UUID | None = None
+    account_number: str | None = None
+    transaction_date: date | None = None
+    amount: Decimal | None = None
+    currency: str = "ILS"
+    category: str | None = None
+    source: str | None = None
+    payment_method: str | None = None
+    vendor_name: str | None = None
+    reference: str | None = None
+    description: str | None = None
+    status: Literal["ready", "needs_review", "error"] = "needs_review"
+    warnings: list[FieldWarning] = Field(default_factory=list)
+
+
+class UploadAnalyzeResponse(BaseModel):
+    upload_id: UUID
+    filename: str
+    property_id: UUID
+    owner_id: UUID
+    transaction_type: Literal["deposit", "expense"]
+    parser: str
+    message: str | None = None
+    drafts: list[TransactionDraft]
+    ready_count: int = 0
+    needs_review_count: int = 0
+    error_count: int = 0
+
+
+class UploadConfirmRequest(BaseModel):
+    drafts: list[TransactionDraft]
+
+
+class UploadConfirmResponse(BaseModel):
+    upload_id: UUID
+    imported_deposit_count: int
+    imported_expense_count: int
+    skipped_count: int
+    errors: list[str] = Field(default_factory=list)
 

@@ -10,6 +10,7 @@ import {
   formatDate,
   LoadingState,
 } from '../components/ui/States';
+import { TransactionUploadPanel } from '../components/TransactionUploadPanel';
 
 type TransactionKind = 'deposit' | 'expense';
 type TypeFilter = 'all' | TransactionKind;
@@ -131,6 +132,7 @@ export function TransactionsPage() {
   const [category, setCategory] = useState<string | undefined>();
   const [source, setSource] = useState<string | undefined>();
   const [showForm, setShowForm] = useState(false);
+  const [showUpload, setShowUpload] = useState(false);
   const [form, setForm] = useState<ExpenseCreate>(emptyForm);
   const [formError, setFormError] = useState<string | null>(null);
 
@@ -259,7 +261,20 @@ export function TransactionsPage() {
         <div className="flex flex-wrap gap-2">
           <button
             type="button"
-            onClick={() => setShowForm((current) => !current)}
+            onClick={() => {
+              setShowUpload((current) => !current);
+              if (!showUpload) setShowForm(false);
+            }}
+            className="btn-secondary"
+          >
+            {showUpload ? 'Cancel upload' : 'Import from file'}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setShowForm((current) => !current);
+              if (!showForm) setShowUpload(false);
+            }}
             className="btn-primary"
           >
             {showForm ? 'Cancel' : 'Add expense'}
@@ -318,6 +333,13 @@ export function TransactionsPage() {
           </button>
         ))}
       </div>
+
+      {showUpload ? (
+        <TransactionUploadPanel
+          properties={propertiesQuery.data ?? []}
+          onClose={() => setShowUpload(false)}
+        />
+      ) : null}
 
       {showForm ? (
         <section className="panel p-4">

@@ -5,6 +5,7 @@ import { AIQueryPage } from './pages/AIQueryPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { DepositsPage } from './pages/DepositsPage';
 import { ExpensesPage } from './pages/ExpensesPage';
+import { OwnersPage } from './pages/OwnersPage';
 import { PropertiesPage } from './pages/PropertiesPage';
 
 const queryClient = new QueryClient({
@@ -24,6 +25,7 @@ export default function App() {
           <Route element={<AppShell />}>
             <Route index element={<DashboardPage />} />
             <Route path="properties" element={<PropertiesPage />} />
+            <Route path="owners" element={<OwnersPage />} />
             <Route path="deposits" element={<DepositsPage />} />
             <Route path="expenses" element={<ExpensesPage />} />
             <Route path="ai" element={<AIQueryPage />} />

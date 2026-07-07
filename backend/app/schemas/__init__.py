@@ -14,6 +14,31 @@ class OwnerRead(BaseModel):
     contact_phone: str | None = None
 
 
+class OwnerSummary(OwnerRead):
+    property_count: int = 0
+    deposit_count: int = 0
+    total_deposits: Decimal = Decimal("0")
+    expense_count: int = 0
+    total_expenses: Decimal = Decimal("0")
+
+
+class OwnerPropertySummary(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    name: str
+    address: str | None = None
+    status: str
+    deposit_count: int = 0
+    total_deposits: Decimal = Decimal("0")
+    expense_count: int = 0
+    total_expenses: Decimal = Decimal("0")
+
+
+class OwnerDetail(OwnerSummary):
+    properties: list[OwnerPropertySummary] = Field(default_factory=list)
+
+
 class BankAccountRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

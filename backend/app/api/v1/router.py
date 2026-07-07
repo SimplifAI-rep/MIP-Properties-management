@@ -1,9 +1,10 @@
 from fastapi import APIRouter
 
-from app.api.v1 import ai, deposits, expenses, health, imports, properties
+from app.api.v1 import ai, deposits, expenses, health, imports, owners, properties
 
 api_router = APIRouter()
 api_router.include_router(health.router)
+api_router.include_router(owners.router)
 api_router.include_router(properties.router)
 api_router.include_router(deposits.router)
 api_router.include_router(expenses.router)

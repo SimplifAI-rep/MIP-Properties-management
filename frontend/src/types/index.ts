@@ -5,6 +5,29 @@ export interface Owner {
   contact_phone: string | null;
 }
 
+export interface OwnerSummary extends Owner {
+  property_count: number;
+  deposit_count: number;
+  total_deposits: string;
+  expense_count: number;
+  total_expenses: string;
+}
+
+export interface OwnerPropertySummary {
+  id: string;
+  name: string;
+  address: string | null;
+  status: string;
+  deposit_count: number;
+  total_deposits: string;
+  expense_count: number;
+  total_expenses: string;
+}
+
+export interface OwnerDetail extends OwnerSummary {
+  properties: OwnerPropertySummary[];
+}
+
 export interface BankAccount {
   id: string;
   bank_name: string;

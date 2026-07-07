@@ -7,7 +7,8 @@ import type {
   ExpenseFilters,
   ExpenseListResponse,
   ExpenseSummary,
-  Owner,
+  OwnerDetail,
+  OwnerSummary,
   Property,
   PropertyDetail,
 } from '../types';
@@ -36,7 +37,8 @@ function toQuery(params: Record<string, string | number | undefined>): string {
 
 export const api = {
   getHealth: () => request<{ status: string }>('/health'),
-  getOwners: () => request<Owner[]>('/owners'),
+  getOwners: () => request<OwnerSummary[]>('/owners'),
+  getOwner: (id: string) => request<OwnerDetail>(`/owners/${id}`),
   getProperties: () => request<Property[]>('/properties'),
   getProperty: (id: string) => request<PropertyDetail>(`/properties/${id}`),
   getDeposits: (filters: DepositFilters = {}) =>

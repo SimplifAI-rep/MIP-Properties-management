@@ -6,8 +6,9 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db
-from app.schemas import DepositGap, DepositListResponse, DepositSummary
+from app.schemas import DepositCreate, DepositGap, DepositListResponse, DepositRead, DepositSummary
 from app.services.deposit_query import (
+    create_deposit,
     find_deposit_gaps,
     get_deposit_summary,
     list_deposits,
@@ -44,9 +45,21 @@ def get_deposits(
     )
 
 
+@router.post("", response_model=DepositRead, status_code=201)
+def post_deposit(
+    payload: DepositCreate,
+    db: Session = Depends(get_db),
+) -> DepositRead:
+    return create_deposit(db, payload)
+
+
 @router.get("/summary", response_model=DepositSummary)
-def deposit_summary(db: Session = Depends(get_db)) -> DepositSummary:
-    data = get_deposit_summary(db)
+def deposit_summary(
+    date_from: date | None = None,
+    date_to: date | None = None,
+    db: Session = Depends(get_db),
+) -> DepositSummary:
+    data = get_deposit_summary(db, date_from=date_from, date_to=date_to)
     return DepositSummary(**data)
 
 

@@ -5,7 +5,12 @@ __pycache__/
 venv/
 node_modules/
 *.db
+storage/
 .pytest_cache/
 .mypy_cache/
 dist/
 build/
+docs/SimplifAI_Client_Guide.aux
+docs/SimplifAI_Client_Guide.log
+docs/SimplifAI_Client_Guide.out
+docs/SimplifAI_Client_Guide.toc

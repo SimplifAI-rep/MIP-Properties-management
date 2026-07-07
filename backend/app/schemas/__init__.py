@@ -1,5 +1,6 @@
 from datetime import date, datetime
 from decimal import Decimal
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -12,6 +13,31 @@ class OwnerRead(BaseModel):
     name: str
     contact_email: str | None = None
     contact_phone: str | None = None
+
+
+class OwnerSummary(OwnerRead):
+    property_count: int = 0
+    deposit_count: int = 0
+    total_deposits: Decimal = Decimal("0")
+    expense_count: int = 0
+    total_expenses: Decimal = Decimal("0")
+
+
+class OwnerPropertySummary(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    name: str
+    address: str | None = None
+    status: str
+    deposit_count: int = 0
+    total_deposits: Decimal = Decimal("0")
+    expense_count: int = 0
+    total_expenses: Decimal = Decimal("0")
+
+
+class OwnerDetail(OwnerSummary):
+    properties: list[OwnerPropertySummary] = Field(default_factory=list)
 
 
 class BankAccountRead(BaseModel):
@@ -84,6 +110,16 @@ class DepositGap(BaseModel):
     status: str
 
 
+class DepositCreate(BaseModel):
+    property_id: UUID
+    bank_account_id: UUID
+    transaction_date: date
+    amount: Decimal = Field(gt=0)
+    currency: str = "ILS"
+    reference: str | None = None
+    description: str | None = None
+
+
 class ImportResultRead(BaseModel):
     filename: str
     row_count: int
@@ -106,6 +142,7 @@ class PeriodRange(BaseModel):
 
 class DepositQueryIntent(BaseModel):
     query_type: str
+    domain: str = "deposits"
     property_id: UUID | None = None
     property_name: str | None = None
     owner_id: UUID | None = None
@@ -119,6 +156,10 @@ class DepositQueryIntent(BaseModel):
     month: int | None = None
     min_amount: Decimal | None = None
     max_amount: Decimal | None = None
+    category: str | None = None
+    source: str | None = None
+    payment_method: str | None = None
+    search_text: str | None = None
 
 
 class AIQueryRequest(BaseModel):
@@ -130,4 +171,145 @@ class AIQueryResponse(BaseModel):
     data: list[dict]
     query_used: DepositQueryIntent
     parser: str = "rules"
+
+
+class ExpenseRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    property_id: UUID
+    property_name: str
+    owner_name: str
+    transaction_date: date
+    amount: Decimal
+    currency: str
+    category: str
+    source: str
+    payment_method: str
+    vendor_name: str | None = None
+    reference: str | None = None
+    description: str | None = None
+
+
+class ExpenseCreate(BaseModel):
+    property_id: UUID
+    transaction_date: date
+    amount: Decimal = Field(gt=0)
+    currency: str = "ILS"
+    category: str
+    source: str
+    payment_method: str
+    vendor_name: str | None = None
+    reference: str | None = None
+    description: str | None = None
+
+
+class ExpenseListResponse(BaseModel):
+    items: list[ExpenseRead]
+    total: int
+    page: int
+    page_size: int
+
+
+class ExpenseCategoryTotal(BaseModel):
+    category: str
+    total_amount: Decimal
+    expense_count: int
+
+
+class ExpenseSummary(BaseModel):
+    total_amount: Decimal
+    expense_count: int
+    property_count: int
+    by_category: list[ExpenseCategoryTotal] = Field(default_factory=list)
+
+
+class FieldWarning(BaseModel):
+    field: str
+    message: str
+    severity: Literal["error", "warning"] = "warning"
+
+
+class TransactionDraft(BaseModel):
+    row_number: int | None = None
+    transaction_type: Literal["deposit", "expense"]
+    property_id: UUID | None = None
+    bank_account_id: UUID | None = None
+    account_number: str | None = None
+    transaction_date: date | None = None
+    amount: Decimal | None = None
+    currency: str = "ILS"
+    category: str | None = None
+    source: str | None = None
+    payment_method: str | None = None
+    vendor_name: str | None = None
+    reference: str | None = None
+    description: str | None = None
+    status: Literal["ready", "needs_review", "error"] = "needs_review"
+    warnings: list[FieldWarning] = Field(default_factory=list)
+
+
+class UploadAnalyzeResponse(BaseModel):
+    upload_id: UUID
+    filename: str
+    property_id: UUID
+    owner_id: UUID
+    transaction_type: Literal["deposit", "expense"]
+    parser: str
+    message: str | None = None
+    drafts: list[TransactionDraft]
+    ready_count: int = 0
+    needs_review_count: int = 0
+    error_count: int = 0
+
+
+class UploadConfirmRequest(BaseModel):
+    drafts: list[TransactionDraft]
+
+
+class UploadConfirmResponse(BaseModel):
+    upload_id: UUID
+    imported_deposit_count: int
+    imported_expense_count: int
+    skipped_count: int
+    errors: list[str] = Field(default_factory=list)
+
+
+class AlertRead(BaseModel):
+    id: str
+    alert_type: Literal[
+        "missing_deposit",
+        "upload_pending",
+        "duplicate_deposit",
+    ]
+    severity: Literal["error", "warning", "info"]
+    title: str
+    message: str
+    property_id: UUID | None = None
+    property_name: str | None = None
+    owner_name: str | None = None
+    upload_id: UUID | None = None
+    transaction_type: Literal["deposit", "expense"] | None = None
+    created_at: datetime | None = None
+    gap: DepositGap | None = None
+    drafts: list[TransactionDraft] = Field(default_factory=list)
+
+
+class AlertListResponse(BaseModel):
+    items: list[AlertRead]
+    total: int
+    error_count: int = 0
+    warning_count: int = 0
+
+
+class AlertSummary(BaseModel):
+    open_count: int
+    error_count: int = 0
+    warning_count: int = 0
+
+
+class AlertResolveRequest(BaseModel):
+    action: Literal["add_deposit", "confirm_upload"]
+    deposit: DepositCreate | None = None
+    drafts: list[TransactionDraft] | None = None
 

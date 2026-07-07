@@ -1,5 +1,207 @@
 @import "tailwindcss";
 
-body {
-  @apply bg-slate-50 text-slate-900 antialiased;
+@custom-variant dark (&:where(.dark, .dark *));
+
+@layer base {
+  body {
+    @apply bg-slate-50 text-slate-900 antialiased dark:bg-slate-950 dark:text-slate-100;
+  }
+}
+
+@layer components {
+  .page-heading {
+    @apply text-2xl font-bold text-slate-900 dark:text-slate-100;
+  }
+
+  .page-desc {
+    @apply mt-1 text-sm text-slate-500 dark:text-slate-400;
+  }
+
+  .panel {
+    @apply rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-900;
+  }
+
+  .panel-padded {
+    @apply rounded-xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-900;
+  }
+
+  .filter-panel {
+    @apply grid gap-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900;
+  }
+
+  .label-text {
+    @apply mb-1 block text-slate-500 dark:text-slate-400;
+  }
+
+  .field {
+    @apply w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100;
+  }
+
+  .field-compact {
+    @apply min-w-28 px-2 py-1 text-xs;
+  }
+
+  .data-table {
+    @apply text-sm;
+  }
+
+  .data-table th {
+    @apply bg-slate-50 px-3 py-2 text-left text-xs font-medium text-slate-500 dark:bg-slate-800 dark:text-slate-400;
+  }
+
+  .data-table td {
+    @apply border-t border-slate-100 px-3 py-2 align-top dark:border-slate-800;
+  }
+
+  .text-muted {
+    @apply text-slate-500 dark:text-slate-400;
+  }
+
+  .text-caution {
+    @apply text-amber-700 dark:text-amber-400;
+  }
+
+  .badge-neutral {
+    @apply inline-flex rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-700 dark:bg-slate-800 dark:text-slate-300;
+  }
+
+  .border-border {
+    @apply border-slate-200 dark:border-slate-700;
+  }
+
+  .btn-primary {
+    @apply rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-slate-200;
+  }
+
+  .btn-secondary {
+    @apply rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800;
+  }
+
+  .btn-chip {
+    @apply rounded-full border border-slate-300 px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-100 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800;
+  }
+
+  .btn-pagination {
+    @apply rounded-lg border border-slate-300 px-3 py-1 disabled:opacity-40 dark:border-slate-600 dark:text-slate-200;
+  }
+
+  .table-shell {
+    @apply min-w-full text-sm;
+  }
+
+  .table-head {
+    @apply bg-slate-50 text-left text-slate-500 dark:bg-slate-800 dark:text-slate-400;
+  }
+
+  .table-row {
+    @apply border-t border-slate-100 dark:border-slate-800;
+  }
+
+  .table-row-interactive {
+    @apply cursor-pointer border-t border-slate-100 hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-slate-800/60;
+  }
+
+  .table-row-selected {
+    @apply bg-slate-50 dark:bg-slate-800;
+  }
+
+  .table-footer {
+    @apply flex items-center justify-between border-t border-slate-200 px-5 py-3 text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400;
+  }
+
+  .section-title {
+    @apply font-semibold text-slate-900 dark:text-slate-100;
+  }
+
+  .section-subtitle {
+    @apply text-sm text-slate-500 dark:text-slate-400;
+  }
+
+  .muted-text {
+    @apply text-sm text-slate-500 dark:text-slate-400;
+  }
+
+  .body-text {
+    @apply text-sm text-slate-700 dark:text-slate-300;
+  }
+
+  .detail-title {
+    @apply text-lg font-semibold text-slate-900 dark:text-slate-100;
+  }
+
+  .subheading {
+    @apply text-sm font-semibold text-slate-700 dark:text-slate-300;
+  }
+
+  .list-item {
+    @apply rounded-lg border border-slate-100 px-3 py-2 dark:border-slate-700;
+  }
+
+  .list-item-muted {
+    @apply rounded-lg bg-slate-50 px-3 py-2 dark:bg-slate-800;
+  }
+
+  .badge-warning {
+    @apply rounded-full bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-800 dark:bg-amber-900/40 dark:text-amber-300;
+  }
+
+  .text-positive {
+    @apply text-emerald-700 dark:text-emerald-400;
+  }
+
+  .text-negative {
+    @apply text-red-600 dark:text-red-400;
+  }
+
+  .section-header {
+    @apply border-b border-slate-200 px-5 py-4 dark:border-slate-700;
+  }
+
+  .sidebar {
+    @apply w-full border-b border-slate-200 bg-white lg:w-64 lg:border-b-0 lg:border-r dark:border-slate-700 dark:bg-slate-900;
+  }
+
+  .nav-link-active {
+    @apply rounded-lg bg-slate-900 px-3 py-2 text-sm font-medium whitespace-nowrap text-white dark:bg-slate-100 dark:text-slate-900;
+  }
+
+  .nav-link-inactive {
+    @apply rounded-lg px-3 py-2 text-sm font-medium whitespace-nowrap text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100;
+  }
+
+  .theme-toggle {
+    @apply rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-600 hover:bg-slate-100 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800;
+  }
+
+  .type-filter-active {
+    @apply rounded-lg bg-slate-900 px-3 py-1.5 text-sm font-medium text-white dark:bg-slate-100 dark:text-slate-900;
+  }
+
+  .type-filter-inactive {
+    @apply rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-600 hover:bg-slate-100 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800;
+  }
+
+  .badge-deposit {
+    @apply inline-flex rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-medium text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300;
+  }
+
+  .badge-expense {
+    @apply inline-flex rounded-full bg-rose-100 px-2.5 py-0.5 text-xs font-medium text-rose-800 dark:bg-rose-900/40 dark:text-rose-300;
+  }
+
+  .row-deposit {
+    @apply border-t border-emerald-100 bg-emerald-50/40 dark:border-emerald-900/30 dark:bg-emerald-950/20;
+  }
+
+  .row-expense {
+    @apply border-t border-rose-100 bg-rose-50/40 dark:border-rose-900/30 dark:bg-rose-950/20;
+  }
+
+  .amount-deposit {
+    @apply font-medium text-emerald-700 dark:text-emerald-400;
+  }
+
+  .amount-expense {
+    @apply font-medium text-rose-700 dark:text-rose-400;
+  }
 }

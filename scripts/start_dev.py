@@ -133,15 +133,17 @@ def ensure_database() -> None:
 
     from app.core.database import SessionLocal, init_db
     from app.models.deposit import Deposit
+    from app.models.expense import Expense
     from app.models.owner import Owner
     from app.services.bank_import import BankImportService
-    from app.services.seed import seed_reference_data
+    from app.services.seed import seed_reference_data, seed_sample_expenses
 
     init_db()
     db = SessionLocal()
     try:
         owner_count = db.scalar(select(func.count()).select_from(Owner)) or 0
         deposit_count = db.scalar(select(func.count()).select_from(Deposit)) or 0
+        expense_count = db.scalar(select(func.count()).select_from(Expense)) or 0
 
         if owner_count == 0:
             log("Seeding owners, properties, and bank accounts...")
@@ -159,6 +161,13 @@ def ensure_database() -> None:
             )
         else:
             log(f"Database already has {deposit_count} deposit(s) — skipping import")
+
+        if expense_count == 0:
+            added = seed_sample_expenses(db)
+            if added:
+                log(f"Seeded {added} sample expense(s)")
+        else:
+            log(f"Database already has {expense_count} expense(s) — skipping expense seed")
     finally:
         db.close()
 

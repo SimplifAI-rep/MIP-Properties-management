@@ -5,6 +5,29 @@ export interface Owner {
   contact_phone: string | null;
 }
 
+export interface OwnerSummary extends Owner {
+  property_count: number;
+  deposit_count: number;
+  total_deposits: string;
+  expense_count: number;
+  total_expenses: string;
+}
+
+export interface OwnerPropertySummary {
+  id: string;
+  name: string;
+  address: string | null;
+  status: string;
+  deposit_count: number;
+  total_deposits: string;
+  expense_count: number;
+  total_expenses: string;
+}
+
+export interface OwnerDetail extends OwnerSummary {
+  properties: OwnerPropertySummary[];
+}
+
 export interface BankAccount {
   id: string;
   bank_name: string;
@@ -71,6 +94,7 @@ export interface DepositGap {
 
 export interface DepositQueryIntent {
   query_type: string;
+  domain?: string;
   property_id: string | null;
   property_name: string | null;
   owner_id: string | null;
@@ -80,6 +104,8 @@ export interface DepositQueryIntent {
   group_by: string | null;
   year: number | null;
   month: number | null;
+  category?: string | null;
+  source?: string | null;
 }
 
 export interface AIQueryResponse {
@@ -98,4 +124,157 @@ export interface DepositFilters {
   max_amount?: string;
   page?: number;
   page_size?: number;
+}
+
+export interface Expense {
+  id: string;
+  property_id: string;
+  property_name: string;
+  owner_name: string;
+  transaction_date: string;
+  amount: string;
+  currency: string;
+  category: string;
+  source: string;
+  payment_method: string;
+  vendor_name: string | null;
+  reference: string | null;
+  description: string | null;
+}
+
+export interface ExpenseListResponse {
+  items: Expense[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export interface ExpenseCategoryTotal {
+  category: string;
+  total_amount: string;
+  expense_count: number;
+}
+
+export interface ExpenseSummary {
+  total_amount: string;
+  expense_count: number;
+  property_count: number;
+  by_category: ExpenseCategoryTotal[];
+}
+
+export interface ExpenseFilters {
+  property_id?: string;
+  owner_id?: string;
+  category?: string;
+  source?: string;
+  payment_method?: string;
+  date_from?: string;
+  date_to?: string;
+  page?: number;
+  page_size?: number;
+}
+
+export interface ExpenseCreate {
+  property_id: string;
+  transaction_date: string;
+  amount: string;
+  currency?: string;
+  category: string;
+  source: string;
+  payment_method: string;
+  vendor_name?: string;
+  reference?: string;
+  description?: string;
+}
+
+export interface FieldWarning {
+  field: string;
+  message: string;
+  severity: 'error' | 'warning';
+}
+
+export interface TransactionDraft {
+  row_number?: number | null;
+  transaction_type: 'deposit' | 'expense';
+  property_id?: string | null;
+  bank_account_id?: string | null;
+  account_number?: string | null;
+  transaction_date?: string | null;
+  amount?: string | null;
+  currency?: string;
+  category?: string | null;
+  source?: string | null;
+  payment_method?: string | null;
+  vendor_name?: string | null;
+  reference?: string | null;
+  description?: string | null;
+  status: 'ready' | 'needs_review' | 'error';
+  warnings: FieldWarning[];
+}
+
+export interface UploadAnalyzeResponse {
+  upload_id: string;
+  filename: string;
+  property_id: string;
+  owner_id: string;
+  transaction_type: 'deposit' | 'expense';
+  parser: string;
+  message?: string | null;
+  drafts: TransactionDraft[];
+  ready_count: number;
+  needs_review_count: number;
+  error_count: number;
+}
+
+export interface UploadConfirmResponse {
+  upload_id: string;
+  imported_deposit_count: number;
+  imported_expense_count: number;
+  skipped_count: number;
+  errors: string[];
+}
+
+export interface DepositCreate {
+  property_id: string;
+  bank_account_id: string;
+  transaction_date: string;
+  amount: string;
+  currency?: string;
+  reference?: string;
+  description?: string;
+}
+
+export interface AlertItem {
+  id: string;
+  alert_type: 'missing_deposit' | 'upload_pending' | 'duplicate_deposit';
+  severity: 'error' | 'warning' | 'info';
+  title: string;
+  message: string;
+  property_id?: string | null;
+  property_name?: string | null;
+  owner_name?: string | null;
+  upload_id?: string | null;
+  transaction_type?: 'deposit' | 'expense' | null;
+  created_at?: string | null;
+  gap?: DepositGap | null;
+  drafts: TransactionDraft[];
+}
+
+export interface AlertListResponse {
+  items: AlertItem[];
+  total: number;
+  error_count: number;
+  warning_count: number;
+}
+
+export interface AlertSummary {
+  open_count: number;
+  error_count: number;
+  warning_count: number;
+}
+
+export interface AlertResolveRequest {
+  action: 'add_deposit' | 'confirm_upload';
+  deposit?: DepositCreate;
+  drafts?: TransactionDraft[];
 }

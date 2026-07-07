@@ -1,10 +1,12 @@
 import uuid
+from datetime import date
 from decimal import Decimal
 
 from sqlalchemy.orm import Session
 
 from app.models.bank_account import BankAccount
 from app.models.expected_deposit import ExpectedDeposit
+from app.models.expense import Expense
 from app.models.owner import Owner
 from app.models.property import Property
 
@@ -124,3 +126,78 @@ def seed_reference_data(db: Session) -> dict[str, int]:
 
     db.commit()
     return counts
+
+
+def seed_sample_expenses(db: Session) -> int:
+    """Populate sample expenses across properties if none exist."""
+    if db.query(Expense).count() > 0:
+        return 0
+
+    samples = [
+        Expense(
+            property_id=PROPERTY_ROTHSCHILD_ID,
+            transaction_date=date(2026, 1, 15),
+            amount=Decimal("420.50"),
+            category="utilities",
+            source="standing_order",
+            payment_method="bank_direct_debit",
+            vendor_name="Israel Electric Corp",
+            reference="SO-EL-202601",
+            description="Monthly electricity standing order",
+        ),
+        Expense(
+            property_id=PROPERTY_ROTHSCHILD_ID,
+            transaction_date=date(2026, 2, 8),
+            amount=Decimal("1250.00"),
+            category="maintenance",
+            source="manual_company",
+            payment_method="company_account",
+            vendor_name="TLV Plumbing Ltd",
+            description="Pipe repair — paid by management company",
+        ),
+        Expense(
+            property_id=PROPERTY_DIZENGOFF_ID,
+            transaction_date=date(2026, 1, 20),
+            amount=Decimal("890.00"),
+            category="insurance",
+            source="credit_card",
+            payment_method="credit_card",
+            vendor_name="Harel Insurance",
+            reference="CC-44821",
+            description="Building insurance annual installment",
+        ),
+        Expense(
+            property_id=PROPERTY_DIZENGOFF_ID,
+            transaction_date=date(2026, 3, 5),
+            amount=Decimal("310.00"),
+            category="utilities",
+            source="standing_order",
+            payment_method="bank_direct_debit",
+            vendor_name="Municipal Water",
+            reference="SO-WATER-03",
+            description="Water utility standing order",
+        ),
+        Expense(
+            property_id=PROPERTY_HERZL_ID,
+            transaction_date=date(2026, 1, 28),
+            amount=Decimal("2100.00"),
+            category="tax",
+            source="manual_owner",
+            payment_method="owner_personal",
+            vendor_name="Haifa Municipality",
+            description="Arnona property tax — owner paid personally",
+        ),
+        Expense(
+            property_id=PROPERTY_HERZL_ID,
+            transaction_date=date(2026, 2, 14),
+            amount=Decimal("650.00"),
+            category="management_fee",
+            source="manual_company",
+            payment_method="bank_transfer",
+            vendor_name="SimplifAI Management",
+            description="Monthly management fee",
+        ),
+    ]
+    db.add_all(samples)
+    db.commit()
+    return len(samples)

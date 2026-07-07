@@ -3,13 +3,15 @@ import { useMutation } from '@tanstack/react-query';
 import { api } from '../api/client';
 import type { AIQueryResponse } from '../types';
 import { ErrorState, formatCurrency, formatDate, LoadingState } from '../components/ui/States';
+import { downloadAIQueryExcel } from '../utils/exportExcel';
 
 const EXAMPLE_PROMPTS = [
   'Show all deposits for Rothschild 12 in Q1 2026',
   'Which properties had no deposit in March 2026?',
   'Total deposits per owner this year',
-  'Compare deposits January vs February for Rothschild 12',
-  'How many deposits were made in 2026?',
+  'What were the electricity expenses in January 2026?',
+  'Total expenses per property this year',
+  'How many expenses were recorded in 2026?',
 ];
 
 function renderCell(value: unknown): string {
@@ -20,15 +22,15 @@ function renderCell(value: unknown): string {
 
 function QueryResultTable({ data }: { data: Record<string, unknown>[] }) {
   if (data.length === 0) {
-    return <p className="text-sm text-slate-500">No rows returned.</p>;
+    return <p className="muted-text">No rows returned.</p>;
   }
 
   const columns = Object.keys(data[0]);
 
   return (
-    <div className="overflow-x-auto rounded-lg border border-slate-200">
-      <table className="min-w-full text-sm">
-        <thead className="bg-slate-50 text-left text-slate-500">
+    <div className="overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-700">
+      <table className="table-shell">
+        <thead className="table-head">
           <tr>
             {columns.map((column) => (
               <th key={column} className="px-4 py-2 font-medium">
@@ -39,7 +41,7 @@ function QueryResultTable({ data }: { data: Record<string, unknown>[] }) {
         </thead>
         <tbody>
           {data.map((row, index) => (
-            <tr key={index} className="border-t border-slate-100">
+            <tr key={index} className="table-row">
               {columns.map((column) => (
                 <td key={column} className="px-4 py-2">
                   {column.includes('amount') && row[column] != null
@@ -76,14 +78,14 @@ export function AIQueryPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-2xl font-bold text-slate-900">AI Query</h2>
-        <p className="mt-1 text-sm text-slate-500">
-          Ask natural-language questions about deposits. Uses rule-based parsing by default; set
-          LLM_API_KEY for OpenAI-powered parsing.
+        <h2 className="page-heading">AI Query</h2>
+        <p className="page-desc">
+          Ask natural-language questions about deposits and expenses. Uses rule-based parsing by
+          default; set LLM_API_KEY for OpenAI-powered parsing.
         </p>
       </div>
 
-      <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+      <section className="panel-padded">
         <div className="flex flex-wrap gap-2">
           {EXAMPLE_PROMPTS.map((prompt) => (
             <button
@@ -93,7 +95,7 @@ export function AIQueryPage() {
                 setQuestion(prompt);
                 handleSubmit(prompt);
               }}
-              className="rounded-full border border-slate-300 px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-100"
+              className="btn-chip"
             >
               {prompt}
             </button>
@@ -111,14 +113,10 @@ export function AIQueryPage() {
             type="text"
             value={question}
             onChange={(event) => setQuestion(event.target.value)}
-            placeholder="Ask about deposits, e.g. Show deposits for Dizengoff 45 in April 2026"
-            className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm"
+            placeholder="Ask about deposits or expenses, e.g. Total utilities expenses in 2026"
+            className="field flex-1 text-sm"
           />
-          <button
-            type="submit"
-            disabled={mutation.isPending}
-            className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50"
-          >
+          <button type="submit" disabled={mutation.isPending} className="btn-primary">
             {mutation.isPending ? 'Thinking...' : 'Ask'}
           </button>
         </form>
@@ -137,16 +135,26 @@ export function AIQueryPage() {
       ) : null}
 
       {result ? (
-        <section className="space-y-4 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+        <section className="panel-padded space-y-4">
           <div>
-            <h3 className="font-semibold text-slate-900">Answer</h3>
-            <p className="mt-2 text-sm text-slate-700">{result.answer}</p>
-            <p className="mt-2 text-xs text-slate-500">
-              Query type: {result.query_used.query_type} · Parser: {result.parser}
+            <h3 className="section-title">Answer</h3>
+            <p className="mt-2 body-text">{result.answer}</p>
+            <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+              Domain: {result.query_used.domain ?? 'deposits'} · Query type:{' '}
+              {result.query_used.query_type} · Parser: {result.parser}
             </p>
           </div>
           <div>
-            <h3 className="mb-2 font-semibold text-slate-900">Data</h3>
+            <div className="mb-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <h3 className="section-title">Data</h3>
+              <button
+                type="button"
+                onClick={() => downloadAIQueryExcel(result, question)}
+                className="btn-secondary"
+              >
+                Export to Excel
+              </button>
+            </div>
             <QueryResultTable data={result.data} />
           </div>
         </section>

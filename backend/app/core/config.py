@@ -20,6 +20,9 @@ class Settings(BaseSettings):
     import_amount_tolerance: float = 0.0
     default_currency: str = "ILS"
 
+    cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
+    cors_origin_regex: str = r"https://.*\.vercel\.app"
+
     storage_dir: str = str(PROJECT_ROOT / "storage")
     upload_max_bytes: int = 10 * 1024 * 1024
 

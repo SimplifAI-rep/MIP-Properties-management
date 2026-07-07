@@ -1,0 +1,435 @@
+% SimplifAI Property Assets — Client Walkthrough
+% Copy this file (and optionally a screenshots/ folder) into your LaTeX editor.
+% Replace each screenshot placeholder with: \includegraphics[width=\textwidth]{screenshots/filename.png}
+
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{parskip}
+\usepackage{enumitem}
+\usepackage{booktabs}
+\usepackage{caption}
+\usepackage{fancyhdr}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue!60!black,
+  urlcolor=blue!60!black,
+}
+
+\definecolor{placeholderbg}{RGB}{245,245,245}
+\definecolor{placeholderborder}{RGB}{180,180,180}
+
+% Usage: \screenshot{screenshots/dashboard.png}{Dashboard overview}{Short caption text}
+\newcommand{\screenshot}[4][width=0.92\textwidth]{%
+  \begin{figure}[htbp]
+    \centering
+    \IfFileExists{#2}{%
+      \includegraphics[#1]{#2}%
+    }{%
+      \fcolorbox{placeholderborder}{placeholderbg}{%
+        \parbox{0.88\textwidth}{\centering\vspace{2.8cm}%
+          \textbf{Screenshot placeholder}\\[0.4em]
+          \small\textit{#3}\\[0.3em]
+          \small\texttt{#2}%
+          \vspace{2.8cm}}%
+      }%
+    }%
+    \caption{#4}
+  \end{figure}%
+}
+
+\pagestyle{fancy}
+\fancyhf{}
+\lhead{\small SimplifAI Property Assets}
+\rhead{\small Client Guide}
+\cfoot{\thepage}
+
+\title{\textbf{SimplifAI Property Assets}\\[0.4em]
+\large Client walkthrough — pages and main features}
+\author{Prepared for client review meeting}
+\date{July 2026}
+
+\begin{document}
+
+\maketitle
+\thispagestyle{empty}
+
+\begin{abstract}
+\noindent
+This document describes the current prototype of \textbf{SimplifAI Property Assets} in plain language.
+It explains what each screen is for, what you can do there, and how the main workflows fit together.
+Technical implementation details are intentionally omitted.
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+% ---------------------------------------------------------------------------
+\section{Introduction}
+
+SimplifAI Property Assets is a web application for managing property-related money flows:
+owner \textbf{deposits} (income), property \textbf{expenses} (costs), and the checks needed to keep both accurate.
+
+The application is organised around a simple idea: every transaction belongs to a \textbf{property}, and every property belongs to an \textbf{owner}.
+The sidebar on the left is the main way to move between sections.
+
+\screenshot[width=0.85\textwidth,height=0.55\textheight,keepaspectratio]{screenshots/01-navigation.png}{Full application layout with sidebar}{%
+  The main layout: sidebar navigation on the left and the active page on the right.
+  Use \textbf{Dark/Light} at the top of the sidebar to switch appearance.%
+}
+
+\subsection{Main sections at a glance}
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \begin{tabular}{@{}llp{8cm}@{}}
+    \toprule
+    \textbf{Menu item} & \textbf{Purpose} \\
+    \midrule
+    Dashboard   & Overview of finances, alerts, and property health for a chosen period \\
+    Properties  & List of managed properties and basic financial totals \\
+    Owners      & View owners and how their properties perform together \\
+    Transactions & All deposits and expenses; add records or import from files \\
+    Alerts      & Items that need review or correction \\
+    AI Query    & Ask questions about your data in everyday language \\
+    \bottomrule
+  \end{tabular}
+  \caption{Navigation menu}
+\end{table}
+
+% ---------------------------------------------------------------------------
+\section{Dashboard}
+
+The \textbf{Dashboard} is the starting point. It answers: ``How are we doing right now?''
+
+\subsection{Period filter}
+
+At the top you can choose \textbf{Month}, \textbf{Quarter}, or \textbf{Year}, and pick the year (and month or quarter anchor).
+Most numbers on the dashboard follow this period --- deposits, expenses, gaps, owner totals, and recent activity.
+
+\subsection{Quick actions}
+
+Four shortcut buttons let you jump straight to common tasks:
+\begin{itemize}[noitemsep]
+  \item \textbf{Import file} --- upload a spreadsheet or document on the Transactions page
+  \item \textbf{Add expense} --- open the manual expense form
+  \item \textbf{View alerts} --- open the Alerts page (shows a count if anything is open)
+  \item \textbf{Ask AI} --- open the AI Query page
+\end{itemize}
+
+\subsection{Summary cards}
+
+The top row of cards shows, for the selected period:
+\begin{itemize}[noitemsep]
+  \item Total \textbf{deposits} and how many deposit transactions
+  \item Total \textbf{expenses} and how many expense transactions
+  \item \textbf{Net position} (deposits minus expenses)
+  \item Total \textbf{transactions}
+  \item \textbf{Open alerts} (errors and warnings)
+  \item \textbf{Missing deposits} --- expected owner deposits not found in the period
+\end{itemize}
+
+\screenshot{screenshots/02-dashboard-top.png}{Dashboard summary cards and period filter}{%
+  Dashboard top section: period selector, quick actions, and summary cards.%
+}
+
+\subsection{Pending uploads and alerts at a glance}
+
+Two panels side by side:
+\begin{itemize}[noitemsep]
+  \item \textbf{Pending uploads} --- files that were uploaded and analysed but not yet confirmed
+  \item \textbf{Alerts at a glance} --- the most important open alerts; click any row to go to Alerts
+\end{itemize}
+
+\subsection{Property health}
+
+Each property appears as a card showing deposits, expenses, net, and a \textbf{deposit status} badge:
+\begin{itemize}[noitemsep]
+  \item \textbf{On track} --- the expected monthly deposit was found for the period
+  \item \textbf{Partial} --- some months in the period are missing (quarter/year view)
+  \item \textbf{Missing} --- the expected deposit was not found
+\end{itemize}
+
+\noindent
+\textit{Note:} Deposit status compares \textbf{expected monthly amounts} (configured per property) against \textbf{actual deposit records} in the system.
+It does \textbf{not} depend on whether a file was uploaded --- only on confirmed deposit entries.
+
+\screenshot{screenshots/03-dashboard-property-health.png}{Property health cards}{%
+  Property health cards showing deposits, expenses, net, and deposit status.%
+}
+
+\subsection{Other dashboard sections}
+
+\begin{itemize}
+  \item \textbf{Expense breakdown} --- bar view of spending by category (utilities, maintenance, tax, etc.)
+  \item \textbf{Missing expected deposits} --- table of properties where the monthly deposit was not received
+  \item \textbf{Owner overview} --- per-owner deposits, expenses, and net for the period
+  \item \textbf{Recent activity} --- latest deposits and expenses in the selected period
+\end{itemize}
+
+\screenshot{screenshots/04-dashboard-full.png}{Full dashboard scroll}{%
+  Optional full-page screenshot showing the complete dashboard (may require a tall capture or stitched image).%
+}
+
+% ---------------------------------------------------------------------------
+\section{Properties}
+
+The \textbf{Properties} page lists every managed property.
+
+For each property you typically see:
+\begin{itemize}[noitemsep]
+  \item Property name and address
+  \item Owner name
+  \item Deposit count and total deposit amount
+  \item Status (e.g.\ active)
+\end{itemize}
+
+Click a property row to see more detail on the right (owner information, linked bank accounts, and recent deposits).
+
+\screenshot{screenshots/05-properties.png}{Properties list and detail panel}{%
+  Properties page: list on the left, selected property details on the right.%
+}
+
+% ---------------------------------------------------------------------------
+\section{Owners}
+
+The \textbf{Owners} page groups information by property owner.
+
+The main table shows, for each owner:
+\begin{itemize}[noitemsep]
+  \item Number of properties
+  \item Total deposits and expense totals (all time in the current prototype)
+  \item \textbf{Net} position across their portfolio
+\end{itemize}
+
+Selecting an owner reveals a breakdown of each property they own, with deposit and expense totals per property.
+
+\screenshot{screenshots/06-owners.png}{Owners overview}{%
+  Owners page with summary table and property breakdown for the selected owner.%
+}
+
+% ---------------------------------------------------------------------------
+\section{Transactions}
+\label{sec:transactions}
+
+The \textbf{Transactions} page is where day-to-day financial records live.
+Deposits and expenses appear together; deposits are highlighted in \textbf{green}, expenses in \textbf{red}.
+
+\subsection{Filter tabs}
+
+\begin{itemize}[noitemsep]
+  \item \textbf{All} --- deposits and expenses combined, sorted by date
+  \item \textbf{Deposits} --- income only
+  \item \textbf{Expenses} --- costs only
+\end{itemize}
+
+Additional filters: property, owner, date range, and (for expenses) category and source.
+
+\subsection{Summary cards}
+
+Four cards at the top show total deposits, total expenses, net, and how many rows match the current filters.
+
+\subsection{Add expense (manual)}
+
+Click \textbf{Add expense} to enter a single expense by hand:
+property, date, amount, category, source, payment method, and optional description.
+
+\screenshot{screenshots/07-transactions-add-expense.png}{Manual expense form}{%
+  Transactions page with the manual expense form open.%
+}
+
+\subsection{Import from file}
+
+Click \textbf{Import from file} to upload:
+\begin{itemize}[noitemsep]
+  \item Excel or CSV spreadsheets
+  \item PDF documents
+  \item Images (receipts, invoices)
+\end{itemize}
+
+\textbf{Steps:}
+\begin{enumerate}
+  \item Choose the \textbf{property} and \textbf{transaction type} (deposit or expense)
+  \item Select the file
+  \item Click \textbf{Analyze file} --- the system reads the file and proposes rows to save
+  \item Review the table: yellow warnings mean ``please verify''; red means a field must be fixed
+  \item Click \textbf{Confirm} to save approved rows
+\end{enumerate}
+
+\screenshot{screenshots/08-transactions-import.png}{File import and review step}{%
+  Import panel: file selection, analyse step, and review table before confirming.%
+}
+
+\subsection{Deposit spreadsheet format}
+
+When importing \textbf{deposits}, the Excel file should include at least:
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \begin{tabular}{@{}ll@{}}
+    \toprule
+    \textbf{Column} & \textbf{Example} \\
+    \midrule
+    account\_number   & 12-345-678901 \\
+    transaction\_date & 2026-07-05 \\
+    amount            & 8500.00 \\
+    currency          & ILS (optional) \\
+    reference         & DEP-2026-018 (optional) \\
+    description       & Owner deposit - July (optional) \\
+    \bottomrule
+  \end{tabular}
+  \caption{Deposit import columns}
+\end{table}
+
+The account number links each row to the correct property automatically.
+
+\subsection{Expense spreadsheet format}
+
+When importing \textbf{expenses}, select the property in the upload form, then use a file with at least:
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \begin{tabular}{@{}ll@{}}
+    \toprule
+    \textbf{Column} & \textbf{Example} \\
+    \midrule
+    transaction\_date & 2026-07-08 \\
+    amount            & 445.00 \\
+    category          & utilities \\
+    source            & standing\_order \\
+    payment\_method   & bank\_direct\_debit \\
+    vendor\_name      & Israel Electric Corp (optional) \\
+    description       & July electricity bill (optional) \\
+    \bottomrule
+  \end{tabular}
+  \caption{Expense import columns}
+\end{table}
+
+\subsection{Export}
+
+\textbf{Export CSV} downloads the currently filtered transaction list for use in Excel or reporting.
+
+\screenshot{screenshots/09-transactions-list.png}{Transactions list with filters}{%
+  Transactions table showing mixed deposits and expenses with filter controls.%
+}
+
+% ---------------------------------------------------------------------------
+\section{Alerts}
+
+The \textbf{Alerts} page collects items that need attention.
+
+\subsection{Types of alerts}
+
+\begin{itemize}
+  \item \textbf{Missing deposit} --- expected monthly deposit not found; you can add the deposit and resolve the alert
+  \item \textbf{Upload review} --- a file was uploaded but not yet confirmed
+  \item \textbf{Possible duplicate} --- a deposit may already exist; you can skip or confirm
+\end{itemize}
+
+\subsection{Working with an alert}
+
+\begin{enumerate}
+  \item Click an alert in the list on the left
+  \item The fix panel on the right shows what to do:
+  \begin{itemize}
+    \item For missing deposits: fill in bank account, date, and amount, then save
+    \item For uploads: edit extracted rows, skip duplicates if needed, then confirm
+  \end{itemize}
+  \item Alternatively, click \textbf{Dismiss} if the alert does not require action
+\end{enumerate}
+
+The Alerts menu item shows a \textbf{red count badge} when open alerts exist.
+
+\screenshot{screenshots/10-alerts.png}{Alerts list and resolve panel}{%
+  Alerts page: alert list on the left, resolution form on the right.%
+}
+
+% ---------------------------------------------------------------------------
+\section{AI Query}
+
+The \textbf{AI Query} page lets you ask questions about your data in natural language, for example:
+\begin{itemize}[noitemsep]
+  \item ``Total deposits for Rothschild in Q1 2026''
+  \item ``Which properties had no deposit in March 2026?''
+  \item ``Show electricity expenses for Dizengoff''
+\end{itemize}
+
+The answer appears as readable text plus a results table when applicable.
+You can export results to Excel from this page.
+
+Example prompts are shown on the page to help you get started.
+
+\screenshot{screenshots/11-ai-query.png}{AI Query page with example question and answer}{%
+  AI Query: question input, example prompts, answer, and results table.%
+}
+
+% ---------------------------------------------------------------------------
+\section{Typical workflows}
+
+\subsection{Recording a new month of owner deposits}
+
+\begin{enumerate}
+  \item Prepare an Excel file with deposit rows (see Section~\ref{sec:transactions})
+  \item Go to \textbf{Transactions} $\rightarrow$ \textbf{Import from file}
+  \item Choose type \textbf{Deposit}, select the file, analyse, and confirm
+  \item Check the \textbf{Dashboard} --- property health should show \textbf{On track} for properties that received their expected deposit
+\end{enumerate}
+
+\subsection{Recording property expenses}
+
+Either:
+\begin{itemize}[noitemsep]
+  \item Use \textbf{Add expense} for a single manual entry, or
+  \item Use \textbf{Import from file} with type \textbf{Expense} (one upload per property)
+\end{itemize}
+
+\subsection{Clearing alerts}
+
+Open \textbf{Alerts}, work through each item, then confirm the dashboard alert count drops to zero.
+
+% ---------------------------------------------------------------------------
+\section{Demo upload files (for testing)}
+
+Sample files for manual testing are provided in the project folder:
+\texttt{data/seed/client\_demo/}
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \begin{tabular}{@{}ll@{}}
+    \toprule
+    \textbf{File} & \textbf{Use for} \\
+    \midrule
+    client\_demo\_deposits\_july2026.xlsx & One deposit import (all properties) \\
+    client\_demo\_expenses\_rothschild\_july2026.xlsx & Expense import --- Rothschild property \\
+    client\_demo\_expenses\_dizengoff\_july2026.xlsx & Expense import --- Dizengoff property \\
+    client\_demo\_expenses\_herzl\_july2026.xlsx & Expense import --- Herzl property \\
+    \bottomrule
+  \end{tabular}
+  \caption{Demo upload files supplied with the prototype}
+\end{table}
+
+% ---------------------------------------------------------------------------
+\section{Current scope and next steps}
+
+This prototype focuses on:
+\begin{itemize}[noitemsep]
+  \item Viewing and filtering deposits and expenses
+  \item Importing data from files with a human review step
+  \item Detecting missing expected deposits
+  \item A central alerts workflow
+  \item Natural-language queries over financial data
+\end{itemize}
+
+\noindent
+After the client meeting, feedback may lead to new requirements --- additional reports, document storage, notifications, user roles, Hebrew interface, and other items discussed in the full product vision.
+
+
+\end{document}

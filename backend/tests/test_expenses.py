@@ -121,3 +121,16 @@ def test_create_expense_rejects_non_positive_amount(client):
         },
     )
     assert response.status_code == 422
+
+
+def test_expense_summary_with_date_filter(client):
+    all_time = client.get("/api/v1/expenses/summary").json()
+    filtered = client.get(
+        "/api/v1/expenses/summary",
+        params={"date_from": "2099-01-01", "date_to": "2099-12-31"},
+    )
+    assert filtered.status_code == 200
+    body = filtered.json()
+    assert body["expense_count"] == 0
+    assert Decimal(body["total_amount"]) == 0
+    assert all_time["expense_count"] >= body["expense_count"]

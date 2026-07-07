@@ -54,8 +54,12 @@ def post_deposit(
 
 
 @router.get("/summary", response_model=DepositSummary)
-def deposit_summary(db: Session = Depends(get_db)) -> DepositSummary:
-    data = get_deposit_summary(db)
+def deposit_summary(
+    date_from: date | None = None,
+    date_to: date | None = None,
+    db: Session = Depends(get_db),
+) -> DepositSummary:
+    data = get_deposit_summary(db, date_from=date_from, date_to=date_to)
     return DepositSummary(**data)
 
 

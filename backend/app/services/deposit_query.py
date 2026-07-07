@@ -87,10 +87,30 @@ def list_deposits(
     return items, total
 
 
-def get_deposit_summary(db: Session) -> dict:
-    total_amount = db.scalar(select(func.coalesce(func.sum(Deposit.amount), 0))) or 0
-    deposit_count = db.scalar(select(func.count()).select_from(Deposit)) or 0
-    property_count = db.scalar(select(func.count()).select_from(Property)) or 0
+def get_deposit_summary(
+    db: Session,
+    *,
+    date_from: date | None = None,
+    date_to: date | None = None,
+) -> dict:
+    amount_stmt = select(func.coalesce(func.sum(Deposit.amount), 0))
+    count_stmt = select(func.count()).select_from(Deposit)
+    property_stmt = select(func.count(func.distinct(Deposit.property_id))).select_from(
+        Deposit
+    )
+
+    if date_from:
+        amount_stmt = amount_stmt.where(Deposit.transaction_date >= date_from)
+        count_stmt = count_stmt.where(Deposit.transaction_date >= date_from)
+        property_stmt = property_stmt.where(Deposit.transaction_date >= date_from)
+    if date_to:
+        amount_stmt = amount_stmt.where(Deposit.transaction_date <= date_to)
+        count_stmt = count_stmt.where(Deposit.transaction_date <= date_to)
+        property_stmt = property_stmt.where(Deposit.transaction_date <= date_to)
+
+    total_amount = db.scalar(amount_stmt) or 0
+    deposit_count = db.scalar(count_stmt) or 0
+    property_count = db.scalar(property_stmt) or 0
 
     today = date.today()
     gaps = find_deposit_gaps(db, year=today.year, month=today.month)

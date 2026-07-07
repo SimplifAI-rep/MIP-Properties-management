@@ -1,0 +1,5 @@
+account_number,transaction_date,amount,currency,reference,description
+12-345-678901,2026-07-05,8500.0,ILS,DEP-2026-018,Owner deposit - July
+12-345-678902,2026-07-05,6200.0,ILS,DEP-2026-019,Owner deposit - July
+99-888-777001,2026-07-10,4800.0,ILS,DEP-2026-020,Owner deposit - July
+12-345-678901,2026-07-18,950.0,ILS,DEP-2026-021,Parking fee reimbursement

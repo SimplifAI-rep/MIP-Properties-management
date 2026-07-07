@@ -159,20 +159,39 @@ def create_expense(db: Session, payload: ExpenseCreate) -> ExpenseRead:
     return expense_to_read(expense, property_row.name, owner.name)
 
 
-def get_expense_summary(db: Session) -> dict:
-    total_amount = db.scalar(select(func.coalesce(func.sum(Expense.amount), 0))) or 0
-    expense_count = db.scalar(select(func.count()).select_from(Expense)) or 0
+def get_expense_summary(
+    db: Session,
+    *,
+    date_from: date | None = None,
+    date_to: date | None = None,
+) -> dict:
+    filters = []
+    if date_from:
+        filters.append(Expense.transaction_date >= date_from)
+    if date_to:
+        filters.append(Expense.transaction_date <= date_to)
+
+    total_amount = db.scalar(
+        select(func.coalesce(func.sum(Expense.amount), 0)).where(*filters)
+    ) or 0
+    expense_count = db.scalar(
+        select(func.count()).select_from(Expense).where(*filters)
+    ) or 0
     property_count = db.scalar(
-        select(func.count(func.distinct(Expense.property_id))).select_from(Expense)
+        select(func.count(func.distinct(Expense.property_id)))
+        .select_from(Expense)
+        .where(*filters)
     ) or 0
 
-    category_rows = db.execute(
-        select(
-            Expense.category,
-            func.coalesce(func.sum(Expense.amount), 0),
-            func.count(),
-        ).group_by(Expense.category)
-    ).all()
+    category_stmt = select(
+        Expense.category,
+        func.coalesce(func.sum(Expense.amount), 0),
+        func.count(),
+    ).group_by(Expense.category)
+    if filters:
+        category_stmt = category_stmt.where(*filters)
+
+    category_rows = db.execute(category_stmt).all()
 
     by_category = [
         ExpenseCategoryTotal(

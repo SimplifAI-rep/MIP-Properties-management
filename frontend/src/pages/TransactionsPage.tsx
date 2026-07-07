@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
 import type { Deposit, Expense, ExpenseCreate } from '../types';
@@ -122,6 +123,7 @@ const emptyForm: ExpenseCreate = {
 };
 
 export function TransactionsPage() {
+  const location = useLocation();
   const queryClient = useQueryClient();
   const [typeFilter, setTypeFilter] = useState<TypeFilter>('all');
   const [page, setPage] = useState(1);
@@ -135,6 +137,18 @@ export function TransactionsPage() {
   const [showUpload, setShowUpload] = useState(false);
   const [form, setForm] = useState<ExpenseCreate>(emptyForm);
   const [formError, setFormError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const state = location.state as { showUpload?: boolean; showForm?: boolean } | null;
+    if (state?.showUpload) {
+      setShowUpload(true);
+      setShowForm(false);
+    }
+    if (state?.showForm) {
+      setShowForm(true);
+      setShowUpload(false);
+    }
+  }, [location.state]);
 
   const sharedFilters = {
     property_id: propertyId,
@@ -153,11 +167,11 @@ export function TransactionsPage() {
   });
   const depositSummaryQuery = useQuery({
     queryKey: ['deposit-summary'],
-    queryFn: api.getDepositSummary,
+    queryFn: () => api.getDepositSummary(),
   });
   const expenseSummaryQuery = useQuery({
     queryKey: ['expense-summary'],
-    queryFn: api.getExpenseSummary,
+    queryFn: () => api.getExpenseSummary(),
   });
 
   const depositsQuery = useQuery({

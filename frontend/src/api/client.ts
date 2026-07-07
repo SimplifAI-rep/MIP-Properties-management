@@ -66,10 +66,23 @@ export const api = {
         page_size: filters.page_size,
       })}`,
     ),
-  getDepositSummary: () => request<DepositSummary>('/deposits/summary'),
-  getDepositGaps: (year?: number, month?: number) =>
+  getDepositSummary: (dateFrom?: string, dateTo?: string) =>
+    request<DepositSummary>(
+      `/deposits/summary${toQuery({ date_from: dateFrom, date_to: dateTo })}`,
+    ),
+  getDepositGaps: (filters: {
+    year?: number;
+    month?: number;
+    date_from?: string;
+    date_to?: string;
+  } = {}) =>
     request<DepositGap[]>(
-      `/deposits/gaps${toQuery({ year, month })}`,
+      `/deposits/gaps${toQuery({
+        year: filters.year,
+        month: filters.month,
+        date_from: filters.date_from,
+        date_to: filters.date_to,
+      })}`,
     ),
   postAIQuery: (question: string) =>
     request<import('../types').AIQueryResponse>('/ai/query', {
@@ -91,7 +104,10 @@ export const api = {
         page_size: filters.page_size,
       })}`,
     ),
-  getExpenseSummary: () => request<ExpenseSummary>('/expenses/summary'),
+  getExpenseSummary: (dateFrom?: string, dateTo?: string) =>
+    request<ExpenseSummary>(
+      `/expenses/summary${toQuery({ date_from: dateFrom, date_to: dateTo })}`,
+    ),
   createExpense: (payload: ExpenseCreate) =>
     request<import('../types').Expense>('/expenses', {
       method: 'POST',

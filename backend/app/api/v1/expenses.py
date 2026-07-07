@@ -55,6 +55,10 @@ def post_expense(
 
 
 @router.get("/summary", response_model=ExpenseSummary)
-def expense_summary(db: Session = Depends(get_db)) -> ExpenseSummary:
-    data = get_expense_summary(db)
+def expense_summary(
+    date_from: date | None = None,
+    date_to: date | None = None,
+    db: Session = Depends(get_db),
+) -> ExpenseSummary:
+    data = get_expense_summary(db, date_from=date_from, date_to=date_to)
     return ExpenseSummary(**data)

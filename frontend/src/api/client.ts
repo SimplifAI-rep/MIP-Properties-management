@@ -14,6 +14,11 @@ import type {
   TransactionDraft,
   UploadAnalyzeResponse,
   UploadConfirmResponse,
+  AlertListResponse,
+  AlertSummary,
+  AlertResolveRequest,
+  AlertItem,
+  DepositCreate,
 } from '../types';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000/api/v1';
@@ -108,5 +113,23 @@ export const api = {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ drafts }),
+    }),
+  getAlerts: () => request<AlertListResponse>('/alerts'),
+  getAlertSummary: () => request<AlertSummary>('/alerts/summary'),
+  dismissAlert: (alertId: string) =>
+    request<AlertItem>(`/alerts/${encodeURIComponent(alertId)}/dismiss`, {
+      method: 'POST',
+    }),
+  resolveAlert: (alertId: string, payload: AlertResolveRequest) =>
+    request<AlertItem>(`/alerts/${encodeURIComponent(alertId)}/resolve`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }),
+  createDeposit: (payload: DepositCreate) =>
+    request<import('../types').Deposit>('/deposits', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
     }),
 };

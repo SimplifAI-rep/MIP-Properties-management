@@ -2,6 +2,7 @@ from datetime import date
 from decimal import Decimal
 from uuid import UUID
 
+from fastapi import HTTPException
 from sqlalchemy import and_, func, select
 from sqlalchemy.orm import Session
 
@@ -11,7 +12,7 @@ from app.models.deposit import Deposit
 from app.models.expected_deposit import ExpectedDeposit
 from app.models.owner import Owner
 from app.models.property import Property
-from app.schemas import DepositGap, DepositRead
+from app.schemas import DepositCreate, DepositGap, DepositRead
 
 
 def deposit_to_read(
@@ -172,3 +173,42 @@ def find_deposit_gaps(
             )
 
     return gaps
+
+
+def create_deposit(db: Session, payload: DepositCreate) -> DepositRead:
+    property_row = db.get(Property, payload.property_id)
+    if not property_row:
+        raise HTTPException(status_code=404, detail="Property not found")
+
+    owner = db.get(Owner, property_row.owner_id)
+    if not owner:
+        raise HTTPException(status_code=404, detail="Owner not found")
+
+    bank_account = db.get(BankAccount, payload.bank_account_id)
+    if not bank_account:
+        raise HTTPException(status_code=404, detail="Bank account not found")
+    if bank_account.property_id != payload.property_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Bank account does not belong to the selected property",
+        )
+
+    deposit = Deposit(
+        bank_account_id=bank_account.id,
+        property_id=payload.property_id,
+        transaction_date=payload.transaction_date,
+        amount=payload.amount,
+        currency=payload.currency,
+        reference=payload.reference,
+        description=payload.description,
+        source="manual_entry",
+    )
+    db.add(deposit)
+    db.commit()
+    db.refresh(deposit)
+    return deposit_to_read(
+        deposit,
+        property_row.name,
+        owner.name,
+        bank_account.account_number,
+    )

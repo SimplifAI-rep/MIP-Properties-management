@@ -1,4 +1,6 @@
 import { NavLink, Outlet } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
+import { api } from '../../api/client';
 import { useTheme } from '../../context/ThemeContext';
 
 const navItems = [
@@ -6,11 +8,18 @@ const navItems = [
   { to: '/properties', label: 'Properties' },
   { to: '/owners', label: 'Owners' },
   { to: '/transactions', label: 'Transactions' },
+  { to: '/alerts', label: 'Alerts', showCount: true },
   { to: '/ai', label: 'AI Query' },
 ];
 
 export function AppShell() {
   const { theme, toggleTheme } = useTheme();
+  const alertSummaryQuery = useQuery({
+    queryKey: ['alert-summary'],
+    queryFn: api.getAlertSummary,
+    refetchInterval: 60_000,
+  });
+  const openAlerts = alertSummaryQuery.data?.open_count ?? 0;
 
   return (
     <div className="min-h-screen lg:flex">
@@ -42,6 +51,11 @@ export function AppShell() {
               className={({ isActive }) => (isActive ? 'nav-link-active' : 'nav-link-inactive')}
             >
               {item.label}
+              {item.showCount && openAlerts > 0 ? (
+                <span className="ml-2 rounded-full bg-rose-500 px-2 py-0.5 text-xs text-white dark:bg-rose-600">
+                  {openAlerts}
+                </span>
+              ) : null}
             </NavLink>
           ))}
         </nav>

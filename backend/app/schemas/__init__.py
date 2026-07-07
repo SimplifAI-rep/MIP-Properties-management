@@ -110,6 +110,16 @@ class DepositGap(BaseModel):
     status: str
 
 
+class DepositCreate(BaseModel):
+    property_id: UUID
+    bank_account_id: UUID
+    transaction_date: date
+    amount: Decimal = Field(gt=0)
+    currency: str = "ILS"
+    reference: str | None = None
+    description: str | None = None
+
+
 class ImportResultRead(BaseModel):
     filename: str
     row_count: int
@@ -263,4 +273,43 @@ class UploadConfirmResponse(BaseModel):
     imported_expense_count: int
     skipped_count: int
     errors: list[str] = Field(default_factory=list)
+
+
+class AlertRead(BaseModel):
+    id: str
+    alert_type: Literal[
+        "missing_deposit",
+        "upload_pending",
+        "duplicate_deposit",
+    ]
+    severity: Literal["error", "warning", "info"]
+    title: str
+    message: str
+    property_id: UUID | None = None
+    property_name: str | None = None
+    owner_name: str | None = None
+    upload_id: UUID | None = None
+    transaction_type: Literal["deposit", "expense"] | None = None
+    created_at: datetime | None = None
+    gap: DepositGap | None = None
+    drafts: list[TransactionDraft] = Field(default_factory=list)
+
+
+class AlertListResponse(BaseModel):
+    items: list[AlertRead]
+    total: int
+    error_count: int = 0
+    warning_count: int = 0
+
+
+class AlertSummary(BaseModel):
+    open_count: int
+    error_count: int = 0
+    warning_count: int = 0
+
+
+class AlertResolveRequest(BaseModel):
+    action: Literal["add_deposit", "confirm_upload"]
+    deposit: DepositCreate | None = None
+    drafts: list[TransactionDraft] | None = None
 

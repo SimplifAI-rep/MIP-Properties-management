@@ -1,3 +1,4 @@
+from app.models.alert_action import AlertAction
 from app.models.bank_account import BankAccount
 from app.models.deposit import Deposit
 from app.models.expected_deposit import ExpectedDeposit
@@ -16,4 +17,5 @@ __all__ = [
     "Expense",
     "ImportBatch",
     "UploadedDocument",
+    "AlertAction",
 ]

@@ -233,3 +233,48 @@ export interface UploadConfirmResponse {
   skipped_count: number;
   errors: string[];
 }
+
+export interface DepositCreate {
+  property_id: string;
+  bank_account_id: string;
+  transaction_date: string;
+  amount: string;
+  currency?: string;
+  reference?: string;
+  description?: string;
+}
+
+export interface AlertItem {
+  id: string;
+  alert_type: 'missing_deposit' | 'upload_pending' | 'duplicate_deposit';
+  severity: 'error' | 'warning' | 'info';
+  title: string;
+  message: string;
+  property_id?: string | null;
+  property_name?: string | null;
+  owner_name?: string | null;
+  upload_id?: string | null;
+  transaction_type?: 'deposit' | 'expense' | null;
+  created_at?: string | null;
+  gap?: DepositGap | null;
+  drafts: TransactionDraft[];
+}
+
+export interface AlertListResponse {
+  items: AlertItem[];
+  total: number;
+  error_count: number;
+  warning_count: number;
+}
+
+export interface AlertSummary {
+  open_count: number;
+  error_count: number;
+  warning_count: number;
+}
+
+export interface AlertResolveRequest {
+  action: 'add_deposit' | 'confirm_upload';
+  deposit?: DepositCreate;
+  drafts?: TransactionDraft[];
+}

@@ -19,7 +19,7 @@ def deposit_to_read(
     deposit: Deposit,
     property_name: str,
     owner_name: str,
-    account_number: str,
+    account_number: str | None,
 ) -> DepositRead:
     return DepositRead(
         id=deposit.id,
@@ -34,6 +34,7 @@ def deposit_to_read(
         reference=deposit.reference,
         description=deposit.description,
         source=deposit.source,
+        is_rental_income=bool(deposit.is_rental_income),
     )
 
 
@@ -56,7 +57,7 @@ def list_deposits(
         select(Deposit, Property.name, Owner.name, BankAccount.account_number)
         .join(Property, Deposit.property_id == Property.id)
         .join(Owner, Property.owner_id == Owner.id)
-        .join(BankAccount, Deposit.bank_account_id == BankAccount.id)
+        .outerjoin(BankAccount, Deposit.bank_account_id == BankAccount.id)
         .order_by(Deposit.transaction_date.desc())
     )
 
@@ -93,20 +94,20 @@ def get_deposit_summary(
     date_from: date | None = None,
     date_to: date | None = None,
 ) -> dict:
-    amount_stmt = select(func.coalesce(func.sum(Deposit.amount), 0))
-    count_stmt = select(func.count()).select_from(Deposit)
-    property_stmt = select(func.count(func.distinct(Deposit.property_id))).select_from(
-        Deposit
-    )
-
+    # Rental-income rows are informational only — exclude from company float totals
+    filters = [Deposit.is_rental_income.is_(False)]
     if date_from:
-        amount_stmt = amount_stmt.where(Deposit.transaction_date >= date_from)
-        count_stmt = count_stmt.where(Deposit.transaction_date >= date_from)
-        property_stmt = property_stmt.where(Deposit.transaction_date >= date_from)
+        filters.append(Deposit.transaction_date >= date_from)
     if date_to:
-        amount_stmt = amount_stmt.where(Deposit.transaction_date <= date_to)
-        count_stmt = count_stmt.where(Deposit.transaction_date <= date_to)
-        property_stmt = property_stmt.where(Deposit.transaction_date <= date_to)
+        filters.append(Deposit.transaction_date <= date_to)
+
+    amount_stmt = select(func.coalesce(func.sum(Deposit.amount), 0)).where(*filters)
+    count_stmt = select(func.count()).select_from(Deposit).where(*filters)
+    property_stmt = (
+        select(func.count(func.distinct(Deposit.property_id)))
+        .select_from(Deposit)
+        .where(*filters)
+    )
 
     total_amount = db.scalar(amount_stmt) or 0
     deposit_count = db.scalar(count_stmt) or 0
@@ -171,6 +172,7 @@ def find_deposit_gaps(
                     Deposit.property_id == prop.id,
                     Deposit.transaction_date >= period_start,
                     Deposit.transaction_date <= period_end,
+                    Deposit.is_rental_income.is_(False),
                 )
             )
         ).all()
@@ -204,17 +206,24 @@ def create_deposit(db: Session, payload: DepositCreate) -> DepositRead:
     if not owner:
         raise HTTPException(status_code=404, detail="Owner not found")
 
-    bank_account = db.get(BankAccount, payload.bank_account_id)
-    if not bank_account:
-        raise HTTPException(status_code=404, detail="Bank account not found")
-    if bank_account.property_id != payload.property_id:
-        raise HTTPException(
-            status_code=400,
-            detail="Bank account does not belong to the selected property",
-        )
+    bank_account = None
+    account_number = None
+    if payload.bank_account_id:
+        bank_account = db.get(BankAccount, payload.bank_account_id)
+        if not bank_account:
+            raise HTTPException(status_code=404, detail="Bank account not found")
+        if (
+            bank_account.property_id is not None
+            and bank_account.property_id != payload.property_id
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="Bank account does not belong to the selected property",
+            )
+        account_number = bank_account.account_number
 
     deposit = Deposit(
-        bank_account_id=bank_account.id,
+        bank_account_id=bank_account.id if bank_account else None,
         property_id=payload.property_id,
         transaction_date=payload.transaction_date,
         amount=payload.amount,
@@ -230,5 +239,5 @@ def create_deposit(db: Session, payload: DepositCreate) -> DepositRead:
         deposit,
         property_row.name,
         owner.name,
-        bank_account.account_number,
+        account_number,
     )

@@ -4,12 +4,22 @@ import uuid
 from datetime import date
 from decimal import Decimal
 
-from sqlalchemy import CheckConstraint, Date, ForeignKey, Numeric, String, Text
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    Date,
+    ForeignKey,
+    Numeric,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
 from app.models.base import TimestampMixin, uuid_pk
 
+# Preferred vocabulary — free-text client categories/methods are also allowed.
 EXPENSE_CATEGORIES = (
     "maintenance",
     "tax",
@@ -24,6 +34,8 @@ EXPENSE_SOURCES = (
     "credit_card",
     "manual_owner",
     "manual_company",
+    "management_ledger",
+    "bank_statement",
 )
 
 PAYMENT_METHODS = (
@@ -32,12 +44,16 @@ PAYMENT_METHODS = (
     "bank_transfer",
     "owner_personal",
     "company_account",
+    "cash",
 )
 
 
 class Expense(Base, TimestampMixin):
     __tablename__ = "expenses"
-    __table_args__ = (CheckConstraint("amount > 0", name="ck_expenses_amount_positive"),)
+    __table_args__ = (
+        CheckConstraint("amount > 0", name="ck_expenses_amount_positive"),
+        UniqueConstraint("import_key", name="uq_expenses_import_key"),
+    )
 
     id: Mapped[uuid.UUID] = uuid_pk()
     property_id: Mapped[uuid.UUID] = mapped_column(
@@ -46,11 +62,18 @@ class Expense(Base, TimestampMixin):
     transaction_date: Mapped[date] = mapped_column(Date, nullable=False)
     amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     currency: Mapped[str] = mapped_column(String(3), nullable=False, default="ILS")
-    category: Mapped[str] = mapped_column(String(50), nullable=False)
+    # Free-text allowed (client Section values); preferred enums above for UI filters
+    category: Mapped[str] = mapped_column(String(255), nullable=False)
     source: Mapped[str] = mapped_column(String(50), nullable=False)
     payment_method: Mapped[str] = mapped_column(String(50), nullable=False)
     vendor_name: Mapped[str | None] = mapped_column(String(255))
     reference: Mapped[str | None] = mapped_column(String(100))
     description: Mapped[str | None] = mapped_column(Text)
+    notes: Mapped[str | None] = mapped_column(Text)
+    receipt_ref: Mapped[str | None] = mapped_column(String(100))
+    reconciled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # True when Excel "He/She paid" — resident paid directly (not company float)
+    paid_by_resident: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    import_key: Mapped[str | None] = mapped_column(String(255))
 
     property: Mapped["Property"] = relationship(back_populates="expenses")

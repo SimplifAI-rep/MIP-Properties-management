@@ -27,8 +27,10 @@ class OwnerPropertySummary(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID
+    client_prop_id: str
     name: str
     address: str | None = None
+    city: str | None = None
     status: str
     deposit_count: int = 0
     total_deposits: Decimal = Decimal("0")
@@ -47,6 +49,8 @@ class BankAccountRead(BaseModel):
     bank_name: str
     account_number: str
     currency: str
+    label: str | None = None
+    property_id: UUID | None = None
 
 
 class DepositRead(BaseModel):
@@ -56,22 +60,25 @@ class DepositRead(BaseModel):
     property_id: UUID
     property_name: str
     owner_name: str
-    bank_account_id: UUID
-    account_number: str
+    bank_account_id: UUID | None = None
+    account_number: str | None = None
     transaction_date: date
     amount: Decimal
     currency: str
     reference: str | None = None
     description: str | None = None
     source: str
+    is_rental_income: bool = False
 
 
 class PropertyRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID
+    client_prop_id: str
     name: str
     address: str | None = None
+    city: str | None = None
     status: str
     owner_id: UUID
     owner_name: str
@@ -112,7 +119,7 @@ class DepositGap(BaseModel):
 
 class DepositCreate(BaseModel):
     property_id: UUID
-    bank_account_id: UUID
+    bank_account_id: UUID | None = None
     transaction_date: date
     amount: Decimal = Field(gt=0)
     currency: str = "ILS"
@@ -189,6 +196,10 @@ class ExpenseRead(BaseModel):
     vendor_name: str | None = None
     reference: str | None = None
     description: str | None = None
+    notes: str | None = None
+    receipt_ref: str | None = None
+    reconciled: bool = False
+    paid_by_resident: bool = False
 
 
 class ExpenseCreate(BaseModel):

@@ -15,8 +15,10 @@ export interface OwnerSummary extends Owner {
 
 export interface OwnerPropertySummary {
   id: string;
+  client_prop_id: string;
   name: string;
   address: string | null;
+  city: string | null;
   status: string;
   deposit_count: number;
   total_deposits: string;
@@ -33,6 +35,8 @@ export interface BankAccount {
   bank_name: string;
   account_number: string;
   currency: string;
+  label?: string | null;
+  property_id?: string | null;
 }
 
 export interface Deposit {
@@ -40,20 +44,23 @@ export interface Deposit {
   property_id: string;
   property_name: string;
   owner_name: string;
-  bank_account_id: string;
-  account_number: string;
+  bank_account_id: string | null;
+  account_number: string | null;
   transaction_date: string;
   amount: string;
   currency: string;
   reference: string | null;
   description: string | null;
   source: string;
+  is_rental_income?: boolean;
 }
 
 export interface Property {
   id: string;
+  client_prop_id: string;
   name: string;
   address: string | null;
+  city: string | null;
   status: string;
   owner_id: string;
   owner_name: string;
@@ -140,6 +147,10 @@ export interface Expense {
   vendor_name: string | null;
   reference: string | null;
   description: string | null;
+  notes?: string | null;
+  receipt_ref?: string | null;
+  reconciled?: boolean;
+  paid_by_resident?: boolean;
 }
 
 export interface ExpenseListResponse {

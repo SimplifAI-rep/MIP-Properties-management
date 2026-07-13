@@ -6,12 +6,7 @@ from fastapi import HTTPException
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
-from app.models.expense import (
-    EXPENSE_CATEGORIES,
-    EXPENSE_SOURCES,
-    PAYMENT_METHODS,
-    Expense,
-)
+from app.models.expense import Expense
 from app.models.owner import Owner
 from app.models.property import Property
 from app.schemas import ExpenseCategoryTotal, ExpenseCreate, ExpenseRead
@@ -36,6 +31,10 @@ def expense_to_read(
         vendor_name=expense.vendor_name,
         reference=expense.reference,
         description=expense.description,
+        notes=expense.notes,
+        receipt_ref=expense.receipt_ref,
+        reconciled=bool(expense.reconciled),
+        paid_by_resident=bool(expense.paid_by_resident),
     )
 
 
@@ -45,21 +44,13 @@ def _validate_expense_enums(
     source: str,
     payment_method: str,
 ) -> None:
-    if category not in EXPENSE_CATEGORIES:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid category. Allowed: {', '.join(EXPENSE_CATEGORIES)}",
-        )
-    if source not in EXPENSE_SOURCES:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid source. Allowed: {', '.join(EXPENSE_SOURCES)}",
-        )
-    if payment_method not in PAYMENT_METHODS:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid payment_method. Allowed: {', '.join(PAYMENT_METHODS)}",
-        )
+    """Validate required fields are non-empty. Preferred enums are optional."""
+    if not category or not str(category).strip():
+        raise HTTPException(status_code=400, detail="category is required")
+    if not source or not str(source).strip():
+        raise HTTPException(status_code=400, detail="source is required")
+    if not payment_method or not str(payment_method).strip():
+        raise HTTPException(status_code=400, detail="payment_method is required")
 
 
 def list_expenses(
@@ -165,7 +156,8 @@ def get_expense_summary(
     date_from: date | None = None,
     date_to: date | None = None,
 ) -> dict:
-    filters = []
+    # Resident-paid rows are informational only — exclude from company totals
+    filters = [Expense.paid_by_resident.is_(False)]
     if date_from:
         filters.append(Expense.transaction_date >= date_from)
     if date_to:

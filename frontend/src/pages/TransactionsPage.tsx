@@ -26,6 +26,8 @@ interface UnifiedTransaction {
   currency: string;
   details: string;
   description: string | null;
+  paid_by_resident?: boolean;
+  is_rental_income?: boolean;
 }
 
 const CATEGORIES = [
@@ -68,8 +70,9 @@ function depositToUnified(deposit: Deposit): UnifiedTransaction {
     owner_name: deposit.owner_name,
     amount: deposit.amount,
     currency: deposit.currency,
-    details: deposit.account_number,
+    details: deposit.account_number ?? deposit.source,
     description: deposit.description,
+    is_rental_income: Boolean(deposit.is_rental_income),
   };
 }
 
@@ -86,6 +89,7 @@ function expenseToUnified(expense: Expense): UnifiedTransaction {
     description: expense.vendor_name
       ? `${expense.vendor_name}${expense.description ? ` — ${expense.description}` : ''}`
       : expense.description,
+    paid_by_resident: Boolean(expense.paid_by_resident),
   };
 }
 
@@ -269,7 +273,8 @@ export function TransactionsPage() {
         <div>
           <h2 className="page-heading">Transactions</h2>
           <p className="page-desc">
-            View deposits and expenses together. Deposits are highlighted in green, expenses in red.
+            View deposits and expenses together. Deposits are highlighted in green, expenses in
+            red. Resident-paid bills and rental income are marked and excluded from company totals.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -306,6 +311,8 @@ export function TransactionsPage() {
                   currency: row.currency,
                   details: row.details,
                   description: row.description,
+                  paid_by_resident: row.paid_by_resident ? 'yes' : '',
+                  rental_income: row.is_rental_income ? 'yes' : '',
                 })),
                 'transactions.csv',
               )
@@ -611,12 +618,38 @@ export function TransactionsPage() {
               {items.map((row) => (
                 <tr
                   key={`${row.kind}-${row.id}`}
-                  className={row.kind === 'deposit' ? 'row-deposit' : 'row-expense'}
+                  className={
+                    row.paid_by_resident
+                      ? 'row-resident-paid'
+                      : row.is_rental_income
+                        ? 'row-rental-income'
+                        : row.kind === 'deposit'
+                          ? 'row-deposit'
+                          : 'row-expense'
+                  }
                 >
                   <td className="px-5 py-3">
-                    <span className={row.kind === 'deposit' ? 'badge-deposit' : 'badge-expense'}>
-                      {row.kind === 'deposit' ? 'Deposit' : 'Expense'}
-                    </span>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className={row.kind === 'deposit' ? 'badge-deposit' : 'badge-expense'}>
+                        {row.kind === 'deposit' ? 'Deposit' : 'Expense'}
+                      </span>
+                      {row.paid_by_resident ? (
+                        <span
+                          className="badge-resident-paid"
+                          title="Paid directly by resident (He/She paid)"
+                        >
+                          Resident paid
+                        </span>
+                      ) : null}
+                      {row.is_rental_income ? (
+                        <span
+                          className="badge-rental-income"
+                          title="Rental income (not company float)"
+                        >
+                          Rental income
+                        </span>
+                      ) : null}
+                    </div>
                   </td>
                   <td className="px-5 py-3">{formatDate(row.transaction_date)}</td>
                   <td className="px-5 py-3 font-medium">{row.property_name}</td>
@@ -624,7 +657,13 @@ export function TransactionsPage() {
                   <td className="px-5 py-3">{row.details}</td>
                   <td
                     className={`px-5 py-3 ${
-                      row.kind === 'deposit' ? 'amount-deposit' : 'amount-expense'
+                      row.paid_by_resident
+                        ? 'amount-resident-paid'
+                        : row.is_rental_income
+                          ? 'amount-rental-income'
+                          : row.kind === 'deposit'
+                            ? 'amount-deposit'
+                            : 'amount-expense'
                     }`}
                   >
                     {row.kind === 'deposit' ? '+' : '−'}

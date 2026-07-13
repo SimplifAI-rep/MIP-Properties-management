@@ -189,6 +189,14 @@
     @apply inline-flex rounded-full bg-rose-100 px-2.5 py-0.5 text-xs font-medium text-rose-800 dark:bg-rose-900/40 dark:text-rose-300;
   }
 
+  .badge-resident-paid {
+    @apply inline-flex rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-medium text-amber-900 dark:bg-amber-900/40 dark:text-amber-200;
+  }
+
+  .badge-rental-income {
+    @apply inline-flex rounded-full bg-sky-100 px-2.5 py-0.5 text-xs font-medium text-sky-900 dark:bg-sky-900/40 dark:text-sky-200;
+  }
+
   .row-deposit {
     @apply border-t border-emerald-100 bg-emerald-50/40 dark:border-emerald-900/30 dark:bg-emerald-950/20;
   }
@@ -197,11 +205,27 @@
     @apply border-t border-rose-100 bg-rose-50/40 dark:border-rose-900/30 dark:bg-rose-950/20;
   }
 
+  .row-resident-paid {
+    @apply border-t border-amber-100 bg-amber-50/40 dark:border-amber-900/30 dark:bg-amber-950/20;
+  }
+
+  .row-rental-income {
+    @apply border-t border-sky-100 bg-sky-50/40 dark:border-sky-900/30 dark:bg-sky-950/20;
+  }
+
   .amount-deposit {
     @apply font-medium text-emerald-700 dark:text-emerald-400;
   }
 
   .amount-expense {
     @apply font-medium text-rose-700 dark:text-rose-400;
+  }
+
+  .amount-resident-paid {
+    @apply font-medium text-amber-800 dark:text-amber-300;
+  }
+
+  .amount-rental-income {
+    @apply font-medium text-sky-800 dark:text-sky-300;
   }
 }

@@ -93,19 +93,20 @@ def test_create_manual_expense(client):
     assert body["property_name"] == "Rothschild 12"
 
 
-def test_create_expense_rejects_invalid_category(client):
+def test_create_expense_allows_free_text_category(client):
     response = client.post(
         "/api/v1/expenses",
         json={
             "property_id": str(PROPERTY_ROTHSCHILD_ID),
             "transaction_date": "2026-03-10",
             "amount": "100.00",
-            "category": "invalid",
+            "category": "plumber",
             "source": "manual_owner",
             "payment_method": "owner_personal",
         },
     )
-    assert response.status_code == 400
+    assert response.status_code == 201
+    assert response.json()["category"] == "plumber"
 
 
 def test_create_expense_rejects_non_positive_amount(client):

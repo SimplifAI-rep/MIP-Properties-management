@@ -82,7 +82,9 @@ def _detect_header(values: list[Any]) -> dict[str, int] | None:
         if "prop" in label and "id" in label:
             mapping["prop_id"] = idx
         elif label == "date":
-            mapping["date"] = idx
+            # Prefer the first Date column (ledger); ignore later task-tracker Date cols
+            if "date" not in mapping:
+                mapping["date"] = idx
         elif label in {"section"}:
             mapping["section"] = idx
         elif label in {"notes", "note"}:
@@ -93,7 +95,12 @@ def _detect_header(values: list[Any]) -> dict[str, int] | None:
             mapping["amount"] = idx
         elif label == "inflow":
             mapping["inflow"] = idx
-        elif "he/she" in label or label == "he/she paid":
+        elif (
+            "he/she" in label
+            or label in {"he/she paid", "she paid", "he paid"}
+            or label.endswith(" she paid")
+            or label.endswith(" he paid")
+        ):
             mapping["he_she_paid"] = idx
         elif "אהרון" in label or "שילם" in label:
             mapping["owner_paid"] = idx

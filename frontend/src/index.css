@@ -197,6 +197,30 @@
     @apply inline-flex rounded-full bg-sky-100 px-2.5 py-0.5 text-xs font-medium text-sky-900 dark:bg-sky-900/40 dark:text-sky-200;
   }
 
+  .badge-mip-paid {
+    @apply inline-flex rounded-full bg-teal-100 px-2.5 py-0.5 text-xs font-medium text-teal-900 dark:bg-teal-900/40 dark:text-teal-200;
+  }
+
+  .badge-owner-paid {
+    @apply inline-flex rounded-full bg-orange-100 px-2.5 py-0.5 text-xs font-medium text-orange-900 dark:bg-orange-900/40 dark:text-orange-200;
+  }
+
+  .badge-nearly-cc {
+    @apply inline-flex rounded-full bg-indigo-100 px-2.5 py-0.5 text-xs font-medium text-indigo-900 dark:bg-indigo-900/40 dark:text-indigo-200;
+  }
+
+  .badge-cash-paid {
+    @apply inline-flex rounded-full bg-lime-100 px-2.5 py-0.5 text-xs font-medium text-lime-900 dark:bg-lime-900/40 dark:text-lime-200;
+  }
+
+  .badge-other-paid {
+    @apply inline-flex rounded-full bg-stone-200 px-2.5 py-0.5 text-xs font-medium text-stone-800 dark:bg-stone-700 dark:text-stone-200;
+  }
+
+  .badge-bank-statement {
+    @apply inline-flex rounded-full bg-slate-200 px-2.5 py-0.5 text-xs font-medium text-slate-800 dark:bg-slate-700 dark:text-slate-200;
+  }
+
   .row-deposit {
     @apply border-t border-emerald-100 bg-emerald-50/40 dark:border-emerald-900/30 dark:bg-emerald-950/20;
   }
@@ -209,8 +233,28 @@
     @apply border-t border-amber-100 bg-amber-50/40 dark:border-amber-900/30 dark:bg-amber-950/20;
   }
 
+  .row-owner-paid {
+    @apply border-t border-orange-100 bg-orange-50/40 dark:border-orange-900/30 dark:bg-orange-950/20;
+  }
+
   .row-rental-income {
     @apply border-t border-sky-100 bg-sky-50/40 dark:border-sky-900/30 dark:bg-sky-950/20;
+  }
+
+  .row-mip-paid {
+    @apply border-t border-teal-100 bg-teal-50/40 dark:border-teal-900/30 dark:bg-teal-950/20;
+  }
+
+  .row-nearly-cc {
+    @apply border-t border-indigo-100 bg-indigo-50/40 dark:border-indigo-900/30 dark:bg-indigo-950/20;
+  }
+
+  .row-cash-paid {
+    @apply border-t border-lime-100 bg-lime-50/40 dark:border-lime-900/30 dark:bg-lime-950/20;
+  }
+
+  .row-other-paid {
+    @apply border-t border-stone-200 bg-stone-50/50 dark:border-stone-700 dark:bg-stone-900/30;
   }
 
   .amount-deposit {
@@ -225,7 +269,27 @@
     @apply font-medium text-amber-800 dark:text-amber-300;
   }
 
+  .amount-owner-paid {
+    @apply font-medium text-orange-800 dark:text-orange-300;
+  }
+
   .amount-rental-income {
     @apply font-medium text-sky-800 dark:text-sky-300;
+  }
+
+  .amount-mip-paid {
+    @apply font-medium text-teal-800 dark:text-teal-300;
+  }
+
+  .amount-nearly-cc {
+    @apply font-medium text-indigo-800 dark:text-indigo-300;
+  }
+
+  .amount-cash-paid {
+    @apply font-medium text-lime-800 dark:text-lime-300;
+  }
+
+  .amount-other-paid {
+    @apply font-medium text-stone-800 dark:text-stone-300;
   }
 }

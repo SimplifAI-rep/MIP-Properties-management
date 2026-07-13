@@ -27,7 +27,7 @@ def list_properties(db: Session = Depends(get_db)) -> list[PropertyRead]:
         .join(Owner, Property.owner_id == Owner.id)
         .outerjoin(Deposit, Deposit.property_id == Property.id)
         .group_by(Property.id, Owner.name)
-        .order_by(Property.name)
+        .order_by(Property.client_prop_id)
     ).all()
 
     return [

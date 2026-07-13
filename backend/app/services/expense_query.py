@@ -16,10 +16,12 @@ def expense_to_read(
     expense: Expense,
     property_name: str,
     owner_name: str,
+    client_prop_id: str,
 ) -> ExpenseRead:
     return ExpenseRead(
         id=expense.id,
         property_id=expense.property_id,
+        client_prop_id=client_prop_id,
         property_name=property_name,
         owner_name=owner_name,
         transaction_date=expense.transaction_date,
@@ -35,6 +37,9 @@ def expense_to_read(
         receipt_ref=expense.receipt_ref,
         reconciled=bool(expense.reconciled),
         paid_by_resident=bool(expense.paid_by_resident),
+        paid_by_company=bool(expense.paid_by_company),
+        paid_by_owner=bool(expense.paid_by_owner),
+        ledger_column=expense.ledger_column,
     )
 
 
@@ -57,6 +62,7 @@ def list_expenses(
     db: Session,
     *,
     property_id: UUID | None = None,
+    client_prop_id: str | None = None,
     owner_id: UUID | None = None,
     category: str | None = None,
     source: str | None = None,
@@ -69,11 +75,11 @@ def list_expenses(
     page: int = 1,
     page_size: int = 50,
 ) -> tuple[list[ExpenseRead], int]:
-    page_size = min(max(page_size, 1), 200)
+    page_size = min(max(page_size, 1), 2000)
     page = max(page, 1)
 
     stmt = (
-        select(Expense, Property.name, Owner.name)
+        select(Expense, Property.name, Owner.name, Property.client_prop_id)
         .join(Property, Expense.property_id == Property.id)
         .join(Owner, Property.owner_id == Owner.id)
         .order_by(Expense.transaction_date.desc())
@@ -81,6 +87,8 @@ def list_expenses(
 
     if property_id:
         stmt = stmt.where(Expense.property_id == property_id)
+    if client_prop_id:
+        stmt = stmt.where(func.upper(Property.client_prop_id) == client_prop_id.strip().upper())
     if owner_id:
         stmt = stmt.where(Property.owner_id == owner_id)
     if category:
@@ -111,8 +119,8 @@ def list_expenses(
 
     rows = db.execute(stmt.offset((page - 1) * page_size).limit(page_size)).all()
     items = [
-        expense_to_read(expense, property_name, owner_name)
-        for expense, property_name, owner_name in rows
+        expense_to_read(expense, property_name, owner_name, client_prop_id_val)
+        for expense, property_name, owner_name, client_prop_id_val in rows
     ]
     return items, total
 
@@ -147,7 +155,7 @@ def create_expense(db: Session, payload: ExpenseCreate) -> ExpenseRead:
     db.add(expense)
     db.commit()
     db.refresh(expense)
-    return expense_to_read(expense, property_row.name, owner.name)
+    return expense_to_read(expense, property_row.name, owner.name, property_row.client_prop_id)
 
 
 def get_expense_summary(
@@ -156,8 +164,11 @@ def get_expense_summary(
     date_from: date | None = None,
     date_to: date | None = None,
 ) -> dict:
-    # Resident-paid rows are informational only — exclude from company totals
-    filters = [Expense.paid_by_resident.is_(False)]
+    # Resident/owner-paid rows are informational only — exclude from company totals
+    filters = [
+        Expense.paid_by_resident.is_(False),
+        Expense.paid_by_owner.is_(False),
+    ]
     if date_from:
         filters.append(Expense.transaction_date >= date_from)
     if date_to:

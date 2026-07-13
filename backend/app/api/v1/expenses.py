@@ -15,6 +15,7 @@ router = APIRouter(prefix="/expenses", tags=["expenses"])
 @router.get("", response_model=ExpenseListResponse)
 def get_expenses(
     property_id: UUID | None = None,
+    client_prop_id: str | None = None,
     owner_id: UUID | None = None,
     category: str | None = None,
     source: str | None = None,
@@ -24,12 +25,13 @@ def get_expenses(
     min_amount: Decimal | None = None,
     max_amount: Decimal | None = None,
     page: int = Query(1, ge=1),
-    page_size: int = Query(50, ge=1, le=200),
+    page_size: int = Query(50, ge=1, le=2000),
     db: Session = Depends(get_db),
 ) -> ExpenseListResponse:
     items, total = list_expenses(
         db,
         property_id=property_id,
+        client_prop_id=client_prop_id,
         owner_id=owner_id,
         category=category,
         source=source,

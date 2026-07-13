@@ -74,6 +74,12 @@ class Expense(Base, TimestampMixin):
     reconciled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     # True when Excel "He/She paid" — resident paid directly (not company float)
     paid_by_resident: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # True when Excel "MIP" — paid by the company (shown with badge; counts in company totals)
+    paid_by_company: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # True when Excel owner-paid column (e.g. "אהרון שילם") — owner paid personally
+    paid_by_owner: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Special ledger money column for UI badge: nearly_cc | cash | other (null = Amount/etc.)
+    ledger_column: Mapped[str | None] = mapped_column(String(50))
     import_key: Mapped[str | None] = mapped_column(String(255))
 
     property: Mapped["Property"] = relationship(back_populates="expenses")

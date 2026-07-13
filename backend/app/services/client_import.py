@@ -513,6 +513,11 @@ class ClientDataImportService:
             "skipped": 0,
             "seen": 0,
             "resident_paid": 0,
+            "owner_paid": 0,
+            "paid_by_company": 0,
+            "nearly_cc": 0,
+            "cash": 0,
+            "other": 0,
             "rental_income": 0,
         }
         header_idx: dict[str, int] | None = None
@@ -561,6 +566,11 @@ class ClientDataImportService:
             amount = _parse_amount(col("amount"))
             inflow = _parse_amount(col("inflow"))
             resident_paid_amount = _parse_amount(col("he_she_paid"))
+            owner_paid_amount = _parse_amount(col("owner_paid"))
+            mip_paid_amount = _parse_amount(col("mip"))
+            nearly_cc_amount = _parse_amount(col("nearly_cc"))
+            cash_amount = _parse_amount(col("cash"))
+            other_amount = _parse_amount(col("other"))
             rental_income_amount = _parse_amount(col("rental_income"))
             section = _optional_str(col("section")) or _optional_str(col("type")) or "other"
             notes = _optional_str(col("notes"))
@@ -578,11 +588,16 @@ class ClientDataImportService:
                 self.stats.rows_skipped_empty += 1
                 continue
 
-            # Company expense, resident-paid, company inflow, or rental income
+            # Any money column on the ledger row
             if (
                 amount is None
                 and inflow is None
                 and resident_paid_amount is None
+                and owner_paid_amount is None
+                and mip_paid_amount is None
+                and nearly_cc_amount is None
+                and cash_amount is None
+                and other_amount is None
                 and rental_income_amount is None
             ):
                 counts["skipped"] += 1
@@ -591,70 +606,128 @@ class ClientDataImportService:
 
             source, payment_method, method_ref = _map_payment(method)
             sheet_slug = re.sub(r"[^A-Za-z0-9]+", "", sheet_label).lower() or "sheet"
+            desc_parts = [p for p in (section, notes) if p]
+            description = " | ".join(desc_parts) if desc_parts else section
+
+            def add_expense(
+                *,
+                key_kind: str,
+                exp_amount: Decimal,
+                exp_source: str,
+                exp_method: str,
+                paid_by_resident: bool = False,
+                paid_by_company: bool = False,
+                paid_by_owner: bool = False,
+                ledger_column: str | None = None,
+                count_key: str | None = None,
+            ) -> None:
+                import_key = (
+                    f"mgmt:{sheet_slug}:r{row_number}:{key_kind}:"
+                    f"{tx_date.isoformat()}:{exp_amount}"
+                )
+                if import_key in self.existing_expense_keys:
+                    self.stats.expenses_skipped += 1
+                    return
+                self.db.add(
+                    Expense(
+                        property_id=prop.id,
+                        transaction_date=tx_date,
+                        amount=exp_amount,
+                        currency=self.settings.default_currency,
+                        category=section[:255],
+                        source=exp_source,
+                        payment_method=exp_method,
+                        vendor_name=vendor,
+                        reference=method_ref or receipt,
+                        description=description,
+                        notes=notes,
+                        receipt_ref=receipt,
+                        reconciled=reconciled,
+                        paid_by_resident=paid_by_resident,
+                        paid_by_company=paid_by_company,
+                        paid_by_owner=paid_by_owner,
+                        ledger_column=ledger_column,
+                        import_key=import_key,
+                    )
+                )
+                self.existing_expense_keys.add(import_key)
+                self.stats.expenses_created += 1
+                counts["expenses"] += 1
+                if count_key:
+                    counts[count_key] = counts.get(count_key, 0) + 1
 
             if amount is not None:
-                import_key = f"mgmt:{sheet_slug}:r{row_number}:expense:{tx_date.isoformat()}:{amount}"
-                if import_key not in self.existing_expense_keys:
-                    desc_parts = [p for p in (section, notes) if p]
-                    self.db.add(
-                        Expense(
-                            property_id=prop.id,
-                            transaction_date=tx_date,
-                            amount=amount,
-                            currency=self.settings.default_currency,
-                            category=section[:255],
-                            source=source,
-                            payment_method=payment_method,
-                            vendor_name=vendor,
-                            reference=method_ref or receipt,
-                            description=" | ".join(desc_parts) if desc_parts else section,
-                            notes=notes,
-                            receipt_ref=receipt,
-                            reconciled=reconciled,
-                            paid_by_resident=False,
-                            import_key=import_key,
-                        )
-                    )
-                    self.existing_expense_keys.add(import_key)
-                    self.stats.expenses_created += 1
-                    counts["expenses"] += 1
-                else:
-                    self.stats.expenses_skipped += 1
-
-            # Resident-paid directly (He/She paid) — shown in UI, excluded from company totals
-            if resident_paid_amount is not None:
-                # Prefer resident-only rows; if Amount also set, still record resident payment
-                import_key = (
-                    f"mgmt:{sheet_slug}:r{row_number}:resident:"
-                    f"{tx_date.isoformat()}:{resident_paid_amount}"
+                add_expense(
+                    key_kind="expense",
+                    exp_amount=amount,
+                    exp_source=source,
+                    exp_method=payment_method,
                 )
-                if import_key not in self.existing_expense_keys:
-                    desc_parts = [p for p in (section, notes) if p]
-                    self.db.add(
-                        Expense(
-                            property_id=prop.id,
-                            transaction_date=tx_date,
-                            amount=resident_paid_amount,
-                            currency=self.settings.default_currency,
-                            category=section[:255],
-                            source="manual_owner",
-                            payment_method="owner_personal",
-                            vendor_name=vendor,
-                            reference=method_ref or receipt,
-                            description=" | ".join(desc_parts) if desc_parts else section,
-                            notes=notes,
-                            receipt_ref=receipt,
-                            reconciled=reconciled,
-                            paid_by_resident=True,
-                            import_key=import_key,
-                        )
-                    )
-                    self.existing_expense_keys.add(import_key)
-                    self.stats.expenses_created += 1
-                    counts["expenses"] += 1
-                    counts["resident_paid"] = counts.get("resident_paid", 0) + 1
-                else:
-                    self.stats.expenses_skipped += 1
+
+            # MIP column — paid by the company
+            if mip_paid_amount is not None:
+                add_expense(
+                    key_kind="mip",
+                    exp_amount=mip_paid_amount,
+                    exp_source="manual_company",
+                    exp_method="company_account",
+                    paid_by_company=True,
+                    count_key="paid_by_company",
+                )
+
+            # Resident-paid (He/She paid) — excluded from company totals
+            if resident_paid_amount is not None:
+                add_expense(
+                    key_kind="resident",
+                    exp_amount=resident_paid_amount,
+                    exp_source="manual_owner",
+                    exp_method="owner_personal",
+                    paid_by_resident=True,
+                    count_key="resident_paid",
+                )
+
+            # Owner-paid (e.g. "אהרון שילם") — excluded from company totals
+            if owner_paid_amount is not None:
+                add_expense(
+                    key_kind="owner",
+                    exp_amount=owner_paid_amount,
+                    exp_source="manual_owner",
+                    exp_method="owner_personal",
+                    paid_by_owner=True,
+                    ledger_column="owner_paid",
+                    count_key="owner_paid",
+                )
+
+            # Nearly CC / Cash / Other — alternate payment lanes on some property sheets
+            if nearly_cc_amount is not None:
+                add_expense(
+                    key_kind="nearlycc",
+                    exp_amount=nearly_cc_amount,
+                    exp_source="credit_card",
+                    exp_method="credit_card",
+                    ledger_column="nearly_cc",
+                    count_key="nearly_cc",
+                )
+
+            if cash_amount is not None:
+                add_expense(
+                    key_kind="cash",
+                    exp_amount=cash_amount,
+                    exp_source="management_ledger",
+                    exp_method="cash",
+                    ledger_column="cash",
+                    count_key="cash",
+                )
+
+            if other_amount is not None:
+                add_expense(
+                    key_kind="other",
+                    exp_amount=other_amount,
+                    exp_source="management_ledger",
+                    exp_method="company_account",
+                    ledger_column="other",
+                    count_key="other",
+                )
 
             if inflow is not None:
                 import_key = f"mgmt:{sheet_slug}:r{row_number}:inflow:{tx_date.isoformat()}:{inflow}"
@@ -686,7 +759,6 @@ class ClientDataImportService:
                     f"{tx_date.isoformat()}:{rental_income_amount}"
                 )
                 if import_key not in self.existing_deposit_keys:
-                    desc_parts = [p for p in (section, notes) if p]
                     self.db.add(
                         Deposit(
                             bank_account_id=None,
@@ -695,7 +767,7 @@ class ClientDataImportService:
                             amount=rental_income_amount,
                             currency=self.settings.default_currency,
                             reference=receipt or method_ref,
-                            description=" | ".join(desc_parts) if desc_parts else "Rental income",
+                            description=description if desc_parts else "Rental income",
                             source="rental_income",
                             is_rental_income=True,
                             import_key=import_key,
@@ -745,6 +817,16 @@ class ClientDataImportService:
                 mapping["inflow"] = idx
             elif "he/she" in label or label == "he/she paid":
                 mapping["he_she_paid"] = idx
+            elif "אהרון" in label or "שילם" in label:
+                mapping["owner_paid"] = idx
+            elif label == "mip":
+                mapping["mip"] = idx
+            elif "nealy" in label or "nearly" in label:
+                mapping["nearly_cc"] = idx
+            elif label == "cash":
+                mapping["cash"] = idx
+            elif label == "other":
+                mapping["other"] = idx
             elif "rental" in label or label == "rent":
                 mapping["rental_income"] = idx
             elif label in {"method"}:

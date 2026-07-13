@@ -57,6 +57,7 @@ export const api = {
     request<DepositListResponse>(
       `/deposits${toQuery({
         property_id: filters.property_id,
+        client_prop_id: filters.client_prop_id,
         owner_id: filters.owner_id,
         date_from: filters.date_from,
         date_to: filters.date_to,
@@ -94,6 +95,7 @@ export const api = {
     request<ExpenseListResponse>(
       `/expenses${toQuery({
         property_id: filters.property_id,
+        client_prop_id: filters.client_prop_id,
         owner_id: filters.owner_id,
         category: filters.category,
         source: filters.source,

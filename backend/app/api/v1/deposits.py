@@ -20,18 +20,20 @@ router = APIRouter(prefix="/deposits", tags=["deposits"])
 @router.get("", response_model=DepositListResponse)
 def get_deposits(
     property_id: UUID | None = None,
+    client_prop_id: str | None = None,
     owner_id: UUID | None = None,
     date_from: date | None = None,
     date_to: date | None = None,
     min_amount: Decimal | None = None,
     max_amount: Decimal | None = None,
     page: int = Query(1, ge=1),
-    page_size: int = Query(50, ge=1, le=200),
+    page_size: int = Query(50, ge=1, le=2000),
     db: Session = Depends(get_db),
 ) -> DepositListResponse:
     items, total = list_deposits(
         db,
         property_id=property_id,
+        client_prop_id=client_prop_id,
         owner_id=owner_id,
         date_from=date_from,
         date_to=date_to,

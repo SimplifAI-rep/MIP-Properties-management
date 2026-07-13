@@ -20,10 +20,12 @@ def deposit_to_read(
     property_name: str,
     owner_name: str,
     account_number: str | None,
+    client_prop_id: str,
 ) -> DepositRead:
     return DepositRead(
         id=deposit.id,
         property_id=deposit.property_id,
+        client_prop_id=client_prop_id,
         property_name=property_name,
         owner_name=owner_name,
         bank_account_id=deposit.bank_account_id,
@@ -42,6 +44,7 @@ def list_deposits(
     db: Session,
     *,
     property_id: UUID | None = None,
+    client_prop_id: str | None = None,
     owner_id: UUID | None = None,
     date_from: date | None = None,
     date_to: date | None = None,
@@ -50,11 +53,17 @@ def list_deposits(
     page: int = 1,
     page_size: int = 50,
 ) -> tuple[list[DepositRead], int]:
-    page_size = min(max(page_size, 1), 200)
+    page_size = min(max(page_size, 1), 2000)
     page = max(page, 1)
 
     stmt = (
-        select(Deposit, Property.name, Owner.name, BankAccount.account_number)
+        select(
+            Deposit,
+            Property.name,
+            Owner.name,
+            BankAccount.account_number,
+            Property.client_prop_id,
+        )
         .join(Property, Deposit.property_id == Property.id)
         .join(Owner, Property.owner_id == Owner.id)
         .outerjoin(BankAccount, Deposit.bank_account_id == BankAccount.id)
@@ -63,6 +72,8 @@ def list_deposits(
 
     if property_id:
         stmt = stmt.where(Deposit.property_id == property_id)
+    if client_prop_id:
+        stmt = stmt.where(func.upper(Property.client_prop_id) == client_prop_id.strip().upper())
     if owner_id:
         stmt = stmt.where(Property.owner_id == owner_id)
     if date_from:
@@ -82,8 +93,10 @@ def list_deposits(
     ).all()
 
     items = [
-        deposit_to_read(deposit, property_name, owner_name, account_number)
-        for deposit, property_name, owner_name, account_number in rows
+        deposit_to_read(
+            deposit, property_name, owner_name, account_number, client_prop_id_val
+        )
+        for deposit, property_name, owner_name, account_number, client_prop_id_val in rows
     ]
     return items, total
 
@@ -240,4 +253,5 @@ def create_deposit(db: Session, payload: DepositCreate) -> DepositRead:
         property_row.name,
         owner.name,
         account_number,
+        property_row.client_prop_id,
     )

@@ -58,6 +58,7 @@ class DepositRead(BaseModel):
 
     id: UUID
     property_id: UUID
+    client_prop_id: str
     property_name: str
     owner_name: str
     bank_account_id: UUID | None = None
@@ -185,6 +186,7 @@ class ExpenseRead(BaseModel):
 
     id: UUID
     property_id: UUID
+    client_prop_id: str
     property_name: str
     owner_name: str
     transaction_date: date
@@ -200,6 +202,9 @@ class ExpenseRead(BaseModel):
     receipt_ref: str | None = None
     reconciled: bool = False
     paid_by_resident: bool = False
+    paid_by_company: bool = False
+    paid_by_owner: bool = False
+    ledger_column: str | None = None
 
 
 class ExpenseCreate(BaseModel):

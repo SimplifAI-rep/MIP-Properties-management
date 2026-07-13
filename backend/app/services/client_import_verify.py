@@ -95,6 +95,16 @@ def _detect_header(values: list[Any]) -> dict[str, int] | None:
             mapping["inflow"] = idx
         elif "he/she" in label or label == "he/she paid":
             mapping["he_she_paid"] = idx
+        elif "אהרון" in label or "שילם" in label:
+            mapping["owner_paid"] = idx
+        elif label == "mip":
+            mapping["mip"] = idx
+        elif "nealy" in label or "nearly" in label:
+            mapping["nearly_cc"] = idx
+        elif label == "cash":
+            mapping["cash"] = idx
+        elif label == "other":
+            mapping["other"] = idx
         elif "rental" in label or label == "rent":
             mapping["rental_income"] = idx
         elif label in {"method"}:
@@ -116,6 +126,11 @@ def count_management_rows(path: Path) -> dict[str, int]:
     expenses = 0
     deposits = 0
     resident_paid = 0
+    owner_paid = 0
+    paid_by_company = 0
+    nearly_cc_paid = 0
+    cash_paid = 0
+    other_paid = 0
     rental_income = 0
     sheets_parsed = 0
 
@@ -147,6 +162,11 @@ def count_management_rows(path: Path) -> dict[str, int]:
             amount = _parse_amount(col("amount"))
             inflow = _parse_amount(col("inflow"))
             resident = _parse_amount(col("he_she_paid"))
+            owner = _parse_amount(col("owner_paid"))
+            mip = _parse_amount(col("mip"))
+            nearly_cc = _parse_amount(col("nearly_cc"))
+            cash = _parse_amount(col("cash"))
+            other = _parse_amount(col("other"))
             rental = _parse_amount(col("rental_income"))
             if tx_date is None:
                 continue
@@ -155,6 +175,21 @@ def count_management_rows(path: Path) -> dict[str, int]:
             if resident is not None:
                 expenses += 1
                 resident_paid += 1
+            if owner is not None:
+                expenses += 1
+                owner_paid += 1
+            if mip is not None:
+                expenses += 1
+                paid_by_company += 1
+            if nearly_cc is not None:
+                expenses += 1
+                nearly_cc_paid += 1
+            if cash is not None:
+                expenses += 1
+                cash_paid += 1
+            if other is not None:
+                expenses += 1
+                other_paid += 1
             if inflow is not None:
                 deposits += 1
             if rental is not None:
@@ -167,6 +202,11 @@ def count_management_rows(path: Path) -> dict[str, int]:
         "mgmt_expense_rows": expenses,
         "mgmt_deposit_rows": deposits,
         "mgmt_resident_paid_rows": resident_paid,
+        "mgmt_owner_paid_rows": owner_paid,
+        "mgmt_mip_paid_rows": paid_by_company,
+        "mgmt_nearly_cc_rows": nearly_cc_paid,
+        "mgmt_cash_rows": cash_paid,
+        "mgmt_other_rows": other_paid,
         "mgmt_rental_income_rows": rental_income,
         "sheets_parsed": sheets_parsed,
     }
@@ -327,6 +367,49 @@ def verify_against_excel(db: Session, data_dir: Path) -> dict[str, Any]:
         or 0
     )
 
+    mgmt_mip_db = (
+        db.scalar(
+            select(func.count())
+            .select_from(Expense)
+            .where(Expense.paid_by_company.is_(True))
+        )
+        or 0
+    )
+
+    mgmt_owner_db = (
+        db.scalar(
+            select(func.count())
+            .select_from(Expense)
+            .where(Expense.paid_by_owner.is_(True))
+        )
+        or 0
+    )
+
+    mgmt_nearly_db = (
+        db.scalar(
+            select(func.count())
+            .select_from(Expense)
+            .where(Expense.ledger_column == "nearly_cc")
+        )
+        or 0
+    )
+    mgmt_cash_db = (
+        db.scalar(
+            select(func.count())
+            .select_from(Expense)
+            .where(Expense.ledger_column == "cash")
+        )
+        or 0
+    )
+    mgmt_other_db = (
+        db.scalar(
+            select(func.count())
+            .select_from(Expense)
+            .where(Expense.ledger_column == "other")
+        )
+        or 0
+    )
+
     mismatches: list[str] = []
     if mgmt_exp_db != mgmt["mgmt_expense_rows"]:
         mismatches.append(
@@ -339,6 +422,26 @@ def verify_against_excel(db: Session, data_dir: Path) -> dict[str, Any]:
     if mgmt_resident_db != mgmt["mgmt_resident_paid_rows"]:
         mismatches.append(
             f"Resident-paid expenses: excel={mgmt['mgmt_resident_paid_rows']} db={mgmt_resident_db}"
+        )
+    if mgmt_owner_db != mgmt["mgmt_owner_paid_rows"]:
+        mismatches.append(
+            f"Owner-paid expenses: excel={mgmt['mgmt_owner_paid_rows']} db={mgmt_owner_db}"
+        )
+    if mgmt_mip_db != mgmt["mgmt_mip_paid_rows"]:
+        mismatches.append(
+            f"MIP-paid expenses: excel={mgmt['mgmt_mip_paid_rows']} db={mgmt_mip_db}"
+        )
+    if mgmt_nearly_db != mgmt["mgmt_nearly_cc_rows"]:
+        mismatches.append(
+            f"Nearly CC expenses: excel={mgmt['mgmt_nearly_cc_rows']} db={mgmt_nearly_db}"
+        )
+    if mgmt_cash_db != mgmt["mgmt_cash_rows"]:
+        mismatches.append(
+            f"Cash expenses: excel={mgmt['mgmt_cash_rows']} db={mgmt_cash_db}"
+        )
+    if mgmt_other_db != mgmt["mgmt_other_rows"]:
+        mismatches.append(
+            f"Other-column expenses: excel={mgmt['mgmt_other_rows']} db={mgmt_other_db}"
         )
     if mgmt_rental_db != mgmt["mgmt_rental_income_rows"]:
         mismatches.append(
@@ -371,6 +474,11 @@ def verify_against_excel(db: Session, data_dir: Path) -> dict[str, Any]:
             "mgmt_expenses": mgmt_exp_db,
             "mgmt_deposits": mgmt_dep_db,
             "resident_paid_expenses": mgmt_resident_db,
+            "owner_paid_expenses": mgmt_owner_db,
+            "mip_paid_expenses": mgmt_mip_db,
+            "nearly_cc_expenses": mgmt_nearly_db,
+            "cash_expenses": mgmt_cash_db,
+            "other_column_expenses": mgmt_other_db,
             "rental_income_deposits": mgmt_rental_db,
             "ledger_source_expenses": ledger_expenses,
         },

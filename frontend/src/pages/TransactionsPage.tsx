@@ -186,12 +186,26 @@ export function TransactionsPage() {
     queryFn: api.getOwners,
   });
   const depositSummaryQuery = useQuery({
-    queryKey: ['deposit-summary'],
-    queryFn: () => api.getDepositSummary(),
+    queryKey: ['deposit-summary', sharedFilters, typeFilter],
+    queryFn: () =>
+      api.getDepositSummary({
+        ...sharedFilters,
+        // Match Excel: rental income is tracked but not part of company float totals
+        include_all: false,
+      }),
+    enabled: typeFilter !== 'expense',
   });
   const expenseSummaryQuery = useQuery({
-    queryKey: ['expense-summary'],
-    queryFn: () => api.getExpenseSummary(),
+    queryKey: ['expense-summary', sharedFilters, category, source, typeFilter],
+    queryFn: () =>
+      api.getExpenseSummary({
+        ...sharedFilters,
+        category,
+        source,
+        // Match Excel: He/She paid and owner-paid are informational only
+        include_all: false,
+      }),
+    enabled: typeFilter !== 'deposit',
   });
 
   const hasEntityFilter = Boolean(propertyId || clientPropId || ownerId);
@@ -273,11 +287,15 @@ export function TransactionsPage() {
 
   const isLoading =
     (typeFilter !== 'expense' && depositsQuery.isLoading) ||
-    (typeFilter !== 'deposit' && expensesQuery.isLoading);
+    (typeFilter !== 'deposit' && expensesQuery.isLoading) ||
+    (typeFilter !== 'expense' && depositSummaryQuery.isLoading) ||
+    (typeFilter !== 'deposit' && expenseSummaryQuery.isLoading);
 
   const isError =
     (typeFilter !== 'expense' && depositsQuery.isError) ||
-    (typeFilter !== 'deposit' && expensesQuery.isError);
+    (typeFilter !== 'deposit' && expensesQuery.isError) ||
+    (typeFilter !== 'expense' && depositSummaryQuery.isError) ||
+    (typeFilter !== 'deposit' && expenseSummaryQuery.isError);
 
   const resetPage = () => setPage(1);
 
@@ -286,8 +304,15 @@ export function TransactionsPage() {
     return <ErrorState message="Could not load transactions from the API." />;
   }
 
-  const depositTotal = Number(depositSummaryQuery.data?.total_amount ?? 0);
-  const expenseTotal = Number(expenseSummaryQuery.data?.total_amount ?? 0);
+  const depositTotal =
+    typeFilter === 'expense' ? 0 : Number(depositSummaryQuery.data?.total_amount ?? 0);
+  const expenseTotal =
+    typeFilter === 'deposit' ? 0 : Number(expenseSummaryQuery.data?.total_amount ?? 0);
+  const depositCount =
+    typeFilter === 'expense' ? 0 : (depositSummaryQuery.data?.deposit_count ?? 0);
+  const expenseCount =
+    typeFilter === 'deposit' ? 0 : (expenseSummaryQuery.data?.expense_count ?? 0);
+  const netTotal = depositTotal - expenseTotal;
 
   return (
     <div className="space-y-6">
@@ -355,14 +380,18 @@ export function TransactionsPage() {
         <Card
           title="Total deposits"
           value={formatCurrency(depositTotal)}
-          subtitle={`${depositSummaryQuery.data?.deposit_count ?? 0} transactions`}
+          subtitle={`${depositCount} matching deposit(s), excluding rental income`}
         />
         <Card
           title="Total expenses"
           value={formatCurrency(expenseTotal)}
-          subtitle={`${expenseSummaryQuery.data?.expense_count ?? 0} transactions`}
+          subtitle={`${expenseCount} matching expense(s), excluding He/She & owner paid`}
         />
-        <Card title="Net" value={formatCurrency(depositTotal - expenseTotal)} subtitle="Deposits minus expenses" />
+        <Card
+          title="Net"
+          value={formatCurrency(netTotal)}
+          subtitle="Deposits minus expenses (current filters)"
+        />
         <Card title="Showing" value={items.length} subtitle={`${total} matching transaction(s)`} />
       </section>
 

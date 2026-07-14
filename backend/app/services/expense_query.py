@@ -161,48 +161,92 @@ def create_expense(db: Session, payload: ExpenseCreate) -> ExpenseRead:
 def get_expense_summary(
     db: Session,
     *,
+    property_id: UUID | None = None,
+    client_prop_id: str | None = None,
+    owner_id: UUID | None = None,
+    category: str | None = None,
+    source: str | None = None,
+    payment_method: str | None = None,
     date_from: date | None = None,
     date_to: date | None = None,
+    min_amount: Decimal | None = None,
+    max_amount: Decimal | None = None,
+    include_all: bool = False,
 ) -> dict:
-    # Resident/owner-paid rows are informational only — exclude from company totals
-    filters = [
-        Expense.paid_by_resident.is_(False),
-        Expense.paid_by_owner.is_(False),
-    ]
+    # Default: resident/owner-paid rows are informational only — exclude from company totals
+    filters = []
+    if not include_all:
+        filters.extend(
+            [
+                Expense.paid_by_resident.is_(False),
+                Expense.paid_by_owner.is_(False),
+            ]
+        )
+
+    needs_property_join = bool(client_prop_id or owner_id)
+    if property_id:
+        filters.append(Expense.property_id == property_id)
+    if category:
+        filters.append(Expense.category == category)
+    if source:
+        filters.append(Expense.source == source)
+    if payment_method:
+        filters.append(Expense.payment_method == payment_method)
     if date_from:
         filters.append(Expense.transaction_date >= date_from)
     if date_to:
         filters.append(Expense.transaction_date <= date_to)
+    if min_amount is not None:
+        filters.append(Expense.amount >= min_amount)
+    if max_amount is not None:
+        filters.append(Expense.amount <= max_amount)
 
-    total_amount = db.scalar(
-        select(func.coalesce(func.sum(Expense.amount), 0)).where(*filters)
-    ) or 0
-    expense_count = db.scalar(
-        select(func.count()).select_from(Expense).where(*filters)
-    ) or 0
-    property_count = db.scalar(
-        select(func.count(func.distinct(Expense.property_id)))
-        .select_from(Expense)
-        .where(*filters)
-    ) or 0
-
+    amount_stmt = select(func.coalesce(func.sum(Expense.amount), 0))
+    count_stmt = select(func.count()).select_from(Expense)
+    property_stmt = select(func.count(func.distinct(Expense.property_id))).select_from(
+        Expense
+    )
     category_stmt = select(
         Expense.category,
         func.coalesce(func.sum(Expense.amount), 0),
         func.count(),
     ).group_by(Expense.category)
+
+    if needs_property_join:
+        amount_stmt = amount_stmt.select_from(Expense).join(
+            Property, Expense.property_id == Property.id
+        )
+        count_stmt = count_stmt.join(Property, Expense.property_id == Property.id)
+        property_stmt = property_stmt.join(Property, Expense.property_id == Property.id)
+        category_stmt = category_stmt.join(Property, Expense.property_id == Property.id)
+        if client_prop_id:
+            filters.append(
+                func.upper(Property.client_prop_id) == client_prop_id.strip().upper()
+            )
+        if owner_id:
+            filters.append(Property.owner_id == owner_id)
+    elif filters:
+        amount_stmt = amount_stmt.select_from(Expense)
+
     if filters:
+        amount_stmt = amount_stmt.where(*filters)
+        count_stmt = count_stmt.where(*filters)
+        property_stmt = property_stmt.where(*filters)
         category_stmt = category_stmt.where(*filters)
+
+    total_amount = db.scalar(amount_stmt) or 0
+    expense_count = db.scalar(count_stmt) or 0
+    property_count = db.scalar(property_stmt) or 0
 
     category_rows = db.execute(category_stmt).all()
 
     by_category = [
         ExpenseCategoryTotal(
-            category=category,
+            category=category_name,
             total_amount=total,
             expense_count=count,
         )
-        for category, total, count in category_rows
+        for category_name, total, count in category_rows
     ]
 
     return {

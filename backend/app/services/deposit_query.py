@@ -104,23 +104,57 @@ def list_deposits(
 def get_deposit_summary(
     db: Session,
     *,
+    property_id: UUID | None = None,
+    client_prop_id: str | None = None,
+    owner_id: UUID | None = None,
     date_from: date | None = None,
     date_to: date | None = None,
+    min_amount: Decimal | None = None,
+    max_amount: Decimal | None = None,
+    include_all: bool = False,
 ) -> dict:
-    # Rental-income rows are informational only — exclude from company float totals
-    filters = [Deposit.is_rental_income.is_(False)]
+    # Default: rental-income rows are informational only — exclude from company float totals
+    filters = []
+    if not include_all:
+        filters.append(Deposit.is_rental_income.is_(False))
+
+    needs_property_join = bool(client_prop_id or owner_id)
+    if property_id:
+        filters.append(Deposit.property_id == property_id)
     if date_from:
         filters.append(Deposit.transaction_date >= date_from)
     if date_to:
         filters.append(Deposit.transaction_date <= date_to)
+    if min_amount is not None:
+        filters.append(Deposit.amount >= min_amount)
+    if max_amount is not None:
+        filters.append(Deposit.amount <= max_amount)
 
-    amount_stmt = select(func.coalesce(func.sum(Deposit.amount), 0)).where(*filters)
-    count_stmt = select(func.count()).select_from(Deposit).where(*filters)
-    property_stmt = (
-        select(func.count(func.distinct(Deposit.property_id)))
-        .select_from(Deposit)
-        .where(*filters)
+    amount_stmt = select(func.coalesce(func.sum(Deposit.amount), 0))
+    count_stmt = select(func.count()).select_from(Deposit)
+    property_stmt = select(func.count(func.distinct(Deposit.property_id))).select_from(
+        Deposit
     )
+
+    if needs_property_join:
+        amount_stmt = amount_stmt.select_from(Deposit).join(
+            Property, Deposit.property_id == Property.id
+        )
+        count_stmt = count_stmt.join(Property, Deposit.property_id == Property.id)
+        property_stmt = property_stmt.join(Property, Deposit.property_id == Property.id)
+        if client_prop_id:
+            filters.append(
+                func.upper(Property.client_prop_id) == client_prop_id.strip().upper()
+            )
+        if owner_id:
+            filters.append(Property.owner_id == owner_id)
+    elif filters:
+        amount_stmt = amount_stmt.select_from(Deposit)
+
+    if filters:
+        amount_stmt = amount_stmt.where(*filters)
+        count_stmt = count_stmt.where(*filters)
+        property_stmt = property_stmt.where(*filters)
 
     total_amount = db.scalar(amount_stmt) or 0
     deposit_count = db.scalar(count_stmt) or 0

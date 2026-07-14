@@ -15,8 +15,10 @@ export interface OwnerSummary extends Owner {
 
 export interface OwnerPropertySummary {
   id: string;
+  client_prop_id: string;
   name: string;
   address: string | null;
+  city: string | null;
   status: string;
   deposit_count: number;
   total_deposits: string;
@@ -33,27 +35,33 @@ export interface BankAccount {
   bank_name: string;
   account_number: string;
   currency: string;
+  label?: string | null;
+  property_id?: string | null;
 }
 
 export interface Deposit {
   id: string;
   property_id: string;
+  client_prop_id: string;
   property_name: string;
   owner_name: string;
-  bank_account_id: string;
-  account_number: string;
+  bank_account_id: string | null;
+  account_number: string | null;
   transaction_date: string;
   amount: string;
   currency: string;
   reference: string | null;
   description: string | null;
   source: string;
+  is_rental_income?: boolean;
 }
 
 export interface Property {
   id: string;
+  client_prop_id: string;
   name: string;
   address: string | null;
+  city: string | null;
   status: string;
   owner_id: string;
   owner_name: string;
@@ -117,6 +125,7 @@ export interface AIQueryResponse {
 
 export interface DepositFilters {
   property_id?: string;
+  client_prop_id?: string;
   owner_id?: string;
   date_from?: string;
   date_to?: string;
@@ -129,6 +138,7 @@ export interface DepositFilters {
 export interface Expense {
   id: string;
   property_id: string;
+  client_prop_id: string;
   property_name: string;
   owner_name: string;
   transaction_date: string;
@@ -140,6 +150,13 @@ export interface Expense {
   vendor_name: string | null;
   reference: string | null;
   description: string | null;
+  notes?: string | null;
+  receipt_ref?: string | null;
+  reconciled?: boolean;
+  paid_by_resident?: boolean;
+  paid_by_company?: boolean;
+  paid_by_owner?: boolean;
+  ledger_column?: string | null;
 }
 
 export interface ExpenseListResponse {
@@ -164,6 +181,7 @@ export interface ExpenseSummary {
 
 export interface ExpenseFilters {
   property_id?: string;
+  client_prop_id?: string;
   owner_id?: string;
   category?: string;
   source?: string;

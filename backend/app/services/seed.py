@@ -1,3 +1,7 @@
+"""Minimal demo fixtures for unit tests only (not used in production bootstrap)."""
+
+from __future__ import annotations
+
 import uuid
 from datetime import date
 from decimal import Decimal
@@ -10,7 +14,6 @@ from app.models.expense import Expense
 from app.models.owner import Owner
 from app.models.property import Property
 
-# Fixed UUIDs for reproducible seed data
 OWNER_DAVID_ID = uuid.UUID("a0000000-0000-4000-8000-000000000001")
 OWNER_SARAH_ID = uuid.UUID("a0000000-0000-4000-8000-000000000002")
 
@@ -24,7 +27,7 @@ ACCOUNT_HERZL = "99-888-777001"
 
 
 def seed_reference_data(db: Session) -> dict[str, int]:
-    """Populate owners, properties, bank accounts, and expected deposits."""
+    """Populate a tiny in-memory fixture set for automated tests."""
     counts = {"owners": 0, "properties": 0, "bank_accounts": 0, "expected_deposits": 0}
 
     if db.query(Owner).count() == 0:
@@ -52,22 +55,28 @@ def seed_reference_data(db: Session) -> dict[str, int]:
                 Property(
                     id=PROPERTY_ROTHSCHILD_ID,
                     owner_id=OWNER_DAVID_ID,
+                    client_prop_id="TEST-R12",
                     name="Rothschild 12",
                     address="12 Rothschild Blvd, Tel Aviv",
+                    city="Tel Aviv",
                     status="active",
                 ),
                 Property(
                     id=PROPERTY_DIZENGOFF_ID,
                     owner_id=OWNER_DAVID_ID,
+                    client_prop_id="TEST-D45",
                     name="Dizengoff 45",
                     address="45 Dizengoff St, Tel Aviv",
+                    city="Tel Aviv",
                     status="active",
                 ),
                 Property(
                     id=PROPERTY_HERZL_ID,
                     owner_id=OWNER_SARAH_ID,
+                    client_prop_id="TEST-H8",
                     name="Herzl 8",
                     address="8 Herzl St, Haifa",
+                    city="Haifa",
                     status="active",
                 ),
             ]
@@ -129,7 +138,7 @@ def seed_reference_data(db: Session) -> dict[str, int]:
 
 
 def seed_sample_expenses(db: Session) -> int:
-    """Populate sample expenses across properties if none exist."""
+    """Populate sample expenses for automated tests."""
     if db.query(Expense).count() > 0:
         return 0
 

@@ -27,14 +27,16 @@ def list_properties(db: Session = Depends(get_db)) -> list[PropertyRead]:
         .join(Owner, Property.owner_id == Owner.id)
         .outerjoin(Deposit, Deposit.property_id == Property.id)
         .group_by(Property.id, Owner.name)
-        .order_by(Property.name)
+        .order_by(Property.client_prop_id)
     ).all()
 
     return [
         PropertyRead(
             id=prop.id,
+            client_prop_id=prop.client_prop_id,
             name=prop.name,
             address=prop.address,
+            city=prop.city,
             status=prop.status,
             owner_id=prop.owner_id,
             owner_name=owner_name,
@@ -68,8 +70,10 @@ def get_property(property_id: UUID, db: Session = Depends(get_db)) -> PropertyDe
 
     return PropertyDetail(
         id=prop.id,
+        client_prop_id=prop.client_prop_id,
         name=prop.name,
         address=prop.address,
+        city=prop.city,
         status=prop.status,
         owner_id=prop.owner_id,
         owner_name=owner.name,

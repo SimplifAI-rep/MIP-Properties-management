@@ -20,12 +20,19 @@ interface UnifiedTransaction {
   id: string;
   kind: TransactionKind;
   transaction_date: string;
+  client_prop_id: string;
   property_name: string;
   owner_name: string;
   amount: string;
   currency: string;
   details: string;
   description: string | null;
+  paid_by_resident?: boolean;
+  paid_by_company?: boolean;
+  paid_by_owner?: boolean;
+  ledger_column?: string | null;
+  is_rental_income?: boolean;
+  from_bank_statement?: boolean;
 }
 
 const CATEGORIES = [
@@ -54,6 +61,8 @@ const PAYMENT_METHODS = [
 
 const PAGE_SIZE = 50;
 const FETCH_SIZE = 200;
+/** When a Prop ID / property filter is active, load enough rows to merge locally. */
+const FILTERED_FETCH_SIZE = 2000;
 
 function label(value: string) {
   return value.replace(/_/g, ' ');
@@ -64,12 +73,15 @@ function depositToUnified(deposit: Deposit): UnifiedTransaction {
     id: deposit.id,
     kind: 'deposit',
     transaction_date: deposit.transaction_date,
+    client_prop_id: deposit.client_prop_id,
     property_name: deposit.property_name,
     owner_name: deposit.owner_name,
     amount: deposit.amount,
     currency: deposit.currency,
-    details: deposit.account_number,
+    details: deposit.account_number ?? deposit.source,
     description: deposit.description,
+    is_rental_income: Boolean(deposit.is_rental_income),
+    from_bank_statement: deposit.source === 'bank_statement',
   };
 }
 
@@ -78,6 +90,7 @@ function expenseToUnified(expense: Expense): UnifiedTransaction {
     id: expense.id,
     kind: 'expense',
     transaction_date: expense.transaction_date,
+    client_prop_id: expense.client_prop_id,
     property_name: expense.property_name,
     owner_name: expense.owner_name,
     amount: expense.amount,
@@ -86,6 +99,11 @@ function expenseToUnified(expense: Expense): UnifiedTransaction {
     description: expense.vendor_name
       ? `${expense.vendor_name}${expense.description ? ` — ${expense.description}` : ''}`
       : expense.description,
+    paid_by_resident: Boolean(expense.paid_by_resident),
+    paid_by_company: Boolean(expense.paid_by_company),
+    paid_by_owner: Boolean(expense.paid_by_owner),
+    ledger_column: expense.ledger_column ?? null,
+    from_bank_statement: expense.source === 'bank_statement',
   };
 }
 
@@ -128,6 +146,7 @@ export function TransactionsPage() {
   const [typeFilter, setTypeFilter] = useState<TypeFilter>('all');
   const [page, setPage] = useState(1);
   const [propertyId, setPropertyId] = useState<string | undefined>();
+  const [clientPropId, setClientPropId] = useState<string | undefined>();
   const [ownerId, setOwnerId] = useState<string | undefined>();
   const [dateFrom, setDateFrom] = useState<string | undefined>();
   const [dateTo, setDateTo] = useState<string | undefined>();
@@ -152,6 +171,7 @@ export function TransactionsPage() {
 
   const sharedFilters = {
     property_id: propertyId,
+    client_prop_id: clientPropId,
     owner_id: ownerId,
     date_from: dateFrom,
     date_to: dateTo,
@@ -166,34 +186,51 @@ export function TransactionsPage() {
     queryFn: api.getOwners,
   });
   const depositSummaryQuery = useQuery({
-    queryKey: ['deposit-summary'],
-    queryFn: () => api.getDepositSummary(),
+    queryKey: ['deposit-summary', sharedFilters, typeFilter],
+    queryFn: () =>
+      api.getDepositSummary({
+        ...sharedFilters,
+        // Match Excel: rental income is tracked but not part of company float totals
+        include_all: false,
+      }),
+    enabled: typeFilter !== 'expense',
   });
   const expenseSummaryQuery = useQuery({
-    queryKey: ['expense-summary'],
-    queryFn: () => api.getExpenseSummary(),
+    queryKey: ['expense-summary', sharedFilters, category, source, typeFilter],
+    queryFn: () =>
+      api.getExpenseSummary({
+        ...sharedFilters,
+        category,
+        source,
+        // Match Excel: He/She paid and owner-paid are informational only
+        include_all: false,
+      }),
+    enabled: typeFilter !== 'deposit',
   });
 
+  const hasEntityFilter = Boolean(propertyId || clientPropId || ownerId);
+  const allModePageSize = hasEntityFilter ? FILTERED_FETCH_SIZE : FETCH_SIZE;
+
   const depositsQuery = useQuery({
-    queryKey: ['deposits', typeFilter, sharedFilters, page],
+    queryKey: ['deposits', typeFilter, sharedFilters, page, allModePageSize],
     queryFn: () =>
       api.getDeposits({
         ...sharedFilters,
         page: typeFilter === 'all' ? 1 : page,
-        page_size: typeFilter === 'all' ? FETCH_SIZE : PAGE_SIZE,
+        page_size: typeFilter === 'all' ? allModePageSize : PAGE_SIZE,
       }),
     enabled: typeFilter !== 'expense',
   });
 
   const expensesQuery = useQuery({
-    queryKey: ['expenses', typeFilter, sharedFilters, category, source, page],
+    queryKey: ['expenses', typeFilter, sharedFilters, category, source, page, allModePageSize],
     queryFn: () =>
       api.getExpenses({
         ...sharedFilters,
         category,
         source,
         page: typeFilter === 'all' ? 1 : page,
-        page_size: typeFilter === 'all' ? FETCH_SIZE : PAGE_SIZE,
+        page_size: typeFilter === 'all' ? allModePageSize : PAGE_SIZE,
       }),
     enabled: typeFilter !== 'deposit',
   });
@@ -234,7 +271,10 @@ export function TransactionsPage() {
         (a, b) =>
           new Date(b.transaction_date).getTime() - new Date(a.transaction_date).getTime(),
       );
-      const mergedTotal = merged.length;
+      // Prefer API totals so capped fetches don't under-report
+      const depositTotal = depositsQuery.data?.total ?? deposits.length;
+      const expenseTotal = expensesQuery.data?.total ?? expenses.length;
+      const mergedTotal = depositTotal + expenseTotal;
       const start = (page - 1) * PAGE_SIZE;
       return {
         items: merged.slice(start, start + PAGE_SIZE),
@@ -247,11 +287,15 @@ export function TransactionsPage() {
 
   const isLoading =
     (typeFilter !== 'expense' && depositsQuery.isLoading) ||
-    (typeFilter !== 'deposit' && expensesQuery.isLoading);
+    (typeFilter !== 'deposit' && expensesQuery.isLoading) ||
+    (typeFilter !== 'expense' && depositSummaryQuery.isLoading) ||
+    (typeFilter !== 'deposit' && expenseSummaryQuery.isLoading);
 
   const isError =
     (typeFilter !== 'expense' && depositsQuery.isError) ||
-    (typeFilter !== 'deposit' && expensesQuery.isError);
+    (typeFilter !== 'deposit' && expensesQuery.isError) ||
+    (typeFilter !== 'expense' && depositSummaryQuery.isError) ||
+    (typeFilter !== 'deposit' && expenseSummaryQuery.isError);
 
   const resetPage = () => setPage(1);
 
@@ -260,8 +304,15 @@ export function TransactionsPage() {
     return <ErrorState message="Could not load transactions from the API." />;
   }
 
-  const depositTotal = Number(depositSummaryQuery.data?.total_amount ?? 0);
-  const expenseTotal = Number(expenseSummaryQuery.data?.total_amount ?? 0);
+  const depositTotal =
+    typeFilter === 'expense' ? 0 : Number(depositSummaryQuery.data?.total_amount ?? 0);
+  const expenseTotal =
+    typeFilter === 'deposit' ? 0 : Number(expenseSummaryQuery.data?.total_amount ?? 0);
+  const depositCount =
+    typeFilter === 'expense' ? 0 : (depositSummaryQuery.data?.deposit_count ?? 0);
+  const expenseCount =
+    typeFilter === 'deposit' ? 0 : (expenseSummaryQuery.data?.expense_count ?? 0);
+  const netTotal = depositTotal - expenseTotal;
 
   return (
     <div className="space-y-6">
@@ -269,7 +320,8 @@ export function TransactionsPage() {
         <div>
           <h2 className="page-heading">Transactions</h2>
           <p className="page-desc">
-            View deposits and expenses together. Deposits are highlighted in green, expenses in red.
+            View deposits and expenses together. Deposits are highlighted in green, expenses in
+            red. Resident-paid, rental income, and bank-statement rows are marked with badges.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -299,6 +351,7 @@ export function TransactionsPage() {
               downloadCsv(
                 items.map((row) => ({
                   type: row.kind,
+                  prop_id: row.client_prop_id,
                   date: row.transaction_date,
                   property: row.property_name,
                   owner: row.owner_name,
@@ -306,6 +359,12 @@ export function TransactionsPage() {
                   currency: row.currency,
                   details: row.details,
                   description: row.description,
+                  paid_by_resident: row.paid_by_resident ? 'yes' : '',
+                  paid_by_company: row.paid_by_company ? 'yes' : '',
+                  paid_by_owner: row.paid_by_owner ? 'yes' : '',
+                  ledger_column: row.ledger_column ?? '',
+                  rental_income: row.is_rental_income ? 'yes' : '',
+                  bank_statement: row.from_bank_statement ? 'yes' : '',
                 })),
                 'transactions.csv',
               )
@@ -321,14 +380,18 @@ export function TransactionsPage() {
         <Card
           title="Total deposits"
           value={formatCurrency(depositTotal)}
-          subtitle={`${depositSummaryQuery.data?.deposit_count ?? 0} transactions`}
+          subtitle={`${depositCount} matching deposit(s), excluding rental income`}
         />
         <Card
           title="Total expenses"
           value={formatCurrency(expenseTotal)}
-          subtitle={`${expenseSummaryQuery.data?.expense_count ?? 0} transactions`}
+          subtitle={`${expenseCount} matching expense(s), excluding He/She & owner paid`}
         />
-        <Card title="Net" value={formatCurrency(depositTotal - expenseTotal)} subtitle="Deposits minus expenses" />
+        <Card
+          title="Net"
+          value={formatCurrency(netTotal)}
+          subtitle="Deposits minus expenses (current filters)"
+        />
         <Card title="Showing" value={items.length} subtitle={`${total} matching transaction(s)`} />
       </section>
 
@@ -382,7 +445,7 @@ export function TransactionsPage() {
                 <option value="">Select property</option>
                 {(propertiesQuery.data ?? []).map((property) => (
                   <option key={property.id} value={property.id}>
-                    {property.name}
+                    {property.client_prop_id} — {property.name}
                   </option>
                 ))}
               </select>
@@ -487,24 +550,61 @@ export function TransactionsPage() {
       <section
         className={`filter-panel ${
           typeFilter === 'expense' || typeFilter === 'all'
-            ? 'md:grid-cols-2 xl:grid-cols-6'
-            : 'md:grid-cols-2 xl:grid-cols-4'
+            ? 'md:grid-cols-2 xl:grid-cols-7'
+            : 'md:grid-cols-2 xl:grid-cols-5'
         }`}
       >
+        <label className="text-sm">
+          <span className="label-text">Prop ID</span>
+          <select
+            className="field"
+            value={clientPropId ?? ''}
+            onChange={(event) => {
+              const value = event.target.value || undefined;
+              setClientPropId(value);
+              // Keep property filter in sync when choosing a Prop ID
+              if (value) {
+                const match = (propertiesQuery.data ?? []).find(
+                  (property) => property.client_prop_id === value,
+                );
+                setPropertyId(match?.id);
+              } else if (propertyId) {
+                // Clearing Prop ID should not force-clear property unless it was set via Prop ID
+                setPropertyId(undefined);
+              }
+              resetPage();
+            }}
+          >
+            <option value="">All Prop IDs</option>
+            {(propertiesQuery.data ?? []).map((property) => (
+              <option key={property.id} value={property.client_prop_id}>
+                {property.client_prop_id}
+                {property.status !== 'active' ? ' (inactive)' : ''}
+              </option>
+            ))}
+          </select>
+        </label>
         <label className="text-sm">
           <span className="label-text">Property</span>
           <select
             className="field"
             value={propertyId ?? ''}
             onChange={(event) => {
-              setPropertyId(event.target.value || undefined);
+              const value = event.target.value || undefined;
+              setPropertyId(value);
+              if (value) {
+                const match = (propertiesQuery.data ?? []).find((property) => property.id === value);
+                setClientPropId(match?.client_prop_id);
+              } else {
+                setClientPropId(undefined);
+              }
               resetPage();
             }}
           >
             <option value="">All properties</option>
             {(propertiesQuery.data ?? []).map((property) => (
               <option key={property.id} value={property.id}>
-                {property.name}
+                {property.client_prop_id} — {property.name}
               </option>
             ))}
           </select>
@@ -599,6 +699,7 @@ export function TransactionsPage() {
             <thead className="table-head">
               <tr>
                 <th className="px-5 py-3 font-medium">Type</th>
+                <th className="px-5 py-3 font-medium">Prop ID</th>
                 <th className="px-5 py-3 font-medium">Date</th>
                 <th className="px-5 py-3 font-medium">Property</th>
                 <th className="px-5 py-3 font-medium">Owner</th>
@@ -611,20 +712,112 @@ export function TransactionsPage() {
               {items.map((row) => (
                 <tr
                   key={`${row.kind}-${row.id}`}
-                  className={row.kind === 'deposit' ? 'row-deposit' : 'row-expense'}
+                  className={
+                    row.paid_by_resident
+                      ? 'row-resident-paid'
+                      : row.paid_by_owner
+                        ? 'row-owner-paid'
+                        : row.paid_by_company
+                          ? 'row-mip-paid'
+                          : row.ledger_column === 'nearly_cc'
+                            ? 'row-nearly-cc'
+                            : row.ledger_column === 'cash'
+                              ? 'row-cash-paid'
+                              : row.ledger_column === 'other'
+                                ? 'row-other-paid'
+                                : row.is_rental_income
+                                  ? 'row-rental-income'
+                                  : row.kind === 'deposit'
+                                    ? 'row-deposit'
+                                    : 'row-expense'
+                  }
                 >
                   <td className="px-5 py-3">
-                    <span className={row.kind === 'deposit' ? 'badge-deposit' : 'badge-expense'}>
-                      {row.kind === 'deposit' ? 'Deposit' : 'Expense'}
-                    </span>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className={row.kind === 'deposit' ? 'badge-deposit' : 'badge-expense'}>
+                        {row.kind === 'deposit' ? 'Deposit' : 'Expense'}
+                      </span>
+                      {row.paid_by_resident ? (
+                        <span
+                          className="badge-resident-paid"
+                          title="Paid directly by resident (He/She paid)"
+                        >
+                          Resident paid
+                        </span>
+                      ) : null}
+                      {row.paid_by_owner ? (
+                        <span
+                          className="badge-owner-paid"
+                          title="Paid by the property owner (אהרון שילם)"
+                        >
+                          Owner paid
+                        </span>
+                      ) : null}
+                      {row.paid_by_company ? (
+                        <span
+                          className="badge-mip-paid"
+                          title="Paid by the company (MIP)"
+                        >
+                          MIP paid
+                        </span>
+                      ) : null}
+                      {row.ledger_column === 'nearly_cc' ? (
+                        <span className="badge-nearly-cc" title="From Nearly CC column">
+                          Nearly CC
+                        </span>
+                      ) : null}
+                      {row.ledger_column === 'cash' ? (
+                        <span className="badge-cash-paid" title="From Cash column">
+                          Cash
+                        </span>
+                      ) : null}
+                      {row.ledger_column === 'other' ? (
+                        <span className="badge-other-paid" title="From Other column">
+                          Other
+                        </span>
+                      ) : null}
+                      {row.is_rental_income ? (
+                        <span
+                          className="badge-rental-income"
+                          title="Rental income (not company float)"
+                        >
+                          Rental income
+                        </span>
+                      ) : null}
+                      {row.from_bank_statement ? (
+                        <span
+                          className="badge-bank-statement"
+                          title="Imported from company bank statement"
+                        >
+                          Bank statement
+                        </span>
+                      ) : null}
+                    </div>
                   </td>
+                  <td className="px-5 py-3 font-mono text-xs font-medium">{row.client_prop_id}</td>
                   <td className="px-5 py-3">{formatDate(row.transaction_date)}</td>
                   <td className="px-5 py-3 font-medium">{row.property_name}</td>
                   <td className="px-5 py-3">{row.owner_name}</td>
                   <td className="px-5 py-3">{row.details}</td>
                   <td
                     className={`px-5 py-3 ${
-                      row.kind === 'deposit' ? 'amount-deposit' : 'amount-expense'
+                      row.paid_by_resident
+                        ? 'amount-resident-paid'
+                        : row.paid_by_owner
+                          ? 'amount-owner-paid'
+                          : row.paid_by_company
+                            ? 'amount-mip-paid'
+                            : row.ledger_column === 'nearly_cc'
+                              ? 'amount-nearly-cc'
+                              : row.ledger_column === 'cash'
+                                ? 'amount-cash-paid'
+                                : row.ledger_column === 'other'
+                                  ? 'amount-other-paid'
+                                  : row.is_rental_income
+                                    ? 'amount-rental-income'
+                                    : row.kind === 'deposit'
+                                      ? 'amount-deposit'
+                                      : 'amount-expense'
                     }`}
                   >
                     {row.kind === 'deposit' ? '+' : '−'}

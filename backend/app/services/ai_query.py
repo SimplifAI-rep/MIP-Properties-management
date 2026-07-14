@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.models.deposit import Deposit
-from app.models.expense import EXPENSE_CATEGORIES, Expense
+from app.models.expense import Expense
 from app.models.owner import Owner
 from app.models.property import Property
 from app.schemas import AIQueryResponse, DepositQueryIntent, PeriodRange
@@ -313,8 +313,7 @@ class AIQueryService:
         allowed_group_by = EXPENSE_GROUP_BY if intent.domain == "expenses" else DEPOSIT_GROUP_BY
         if intent.group_by and intent.group_by not in allowed_group_by:
             raise HTTPException(status_code=400, detail=f"Unsupported group_by: {intent.group_by}")
-        if intent.category and intent.category not in EXPENSE_CATEGORIES:
-            raise HTTPException(status_code=400, detail=f"Unsupported category: {intent.category}")
+        # Free-text categories from client ledgers are allowed
         return intent
 
     def _resolve_names(self, intent: DepositQueryIntent) -> DepositQueryIntent:

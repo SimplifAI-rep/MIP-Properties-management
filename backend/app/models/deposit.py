@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import uuid
-from datetime import date, datetime
+from datetime import date
 from decimal import Decimal
 
-from sqlalchemy import Date, ForeignKey, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, Date, ForeignKey, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import TimestampMixin, uuid_pk
@@ -14,18 +14,13 @@ from app.core.database import Base
 class Deposit(Base, TimestampMixin):
     __tablename__ = "deposits"
     __table_args__ = (
-        UniqueConstraint(
-            "bank_account_id",
-            "transaction_date",
-            "amount",
-            "reference",
-            name="uq_deposits_idempotency",
-        ),
+        UniqueConstraint("import_key", name="uq_deposits_import_key"),
     )
 
     id: Mapped[uuid.UUID] = uuid_pk()
-    bank_account_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("bank_accounts.id"), nullable=False
+    # Nullable for management-ledger inflows that are not tied to a bank row
+    bank_account_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("bank_accounts.id"), nullable=True
     )
     property_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("properties.id"), nullable=False
@@ -39,7 +34,11 @@ class Deposit(Base, TimestampMixin):
     import_batch_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("import_batches.id")
     )
+    # True when Excel "Rental income" — tracked rent, not company float inflow
+    is_rental_income: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Stable idempotency key from client Excel row (e.g. mgmt:05ex:r12:inflow)
+    import_key: Mapped[str | None] = mapped_column(String(255))
 
-    bank_account: Mapped["BankAccount"] = relationship(back_populates="deposits")
+    bank_account: Mapped["BankAccount | None"] = relationship(back_populates="deposits")
     property: Mapped["Property"] = relationship(back_populates="deposits")
     import_batch: Mapped["ImportBatch | None"] = relationship(back_populates="deposits")

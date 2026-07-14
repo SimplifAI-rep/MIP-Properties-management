@@ -129,11 +129,13 @@ export function DashboardPage() {
 
   const depositSummaryQuery = useQuery({
     queryKey: ['deposit-summary', period.dateFrom, period.dateTo],
-    queryFn: () => api.getDepositSummary(period.dateFrom, period.dateTo),
+    queryFn: () =>
+      api.getDepositSummary({ date_from: period.dateFrom, date_to: period.dateTo }),
   });
   const expenseSummaryQuery = useQuery({
     queryKey: ['expense-summary', period.dateFrom, period.dateTo],
-    queryFn: () => api.getExpenseSummary(period.dateFrom, period.dateTo),
+    queryFn: () =>
+      api.getExpenseSummary({ date_from: period.dateFrom, date_to: period.dateTo }),
   });
   const alertSummaryQuery = useQuery({
     queryKey: ['alert-summary'],

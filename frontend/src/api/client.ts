@@ -57,6 +57,7 @@ export const api = {
     request<DepositListResponse>(
       `/deposits${toQuery({
         property_id: filters.property_id,
+        client_prop_id: filters.client_prop_id,
         owner_id: filters.owner_id,
         date_from: filters.date_from,
         date_to: filters.date_to,
@@ -66,9 +67,29 @@ export const api = {
         page_size: filters.page_size,
       })}`,
     ),
-  getDepositSummary: (dateFrom?: string, dateTo?: string) =>
+  getDepositSummary: (
+    filters: {
+      property_id?: string;
+      client_prop_id?: string;
+      owner_id?: string;
+      date_from?: string;
+      date_to?: string;
+      min_amount?: string;
+      max_amount?: string;
+      include_all?: boolean;
+    } = {},
+  ) =>
     request<DepositSummary>(
-      `/deposits/summary${toQuery({ date_from: dateFrom, date_to: dateTo })}`,
+      `/deposits/summary${toQuery({
+        property_id: filters.property_id,
+        client_prop_id: filters.client_prop_id,
+        owner_id: filters.owner_id,
+        date_from: filters.date_from,
+        date_to: filters.date_to,
+        min_amount: filters.min_amount,
+        max_amount: filters.max_amount,
+        include_all: filters.include_all ? 'true' : undefined,
+      })}`,
     ),
   getDepositGaps: (filters: {
     year?: number;
@@ -94,6 +115,7 @@ export const api = {
     request<ExpenseListResponse>(
       `/expenses${toQuery({
         property_id: filters.property_id,
+        client_prop_id: filters.client_prop_id,
         owner_id: filters.owner_id,
         category: filters.category,
         source: filters.source,
@@ -104,9 +126,35 @@ export const api = {
         page_size: filters.page_size,
       })}`,
     ),
-  getExpenseSummary: (dateFrom?: string, dateTo?: string) =>
+  getExpenseSummary: (
+    filters: {
+      property_id?: string;
+      client_prop_id?: string;
+      owner_id?: string;
+      category?: string;
+      source?: string;
+      payment_method?: string;
+      date_from?: string;
+      date_to?: string;
+      min_amount?: string;
+      max_amount?: string;
+      include_all?: boolean;
+    } = {},
+  ) =>
     request<ExpenseSummary>(
-      `/expenses/summary${toQuery({ date_from: dateFrom, date_to: dateTo })}`,
+      `/expenses/summary${toQuery({
+        property_id: filters.property_id,
+        client_prop_id: filters.client_prop_id,
+        owner_id: filters.owner_id,
+        category: filters.category,
+        source: filters.source,
+        payment_method: filters.payment_method,
+        date_from: filters.date_from,
+        date_to: filters.date_to,
+        min_amount: filters.min_amount,
+        max_amount: filters.max_amount,
+        include_all: filters.include_all ? 'true' : undefined,
+      })}`,
     ),
   createExpense: (payload: ExpenseCreate) =>
     request<import('../types').Expense>('/expenses', {

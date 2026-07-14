@@ -138,8 +138,10 @@ def get_owner(owner_id: UUID, db: Session = Depends(get_db)) -> OwnerDetail:
     properties = [
         OwnerPropertySummary(
             id=prop.id,
+            client_prop_id=prop.client_prop_id,
             name=prop.name,
             address=prop.address,
+            city=prop.city,
             status=prop.status,
             deposit_count=deposit_count or 0,
             total_deposits=total_deposits or 0,

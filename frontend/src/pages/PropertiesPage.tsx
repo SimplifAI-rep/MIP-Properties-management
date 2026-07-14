@@ -44,6 +44,7 @@ export function PropertiesPage() {
             <table className="table-shell">
               <thead className="table-head">
                 <tr>
+                  <th className="px-5 py-3 font-medium">ID</th>
                   <th className="px-5 py-3 font-medium">Property</th>
                   <th className="px-5 py-3 font-medium">Owner</th>
                   <th className="px-5 py-3 font-medium">Deposits</th>
@@ -60,7 +61,13 @@ export function PropertiesPage() {
                       selectedId === property.id ? 'table-row-selected' : ''
                     }`}
                   >
-                    <td className="px-5 py-3 font-medium">{property.name}</td>
+                    <td className="px-5 py-3 font-mono text-xs">{property.client_prop_id}</td>
+                    <td className="px-5 py-3 font-medium">
+                      {property.name}
+                      {property.city ? (
+                        <span className="mt-0.5 block text-xs font-normal opacity-70">{property.city}</span>
+                      ) : null}
+                    </td>
                     <td className="px-5 py-3">{property.owner_name}</td>
                     <td className="px-5 py-3">{property.deposit_count}</td>
                     <td className="px-5 py-3">{formatCurrency(property.total_deposits)}</td>
@@ -72,7 +79,7 @@ export function PropertiesPage() {
           </div>
           {properties.length === 0 ? (
             <div className="p-5">
-              <EmptyState message="No properties found. Run the seed and import scripts first." />
+              <EmptyState message="No properties found. Import client Excel data first (scripts/import_client_data.py)." />
             </div>
           ) : null}
         </section>

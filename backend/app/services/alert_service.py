@@ -64,8 +64,8 @@ def list_alerts(db: Session) -> AlertListResponse:
 
     pending_uploads = db.execute(
         select(UploadedDocument, Property.name, Owner.name)
-        .join(Property, UploadedDocument.property_id == Property.id)
-        .join(Owner, UploadedDocument.owner_id == Owner.id)
+        .outerjoin(Property, UploadedDocument.property_id == Property.id)
+        .outerjoin(Owner, UploadedDocument.owner_id == Owner.id)
         .where(UploadedDocument.status == "pending_review")
         .order_by(UploadedDocument.created_at.desc())
     ).all()
@@ -117,7 +117,7 @@ def list_alerts(db: Session) -> AlertListResponse:
                 title=f"Review upload — {document.filename}",
                 message=message,
                 property_id=document.property_id,
-                property_name=property_name,
+                property_name=property_name or "Unmatched client",
                 owner_name=owner_name,
                 upload_id=document.id,
                 transaction_type=document.transaction_type,  # type: ignore[arg-type]

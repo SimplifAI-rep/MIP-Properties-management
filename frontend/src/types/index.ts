@@ -215,6 +215,10 @@ export interface TransactionDraft {
   row_number?: number | null;
   transaction_type: 'deposit' | 'expense';
   property_id?: string | null;
+  client_prop_id?: string | null;
+  property_name?: string | null;
+  owner_id?: string | null;
+  owner_name?: string | null;
   bank_account_id?: string | null;
   account_number?: string | null;
   transaction_date?: string | null;
@@ -226,6 +230,7 @@ export interface TransactionDraft {
   vendor_name?: string | null;
   reference?: string | null;
   description?: string | null;
+  match_confidence?: 'high' | 'medium' | 'low' | 'none' | null;
   status: 'ready' | 'needs_review' | 'error';
   warnings: FieldWarning[];
 }
@@ -233,15 +238,21 @@ export interface TransactionDraft {
 export interface UploadAnalyzeResponse {
   upload_id: string;
   filename: string;
-  property_id: string;
-  owner_id: string;
+  mime_type?: string | null;
+  property_id?: string | null;
+  owner_id?: string | null;
+  client_prop_id?: string | null;
+  property_name?: string | null;
+  owner_name?: string | null;
   transaction_type: 'deposit' | 'expense';
   parser: string;
   message?: string | null;
+  match_confidence?: 'high' | 'medium' | 'low' | 'none' | null;
   drafts: TransactionDraft[];
   ready_count: number;
   needs_review_count: number;
   error_count: number;
+  preview_url?: string | null;
 }
 
 export interface UploadConfirmResponse {

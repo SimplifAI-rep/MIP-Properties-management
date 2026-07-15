@@ -59,14 +59,19 @@ def validate_upload(filename: str, content: bytes, mime_type: str | None) -> str
 
 def save_upload_file(
     *,
-    property_id: uuid.UUID,
-    owner_id: uuid.UUID,
     filename: str,
     content: bytes,
     mime_type: str,
+    property_id: uuid.UUID | None = None,
+    owner_id: uuid.UUID | None = None,
 ) -> str:
     root = get_storage_root()
-    folder = root / str(owner_id) / str(property_id)
+    if owner_id and property_id:
+        folder = root / str(owner_id) / str(property_id)
+    elif owner_id:
+        folder = root / str(owner_id) / "pending"
+    else:
+        folder = root / "pending"
     folder.mkdir(parents=True, exist_ok=True)
 
     safe_name = Path(filename).name

@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
-import type { Property, TransactionDraft } from '../types';
+import type { Property, TransactionDraft, UploadAnalyzeResponse } from '../types';
 
 const CATEGORIES = [
   'maintenance',
@@ -27,6 +27,9 @@ const PAYMENT_METHODS = [
   'company_account',
 ] as const;
 
+type TransactionTypeOption = 'auto' | 'deposit' | 'expense';
+type Step = 'upload' | 'confirm';
+
 function label(value: string) {
   return value.replace(/_/g, ' ');
 }
@@ -37,6 +40,26 @@ function statusClass(status: TransactionDraft['status']) {
   return 'badge-neutral';
 }
 
+function confidenceClass(confidence: TransactionDraft['match_confidence']) {
+  if (confidence === 'high') return 'badge-deposit';
+  if (confidence === 'medium') return 'badge-warning';
+  return 'badge-expense';
+}
+
+function isSpreadsheet(file: File | null) {
+  if (!file) return false;
+  const name = file.name.toLowerCase();
+  return name.endsWith('.xlsx') || name.endsWith('.xls') || name.endsWith('.csv');
+}
+
+function isImageMime(mime: string | null | undefined) {
+  return Boolean(mime?.startsWith('image/'));
+}
+
+function isPdf(filename: string, mime?: string | null) {
+  return mime === 'application/pdf' || filename.toLowerCase().endsWith('.pdf');
+}
+
 interface TransactionUploadPanelProps {
   properties: Property[];
   onClose: () => void;
@@ -44,36 +67,47 @@ interface TransactionUploadPanelProps {
 
 export function TransactionUploadPanel({ properties, onClose }: TransactionUploadPanelProps) {
   const queryClient = useQueryClient();
+  const [step, setStep] = useState<Step>('upload');
   const [propertyId, setPropertyId] = useState('');
-  const [transactionType, setTransactionType] = useState<'deposit' | 'expense'>('expense');
+  const [transactionType, setTransactionType] = useState<TransactionTypeOption>('auto');
   const [file, setFile] = useState<File | null>(null);
   const [uploadId, setUploadId] = useState<string | null>(null);
+  const [analyzeResult, setAnalyzeResult] = useState<UploadAnalyzeResponse | null>(null);
   const [drafts, setDrafts] = useState<TransactionDraft[]>([]);
-  const [analyzeMessage, setAnalyzeMessage] = useState<string | null>(null);
-  const [parser, setParser] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [confirmMessage, setConfirmMessage] = useState<string | null>(null);
 
+  const spreadsheet = isSpreadsheet(file);
+  const primaryDraft = drafts[0] ?? null;
+  const draftPropertyId = primaryDraft?.property_id ?? analyzeResult?.property_id ?? propertyId;
+
   const propertyDetailQuery = useQuery({
-    queryKey: ['property', propertyId],
-    queryFn: () => api.getProperty(propertyId),
-    enabled: Boolean(propertyId) && transactionType === 'deposit',
+    queryKey: ['property', draftPropertyId],
+    queryFn: () => api.getProperty(draftPropertyId!),
+    enabled: Boolean(draftPropertyId) && (primaryDraft?.transaction_type === 'deposit' || transactionType === 'deposit'),
   });
 
   const analyzeMutation = useMutation({
     mutationFn: () => {
-      if (!file || !propertyId) {
-        throw new Error('Select a property and file first.');
+      if (!file) throw new Error('Select a file first.');
+      if (spreadsheet) {
+        if (!propertyId) throw new Error('Select a property for Excel/CSV uploads.');
+        if (transactionType === 'auto') {
+          throw new Error('Choose Expense or Deposit for Excel/CSV uploads.');
+        }
       }
-      return api.analyzeUpload(file, propertyId, transactionType);
+      return api.analyzeUpload(file, {
+        propertyId: propertyId || undefined,
+        transactionType: spreadsheet ? transactionType : transactionType,
+      });
     },
     onSuccess: (result) => {
       setUploadId(result.upload_id);
+      setAnalyzeResult(result);
       setDrafts(result.drafts);
-      setAnalyzeMessage(result.message ?? null);
-      setParser(result.parser);
       setConfirmMessage(null);
       setError(null);
+      setStep('confirm');
     },
     onError: (err: Error) => setError(err.message),
   });
@@ -81,6 +115,10 @@ export function TransactionUploadPanel({ properties, onClose }: TransactionUploa
   const confirmMutation = useMutation({
     mutationFn: () => {
       if (!uploadId) throw new Error('Analyze a file before confirming.');
+      const missingProperty = drafts.some((draft) => !draft.property_id);
+      if (missingProperty) {
+        throw new Error('Select a client/property for every row before confirming.');
+      }
       return api.confirmUpload(uploadId, drafts);
     },
     onSuccess: (result) => {
@@ -88,6 +126,8 @@ export function TransactionUploadPanel({ properties, onClose }: TransactionUploa
       queryClient.invalidateQueries({ queryKey: ['expenses'] });
       queryClient.invalidateQueries({ queryKey: ['deposit-summary'] });
       queryClient.invalidateQueries({ queryKey: ['expense-summary'] });
+      queryClient.invalidateQueries({ queryKey: ['alerts'] });
+      queryClient.invalidateQueries({ queryKey: ['alert-summary'] });
       const parts = [
         result.imported_deposit_count
           ? `${result.imported_deposit_count} deposit(s)`
@@ -104,7 +144,9 @@ export function TransactionUploadPanel({ properties, onClose }: TransactionUploa
         setError(null);
         setDrafts([]);
         setUploadId(null);
+        setAnalyzeResult(null);
         setFile(null);
+        setStep('upload');
       }
     },
     onError: (err: Error) => setError(err.message),
@@ -120,19 +162,41 @@ export function TransactionUploadPanel({ properties, onClose }: TransactionUploa
 
   const updateDraft = (index: number, patch: Partial<TransactionDraft>) => {
     setDrafts((current) =>
-      current.map((draft, draftIndex) =>
-        draftIndex === index ? { ...draft, ...patch, status: 'needs_review' } : draft,
-      ),
+      current.map((draft, draftIndex) => {
+        if (draftIndex !== index) return draft;
+        const next = { ...draft, ...patch, status: 'needs_review' as const };
+        if (patch.property_id) {
+          const property = properties.find((item) => item.id === patch.property_id);
+          if (property) {
+            next.property_name = property.name;
+            next.client_prop_id = property.client_prop_id;
+            next.owner_id = property.owner_id;
+            next.owner_name = property.owner_name;
+            next.match_confidence = 'high';
+          }
+        }
+        return next;
+      }),
     );
   };
+
+  const previewUrl = uploadId ? api.getUploadFileUrl(uploadId) : null;
+  const showPreview =
+    Boolean(previewUrl) &&
+    (isImageMime(analyzeResult?.mime_type) ||
+      isPdf(analyzeResult?.filename ?? '', analyzeResult?.mime_type));
 
   return (
     <section className="panel p-4 space-y-4">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h3 className="subheading">Import from file</h3>
+          <h3 className="subheading">
+            {step === 'upload' ? 'Import from file' : 'Confirm extracted transaction'}
+          </h3>
           <p className="page-desc">
-            Upload Excel, CSV, PDF, or image. Review extracted fields before saving.
+            {step === 'upload'
+              ? 'Upload a receipt, invoice PDF/image, or Excel. Images and PDFs auto-match the client.'
+              : 'Verify the matched client and fields, then confirm to save.'}
           </p>
         </div>
         <button type="button" onClick={onClose} className="btn-secondary">
@@ -140,82 +204,164 @@ export function TransactionUploadPanel({ properties, onClose }: TransactionUploa
         </button>
       </div>
 
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-        <label className="text-sm">
-          <span className="label-text">Property</span>
-          <select
-            className="field"
-            value={propertyId}
-            onChange={(event) => setPropertyId(event.target.value)}
-          >
-            <option value="">Select property</option>
-            {properties.map((property) => (
-              <option key={property.id} value={property.id}>
-                {property.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="text-sm">
-          <span className="label-text">Transaction type</span>
-          <select
-            className="field"
-            value={transactionType}
-            onChange={(event) =>
-              setTransactionType(event.target.value as 'deposit' | 'expense')
-            }
-          >
-            <option value="expense">Expense</option>
-            <option value="deposit">Deposit</option>
-          </select>
-        </label>
-        <label className="text-sm md:col-span-2">
-          <span className="label-text">File</span>
-          <input
-            type="file"
-            accept=".xlsx,.xls,.csv,.pdf,.png,.jpg,.jpeg,.webp"
-            className="field"
-            onChange={(event) => setFile(event.target.files?.[0] ?? null)}
-          />
-        </label>
-      </div>
+      {step === 'upload' ? (
+        <>
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+            <label className="text-sm">
+              <span className="label-text">
+                Property {spreadsheet ? '(required)' : '(optional — auto-match)'}
+              </span>
+              <select
+                className="field"
+                value={propertyId}
+                onChange={(event) => setPropertyId(event.target.value)}
+              >
+                <option value="">{spreadsheet ? 'Select property' : 'Auto-match from document'}</option>
+                {properties.map((property) => (
+                  <option key={property.id} value={property.id}>
+                    {property.name} · {property.owner_name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="text-sm">
+              <span className="label-text">Transaction type</span>
+              <select
+                className="field"
+                value={transactionType}
+                onChange={(event) =>
+                  setTransactionType(event.target.value as TransactionTypeOption)
+                }
+              >
+                {!spreadsheet ? <option value="auto">Auto-detect</option> : null}
+                <option value="expense">Expense</option>
+                <option value="deposit">Deposit</option>
+              </select>
+            </label>
+            <label className="text-sm md:col-span-2">
+              <span className="label-text">File</span>
+              <input
+                type="file"
+                accept=".xlsx,.xls,.csv,.pdf,.png,.jpg,.jpeg,.webp"
+                className="field"
+                onChange={(event) => {
+                  const next = event.target.files?.[0] ?? null;
+                  setFile(next);
+                  if (next && isSpreadsheet(next) && transactionType === 'auto') {
+                    setTransactionType('expense');
+                  }
+                }}
+              />
+            </label>
+          </div>
 
-      <div className="flex flex-wrap gap-2">
-        <button
-          type="button"
-          className="btn-primary"
-          disabled={!file || !propertyId || analyzeMutation.isPending}
-          onClick={() => analyzeMutation.mutate()}
-        >
-          {analyzeMutation.isPending ? 'Analyzing...' : 'Analyze file'}
-        </button>
-        {drafts.length > 0 ? (
-          <button
-            type="button"
-            className="btn-primary"
-            disabled={confirmMutation.isPending}
-            onClick={() => confirmMutation.mutate()}
-          >
-            {confirmMutation.isPending ? 'Saving...' : `Confirm ${drafts.length} row(s)`}
-          </button>
-        ) : null}
-      </div>
-
-      {parser ? (
-        <p className="text-sm text-muted">
-          Parser: {parser}
-          {analyzeMessage ? ` — ${analyzeMessage}` : ''}
-        </p>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              className="btn-primary"
+              disabled={!file || analyzeMutation.isPending || (spreadsheet && !propertyId)}
+              onClick={() => analyzeMutation.mutate()}
+            >
+              {analyzeMutation.isPending ? 'Analyzing...' : 'Analyze & review'}
+            </button>
+          </div>
+        </>
       ) : null}
-      {confirmMessage ? <p className="text-positive text-sm">{confirmMessage}</p> : null}
-      {error ? <p className="text-negative text-sm">{error}</p> : null}
 
-      {drafts.length > 0 ? (
-        <div className="space-y-3">
-          <div className="flex flex-wrap gap-2 text-sm">
+      {step === 'confirm' && analyzeResult ? (
+        <div className="space-y-4">
+          <div className="flex flex-wrap items-center gap-2 text-sm">
+            <span className="badge-neutral">Parser: {analyzeResult.parser}</span>
+            <span className={confidenceClass(analyzeResult.match_confidence)}>
+              Match: {analyzeResult.match_confidence ?? 'none'}
+            </span>
+            <span className="badge-neutral">{analyzeResult.transaction_type}</span>
             <span className="badge-deposit">{reviewStats.ready} ready</span>
             <span className="badge-neutral">{reviewStats.review} need review</span>
             <span className="badge-expense">{reviewStats.error} errors</span>
+          </div>
+
+          {analyzeResult.message ? (
+            <p className="text-sm text-muted">{analyzeResult.message}</p>
+          ) : null}
+
+          <div className="grid gap-4 lg:grid-cols-2">
+            <div className="space-y-3 rounded-lg border border-border p-3">
+              <h4 className="text-sm font-medium">Document preview</h4>
+              {showPreview && previewUrl ? (
+                isImageMime(analyzeResult.mime_type) ? (
+                  <img
+                    src={previewUrl}
+                    alt={analyzeResult.filename}
+                    className="max-h-80 w-full rounded-md object-contain bg-black/5"
+                  />
+                ) : (
+                  <iframe
+                    title={analyzeResult.filename}
+                    src={previewUrl}
+                    className="h-80 w-full rounded-md border border-border"
+                  />
+                )
+              ) : (
+                <p className="text-sm text-muted">
+                  Preview not available for this file type ({analyzeResult.filename}).
+                </p>
+              )}
+            </div>
+
+            <div className="space-y-3 rounded-lg border border-border p-3">
+              <h4 className="text-sm font-medium">Matched client</h4>
+              {primaryDraft ? (
+                <div className="space-y-2 text-sm">
+                  <label className="block">
+                    <span className="label-text">Property / client</span>
+                    <select
+                      className="field"
+                      value={primaryDraft.property_id ?? ''}
+                      onChange={(event) =>
+                        updateDraft(0, {
+                          property_id: event.target.value || null,
+                          bank_account_id: null,
+                          account_number: null,
+                        })
+                      }
+                    >
+                      <option value="">Select property</option>
+                      {properties.map((property) => (
+                        <option key={property.id} value={property.id}>
+                          {property.name} · {property.owner_name} ({property.client_prop_id})
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <p>
+                    <span className="text-muted">Owner:</span>{' '}
+                    {primaryDraft.owner_name || '—'}
+                  </p>
+                  <p>
+                    <span className="text-muted">Prop ID:</span>{' '}
+                    {primaryDraft.client_prop_id || '—'}
+                  </p>
+                  <label className="block">
+                    <span className="label-text">Transaction type</span>
+                    <select
+                      className="field"
+                      value={primaryDraft.transaction_type}
+                      onChange={(event) =>
+                        updateDraft(0, {
+                          transaction_type: event.target.value as 'deposit' | 'expense',
+                        })
+                      }
+                    >
+                      <option value="expense">Expense</option>
+                      <option value="deposit">Deposit</option>
+                    </select>
+                  </label>
+                </div>
+              ) : (
+                <p className="text-sm text-muted">No extracted rows.</p>
+              )}
+            </div>
           </div>
 
           <div className="overflow-x-auto rounded-lg border border-border">
@@ -226,8 +372,8 @@ export function TransactionUploadPanel({ properties, onClose }: TransactionUploa
                   <th>Status</th>
                   <th>Date</th>
                   <th>Amount</th>
-                  {transactionType === 'deposit' ? <th>Account</th> : null}
-                  {transactionType === 'expense' ? (
+                  {primaryDraft?.transaction_type === 'deposit' ? <th>Account</th> : null}
+                  {primaryDraft?.transaction_type === 'expense' ? (
                     <>
                       <th>Category</th>
                       <th>Source</th>
@@ -266,7 +412,7 @@ export function TransactionUploadPanel({ properties, onClose }: TransactionUploa
                         onChange={(event) => updateDraft(index, { amount: event.target.value })}
                       />
                     </td>
-                    {transactionType === 'deposit' ? (
+                    {draft.transaction_type === 'deposit' ? (
                       <td>
                         <select
                           className="field field-compact"
@@ -290,7 +436,7 @@ export function TransactionUploadPanel({ properties, onClose }: TransactionUploa
                         </select>
                       </td>
                     ) : null}
-                    {transactionType === 'expense' ? (
+                    {draft.transaction_type === 'expense' ? (
                       <>
                         <td>
                           <select
@@ -382,8 +528,34 @@ export function TransactionUploadPanel({ properties, onClose }: TransactionUploa
               </tbody>
             </table>
           </div>
+
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={() => {
+                setStep('upload');
+                setError(null);
+              }}
+            >
+              Back
+            </button>
+            <button
+              type="button"
+              className="btn-primary"
+              disabled={confirmMutation.isPending || drafts.length === 0}
+              onClick={() => confirmMutation.mutate()}
+            >
+              {confirmMutation.isPending
+                ? 'Saving...'
+                : `Confirm & save ${drafts.length} row(s)`}
+            </button>
+          </div>
         </div>
       ) : null}
+
+      {confirmMessage ? <p className="text-positive text-sm">{confirmMessage}</p> : null}
+      {error ? <p className="text-negative text-sm">{error}</p> : null}
     </section>
   );
 }

@@ -17,11 +17,12 @@ class UploadedDocument(Base, TimestampMixin):
     __tablename__ = "uploaded_documents"
 
     id: Mapped[uuid.UUID] = uuid_pk()
-    property_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("properties.id"), nullable=False
+    # Nullable until document analysis matches (or user confirms) a property/client.
+    property_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("properties.id"), nullable=True
     )
-    owner_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("owners.id"), nullable=False
+    owner_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("owners.id"), nullable=True
     )
     filename: Mapped[str] = mapped_column(String(255), nullable=False)
     stored_path: Mapped[str] = mapped_column(String(500), nullable=False)

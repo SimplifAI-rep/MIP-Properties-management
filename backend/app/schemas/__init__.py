@@ -250,6 +250,10 @@ class TransactionDraft(BaseModel):
     row_number: int | None = None
     transaction_type: Literal["deposit", "expense"]
     property_id: UUID | None = None
+    client_prop_id: str | None = None
+    property_name: str | None = None
+    owner_id: UUID | None = None
+    owner_name: str | None = None
     bank_account_id: UUID | None = None
     account_number: str | None = None
     transaction_date: date | None = None
@@ -261,6 +265,7 @@ class TransactionDraft(BaseModel):
     vendor_name: str | None = None
     reference: str | None = None
     description: str | None = None
+    match_confidence: Literal["high", "medium", "low", "none"] | None = None
     status: Literal["ready", "needs_review", "error"] = "needs_review"
     warnings: list[FieldWarning] = Field(default_factory=list)
 
@@ -268,15 +273,21 @@ class TransactionDraft(BaseModel):
 class UploadAnalyzeResponse(BaseModel):
     upload_id: UUID
     filename: str
-    property_id: UUID
-    owner_id: UUID
+    mime_type: str | None = None
+    property_id: UUID | None = None
+    owner_id: UUID | None = None
+    client_prop_id: str | None = None
+    property_name: str | None = None
+    owner_name: str | None = None
     transaction_type: Literal["deposit", "expense"]
     parser: str
     message: str | None = None
+    match_confidence: Literal["high", "medium", "low", "none"] | None = None
     drafts: list[TransactionDraft]
     ready_count: int = 0
     needs_review_count: int = 0
     error_count: int = 0
+    preview_url: str | None = None
 
 
 class UploadConfirmRequest(BaseModel):

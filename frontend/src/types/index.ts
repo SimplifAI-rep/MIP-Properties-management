@@ -54,6 +54,7 @@ export interface Deposit {
   description: string | null;
   source: string;
   is_rental_income?: boolean;
+  receipt_ref?: string | null;
 }
 
 export interface Property {

@@ -38,6 +38,8 @@ class Deposit(Base, TimestampMixin):
     is_rental_income: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     # Stable idempotency key from client Excel row (e.g. mgmt:05ex:r12:inflow)
     import_key: Mapped[str | None] = mapped_column(String(255))
+    # UploadedDocument.id when created from a receipt/PDF/image upload
+    receipt_ref: Mapped[str | None] = mapped_column(String(100))
 
     bank_account: Mapped["BankAccount | None"] = relationship(back_populates="deposits")
     property: Mapped["Property"] = relationship(back_populates="deposits")

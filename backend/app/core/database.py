@@ -35,6 +35,23 @@ def init_db() -> None:
 
     Base.metadata.create_all(bind=engine)
     _ensure_sqlite_upload_nullable_columns()
+    _ensure_sqlite_deposit_receipt_ref()
+
+
+def _ensure_sqlite_deposit_receipt_ref() -> None:
+    """Add deposits.receipt_ref for linking file uploads (SQLite only)."""
+    settings = get_settings()
+    if not settings.database_url.startswith("sqlite"):
+        return
+
+    with engine.begin() as conn:
+        rows = conn.exec_driver_sql("PRAGMA table_info(deposits)").fetchall()
+        if not rows:
+            return
+        cols = {row[1] for row in rows}
+        if "receipt_ref" in cols:
+            return
+        conn.exec_driver_sql("ALTER TABLE deposits ADD COLUMN receipt_ref VARCHAR(100)")
 
 
 def _ensure_sqlite_upload_nullable_columns() -> None:

@@ -314,6 +314,12 @@ def test_confirm_pdf_upload_creates_expense_linked_to_client(client, db, monkeyp
     assert expenses[0].property_id == PROPERTY_ROTHSCHILD_ID
     assert expenses[0].receipt_ref == upload_id
 
+    # Receipt is exposed on the expenses API for the Transactions UI
+    listed = client.get("/api/v1/expenses", params={"page_size": 50})
+    assert listed.status_code == 200
+    match = next(item for item in listed.json()["items"] if item["id"] == str(expenses[0].id))
+    assert match["receipt_ref"] == upload_id
+
     file_resp = client.get(f"/api/v1/uploads/{upload_id}/file")
     assert file_resp.status_code == 200
     assert file_resp.headers["content-type"].startswith("application/pdf")

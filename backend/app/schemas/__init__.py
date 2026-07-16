@@ -70,6 +70,7 @@ class DepositRead(BaseModel):
     description: str | None = None
     source: str
     is_rental_income: bool = False
+    receipt_ref: str | None = None
 
 
 class PropertyRead(BaseModel):

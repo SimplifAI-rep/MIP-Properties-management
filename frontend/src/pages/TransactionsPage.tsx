@@ -27,12 +27,19 @@ interface UnifiedTransaction {
   currency: string;
   details: string;
   description: string | null;
+  receipt_ref?: string | null;
   paid_by_resident?: boolean;
   paid_by_company?: boolean;
   paid_by_owner?: boolean;
   ledger_column?: string | null;
   is_rental_income?: boolean;
   from_bank_statement?: boolean;
+}
+
+const UPLOAD_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function isUploadReceiptRef(ref: string | null | undefined): ref is string {
+  return Boolean(ref && UPLOAD_ID_RE.test(ref));
 }
 
 const CATEGORIES = [
@@ -80,6 +87,7 @@ function depositToUnified(deposit: Deposit): UnifiedTransaction {
     currency: deposit.currency,
     details: deposit.account_number ?? deposit.source,
     description: deposit.description,
+    receipt_ref: deposit.receipt_ref ?? null,
     is_rental_income: Boolean(deposit.is_rental_income),
     from_bank_statement: deposit.source === 'bank_statement',
   };
@@ -99,6 +107,7 @@ function expenseToUnified(expense: Expense): UnifiedTransaction {
     description: expense.vendor_name
       ? `${expense.vendor_name}${expense.description ? ` — ${expense.description}` : ''}`
       : expense.description,
+    receipt_ref: expense.receipt_ref ?? null,
     paid_by_resident: Boolean(expense.paid_by_resident),
     paid_by_company: Boolean(expense.paid_by_company),
     paid_by_owner: Boolean(expense.paid_by_owner),
@@ -154,6 +163,10 @@ export function TransactionsPage() {
   const [source, setSource] = useState<string | undefined>();
   const [showForm, setShowForm] = useState(false);
   const [showUpload, setShowUpload] = useState(false);
+  const [receiptViewer, setReceiptViewer] = useState<{
+    url: string;
+    label: string;
+  } | null>(null);
   const [form, setForm] = useState<ExpenseCreate>(emptyForm);
   const [formError, setFormError] = useState<string | null>(null);
 
@@ -706,6 +719,7 @@ export function TransactionsPage() {
                 <th className="px-5 py-3 font-medium">Details</th>
                 <th className="px-5 py-3 font-medium">Amount</th>
                 <th className="px-5 py-3 font-medium">Description</th>
+                <th className="px-5 py-3 font-medium">Receipt</th>
               </tr>
             </thead>
             <tbody>
@@ -824,11 +838,74 @@ export function TransactionsPage() {
                     {formatCurrency(row.amount, row.currency)}
                   </td>
                   <td className="px-5 py-3 muted-text">{row.description}</td>
+                  <td className="px-5 py-3">
+                    {isUploadReceiptRef(row.receipt_ref) ? (
+                      <button
+                        type="button"
+                        className="btn-secondary text-xs"
+                        onClick={() =>
+                          setReceiptViewer({
+                            url: api.getUploadFileUrl(row.receipt_ref!),
+                            label: `${row.kind} · ${row.property_name} · ${formatDate(row.transaction_date)}`,
+                          })
+                        }
+                      >
+                        View
+                      </button>
+                    ) : (
+                      <span className="muted-text text-xs">—</span>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
+        {receiptViewer ? (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Receipt viewer"
+            onClick={() => setReceiptViewer(null)}
+          >
+            <div
+              className="panel flex max-h-[90vh] w-full max-w-3xl flex-col gap-3 p-4"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h3 className="subheading">Receipt</h3>
+                  <p className="page-desc">{receiptViewer.label}</p>
+                </div>
+                <div className="flex gap-2">
+                  <a
+                    href={receiptViewer.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="btn-secondary text-xs"
+                  >
+                    Open in new tab
+                  </a>
+                  <button
+                    type="button"
+                    className="btn-secondary text-xs"
+                    onClick={() => setReceiptViewer(null)}
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+              <div className="min-h-0 flex-1 overflow-auto rounded-md border border-border bg-black/5">
+                <iframe
+                  title="Receipt document"
+                  src={receiptViewer.url}
+                  className="h-[70vh] w-full"
+                />
+              </div>
+            </div>
+          </div>
+        ) : null}
         {items.length === 0 ? (
           <div className="p-5">
             <EmptyState message="No transactions match the current filters." />

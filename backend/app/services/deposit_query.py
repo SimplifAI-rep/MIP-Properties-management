@@ -37,6 +37,7 @@ def deposit_to_read(
         description=deposit.description,
         source=deposit.source,
         is_rental_income=bool(deposit.is_rental_income),
+        receipt_ref=deposit.receipt_ref,
     )
 
 

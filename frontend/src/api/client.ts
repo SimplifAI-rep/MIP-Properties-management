@@ -162,16 +162,27 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     }),
-  analyzeUpload: (file: File, propertyId: string, transactionType: 'deposit' | 'expense') => {
+  analyzeUpload: (
+    file: File,
+    options?: {
+      propertyId?: string;
+      transactionType?: 'deposit' | 'expense' | 'auto';
+    },
+  ) => {
     const form = new FormData();
     form.append('file', file);
-    form.append('property_id', propertyId);
-    form.append('transaction_type', transactionType);
+    if (options?.propertyId) {
+      form.append('property_id', options.propertyId);
+    }
+    if (options?.transactionType) {
+      form.append('transaction_type', options.transactionType);
+    }
     return request<UploadAnalyzeResponse>('/uploads/analyze', {
       method: 'POST',
       body: form,
     });
   },
+  getUploadFileUrl: (uploadId: string) => `${API_BASE}/uploads/${uploadId}/file`,
   confirmUpload: (uploadId: string, drafts: TransactionDraft[]) =>
     request<UploadConfirmResponse>(`/uploads/${uploadId}/confirm`, {
       method: 'POST',

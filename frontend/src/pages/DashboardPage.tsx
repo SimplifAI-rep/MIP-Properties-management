@@ -11,6 +11,7 @@ import {
   formatDate,
   LoadingState,
 } from '../components/ui/States';
+import { Tooltip } from '../components/ui/Tooltip';
 import {
   buildDashboardPeriod,
   defaultDashboardPeriod,
@@ -343,7 +344,15 @@ export function DashboardPage() {
           </label>
           {periodType !== 'year' ? (
             <label className="text-sm">
-              <span className="label-text">{periodType === 'month' ? 'Month' : 'Anchor month'}</span>
+              <span className="label-text">
+                {periodType === 'month' ? (
+                  'Month'
+                ) : (
+                  <Tooltip content="Month used to pick the selected quarter.">
+                    Anchor month
+                  </Tooltip>
+                )}
+              </span>
               <select
                 className="field"
                 value={month}
@@ -389,21 +398,25 @@ export function DashboardPage() {
           title="Deposits"
           value={formatCurrency(depositTotal)}
           subtitle={`${depositSummaryQuery.data!.deposit_count} in ${period.label}`}
+          tooltip="Deposit total for the selected period."
         />
         <Card
           title="Expenses"
           value={formatCurrency(expenseTotal)}
           subtitle={`${expenseSummaryQuery.data!.expense_count} in ${period.label}`}
+          tooltip="Expense total for the selected period."
         />
         <Card
           title="Net position"
           value={formatCurrency(netTotal)}
           subtitle="Deposits minus expenses"
+          tooltip="Deposits minus expenses for this period."
         />
         <Card
           title="Transactions"
           value={totalTransactions}
           subtitle={`${depositSummaryQuery.data!.property_count} properties with deposits`}
+          tooltip="Deposit + expense count in this period."
         />
         <Card
           title="Open alerts"
@@ -413,11 +426,13 @@ export function DashboardPage() {
               ? `${alertSummaryQuery.data.error_count} errors · ${alertSummaryQuery.data.warning_count} warnings`
               : 'Loading...'
           }
+          tooltip="Unresolved warnings or errors needing review."
         />
         <Card
           title="Missing deposits"
           value={gapsQuery.data?.length ?? '—'}
           subtitle={`Across ${period.label}`}
+          tooltip="Expected deposits not found in this period."
         />
       </section>
 
@@ -426,7 +441,11 @@ export function DashboardPage() {
         <section className="panel">
           <div className="section-header flex items-start justify-between gap-3">
             <div>
-              <h3 className="section-title">Pending uploads</h3>
+              <h3 className="section-title">
+                <Tooltip content="Uploads analyzed but not yet confirmed into the ledger.">
+                  Pending uploads
+                </Tooltip>
+              </h3>
               <p className="section-subtitle">Files analyzed but not yet confirmed.</p>
             </div>
             <Link to="/alerts" className="btn-secondary text-sm">
@@ -505,7 +524,11 @@ export function DashboardPage() {
       {/* Property health cards */}
       <section>
         <div className="mb-3">
-          <h3 className="section-title">Property health</h3>
+          <h3 className="section-title">
+            <Tooltip content="Per-property activity and expected deposit status for this period.">
+              Property health
+            </Tooltip>
+          </h3>
           <p className="section-subtitle">
             Per-property deposits, expenses, net, and expected deposit status for {period.label}.
           </p>
@@ -521,21 +544,37 @@ export function DashboardPage() {
                     <p className="font-semibold">{item.property.name}</p>
                     <p className="text-xs text-muted">{item.property.owner_name}</p>
                   </div>
-                  <span className={depositStatusBadge(item.depositStatus)}>
-                    {depositStatusLabel(item.depositStatus)}
-                  </span>
+                  <Tooltip
+                    content={
+                      item.depositStatus === 'ok'
+                        ? 'Expected deposits found for this period.'
+                        : item.depositStatus === 'missing'
+                          ? 'Expected deposits missing for all months in this period.'
+                          : 'Some expected deposits are missing in this period.'
+                    }
+                  >
+                    <span className={depositStatusBadge(item.depositStatus)}>
+                      {depositStatusLabel(item.depositStatus)}
+                    </span>
+                  </Tooltip>
                 </div>
                 <div className="mt-4 grid grid-cols-3 gap-2 text-sm">
                   <div>
-                    <p className="text-xs text-muted">Deposits</p>
+                    <p className="text-xs text-muted">
+                      <Tooltip content="Deposits in this period.">Deposits</Tooltip>
+                    </p>
                     <p className="amount-deposit">{formatCurrency(item.depositTotal)}</p>
                   </div>
                   <div>
-                    <p className="text-xs text-muted">Expenses</p>
+                    <p className="text-xs text-muted">
+                      <Tooltip content="Expenses in this period.">Expenses</Tooltip>
+                    </p>
                     <p className="amount-expense">{formatCurrency(item.expenseTotal)}</p>
                   </div>
                   <div>
-                    <p className="text-xs text-muted">Net</p>
+                    <p className="text-xs text-muted">
+                      <Tooltip content="Deposits minus expenses.">Net</Tooltip>
+                    </p>
                     <p className={item.net >= 0 ? 'amount-deposit' : 'amount-expense'}>
                       {formatCurrency(item.net)}
                     </p>
@@ -598,7 +637,13 @@ export function DashboardPage() {
       {/* Missing deposits */}
       <section className="panel">
         <div className="section-header">
-          <h3 className="section-title">Missing expected deposits — {period.label}</h3>
+          <h3 className="section-title">
+            <Tooltip content="Expected deposits not found for properties in this period.">
+              Missing expected deposits
+            </Tooltip>
+            {' — '}
+            {period.label}
+          </h3>
           <p className="section-subtitle">
             Properties where the expected deposit was not received.
           </p>

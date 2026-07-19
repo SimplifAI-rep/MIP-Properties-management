@@ -70,6 +70,9 @@ export interface Property {
   owner_name: string;
   deposit_count: number;
   total_deposits: string;
+  total_incoming?: string;
+  total_outgoing?: string;
+  net_balance?: string;
 }
 
 export interface PropertyDetail extends Property {

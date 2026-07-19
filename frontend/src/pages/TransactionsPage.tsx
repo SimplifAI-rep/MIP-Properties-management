@@ -11,6 +11,7 @@ import {
   formatDate,
   LoadingState,
 } from '../components/ui/States';
+import { Tooltip } from '../components/ui/Tooltip';
 import { TransactionUploadPanel } from '../components/TransactionUploadPanel';
 
 type TransactionKind = 'deposit' | 'expense';
@@ -402,18 +403,26 @@ export function TransactionsPage() {
           title="Total deposits"
           value={formatCurrency(depositTotal)}
           subtitle={`${depositCount} matching deposit(s), excluding rental income`}
+          tooltip="Filtered deposits, excluding rental income."
         />
         <Card
           title="Total expenses"
           value={formatCurrency(expenseTotal)}
           subtitle={`${expenseCount} matching expense(s), excluding He/She & owner paid`}
+          tooltip="Filtered expenses, excluding resident/owner paid."
         />
         <Card
           title="Net"
           value={formatCurrency(netTotal)}
           subtitle="Deposits minus expenses (current filters)"
+          tooltip="Deposits minus expenses for current filters."
         />
-        <Card title="Showing" value={items.length} subtitle={`${total} matching transaction(s)`} />
+        <Card
+          title="Showing"
+          value={items.length}
+          subtitle={`${total} matching transaction(s)`}
+          tooltip="Rows on this page, not the full ledger."
+        />
       </section>
 
       <div className="flex flex-wrap gap-2">
@@ -720,16 +729,30 @@ export function TransactionsPage() {
             <thead className="table-head">
               <tr>
                 <th className="px-5 py-3 font-medium">Type</th>
-                <th className="px-5 py-3 font-medium">Prop ID</th>
+                <th className="px-5 py-3 font-medium">
+                  <Tooltip content="Client property ID from the source files.">Prop ID</Tooltip>
+                </th>
                 <th className="px-5 py-3 font-medium">Date</th>
                 <th className="px-5 py-3 font-medium">Property</th>
                 <th className="px-5 py-3 font-medium">Owner</th>
-                <th className="px-5 py-3 font-medium">Details</th>
+                <th className="px-5 py-3 font-medium">
+                  <Tooltip content="Account for deposits, or category/source for expenses.">
+                    Details
+                  </Tooltip>
+                </th>
                 <th className="px-5 py-3 font-medium">Amount</th>
-                <th className="px-5 py-3 font-medium">Balance</th>
+                <th className="px-5 py-3 font-medium">
+                  <Tooltip content="Running company-float net for this property after this row.">
+                    Balance
+                  </Tooltip>
+                </th>
                 <th className="px-5 py-3 font-medium">Description</th>
-                <th className="px-5 py-3 font-medium">Source file</th>
-                <th className="px-5 py-3 font-medium">Receipt</th>
+                <th className="px-5 py-3 font-medium">
+                  <Tooltip content="File this transaction was imported from.">Source file</Tooltip>
+                </th>
+                <th className="px-5 py-3 font-medium">
+                  <Tooltip content="Linked receipt image or PDF, if uploaded.">Receipt</Tooltip>
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -762,59 +785,44 @@ export function TransactionsPage() {
                         {row.kind === 'deposit' ? 'Deposit' : 'Expense'}
                       </span>
                       {row.paid_by_resident ? (
-                        <span
-                          className="badge-resident-paid"
-                          title="Paid directly by resident (He/She paid)"
-                        >
-                          Resident paid
-                        </span>
+                        <Tooltip content="Paid by the resident — excluded from company float.">
+                          <span className="badge-resident-paid">Resident paid</span>
+                        </Tooltip>
                       ) : null}
                       {row.paid_by_owner ? (
-                        <span
-                          className="badge-owner-paid"
-                          title="Paid by the property owner (אהרון שילם)"
-                        >
-                          Owner paid
-                        </span>
+                        <Tooltip content="Paid by the owner — excluded from company float.">
+                          <span className="badge-owner-paid">Owner paid</span>
+                        </Tooltip>
                       ) : null}
                       {row.paid_by_company ? (
-                        <span
-                          className="badge-mip-paid"
-                          title="Paid by the company (MIP)"
-                        >
-                          MIP paid
-                        </span>
+                        <Tooltip content="Paid by the company (MIP) — counts in company float.">
+                          <span className="badge-mip-paid">MIP paid</span>
+                        </Tooltip>
                       ) : null}
                       {row.ledger_column === 'nearly_cc' ? (
-                        <span className="badge-nearly-cc" title="From Nearly CC column">
-                          Nearly CC
-                        </span>
+                        <Tooltip content="From the Nearly credit-card column.">
+                          <span className="badge-nearly-cc">Nearly CC</span>
+                        </Tooltip>
                       ) : null}
                       {row.ledger_column === 'cash' ? (
-                        <span className="badge-cash-paid" title="From Cash column">
-                          Cash
-                        </span>
+                        <Tooltip content="From the Cash column in the ledger.">
+                          <span className="badge-cash-paid">Cash</span>
+                        </Tooltip>
                       ) : null}
                       {row.ledger_column === 'other' ? (
-                        <span className="badge-other-paid" title="From Other column">
-                          Other
-                        </span>
+                        <Tooltip content="From the Other column in the ledger.">
+                          <span className="badge-other-paid">Other</span>
+                        </Tooltip>
                       ) : null}
                       {row.is_rental_income ? (
-                        <span
-                          className="badge-rental-income"
-                          title="Rental income (not company float)"
-                        >
-                          Rental income
-                        </span>
+                        <Tooltip content="Tenant rent — tracked separately from company float.">
+                          <span className="badge-rental-income">Rental income</span>
+                        </Tooltip>
                       ) : null}
                       {row.from_bank_statement ? (
-                        <span
-                          className="badge-bank-statement"
-                          title="Imported from company bank statement"
-                        >
-                          Bank statement
-                        </span>
+                        <Tooltip content="Imported from the company bank statement.">
+                          <span className="badge-bank-statement">Bank statement</span>
+                        </Tooltip>
                       ) : null}
                     </div>
                   </td>
@@ -855,7 +863,6 @@ export function TransactionsPage() {
                           ? 'amount-deposit'
                           : 'amount-expense'
                     }`}
-                    title="Running company-float net for this property after this transaction (same rules as page Net)"
                   >
                     {row.balance_after == null
                       ? '—'

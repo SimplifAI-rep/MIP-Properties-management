@@ -88,6 +88,10 @@ class PropertyRead(BaseModel):
     owner_name: str
     deposit_count: int = 0
     total_deposits: Decimal = Decimal("0")
+    # Company-float totals (same rules as Transactions Net)
+    total_incoming: Decimal = Decimal("0")
+    total_outgoing: Decimal = Decimal("0")
+    net_balance: Decimal = Decimal("0")
 
 
 class PropertyDetail(PropertyRead):

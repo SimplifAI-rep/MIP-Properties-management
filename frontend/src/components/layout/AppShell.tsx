@@ -1,7 +1,10 @@
+import { useState } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../api/client';
 import { useTheme } from '../../context/ThemeContext';
+import { FeedbackModal } from '../FeedbackModal';
+import { Tooltip } from '../ui/Tooltip';
 
 const navItems = [
   { to: '/', label: 'Dashboard', end: true },
@@ -15,6 +18,7 @@ const navItems = [
 
 export function AppShell() {
   const { theme, toggleTheme } = useTheme();
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
   const alertSummaryQuery = useQuery({
     queryKey: ['alert-summary'],
     queryFn: api.getAlertSummary,
@@ -25,7 +29,7 @@ export function AppShell() {
   return (
     <div className="min-h-screen lg:flex">
       <aside className="sidebar">
-        <div className="flex items-start justify-between px-6 py-5">
+        <div className="flex shrink-0 items-start justify-between px-6 py-5">
           <div>
             <p className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
               SimplifAI
@@ -43,7 +47,7 @@ export function AppShell() {
             {theme === 'dark' ? 'Light' : 'Dark'}
           </button>
         </div>
-        <nav className="flex gap-1 overflow-x-auto px-4 pb-4 lg:flex-col lg:px-3">
+        <nav className="sidebar-nav">
           {navItems.map((item) => (
             <NavLink
               key={item.to}
@@ -60,10 +64,22 @@ export function AppShell() {
             </NavLink>
           ))}
         </nav>
+        <div className="sidebar-footer">
+          <button
+            type="button"
+            className="nav-link-inactive w-full text-left"
+            onClick={() => setFeedbackOpen(true)}
+          >
+            <Tooltip content="Send a problem report or improvement idea by email.">
+              Feedback
+            </Tooltip>
+          </button>
+        </div>
       </aside>
       <main className="flex-1 px-4 py-6 sm:px-6 lg:px-8">
         <Outlet />
       </main>
+      <FeedbackModal open={feedbackOpen} onClose={() => setFeedbackOpen(false)} />
     </div>
   );
 }

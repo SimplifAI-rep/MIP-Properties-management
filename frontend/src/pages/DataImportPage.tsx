@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
 import type { ClientDataImportResponse } from '../types';
 import { ErrorState, LoadingState } from '../components/ui/States';
+import { Tooltip } from '../components/ui/Tooltip';
 
 type FileRole =
   | 'client_list'
@@ -16,36 +17,42 @@ const FILE_FIELDS: {
   label: string;
   required: boolean;
   hint: string;
+  tip: string;
 }[] = [
   {
     role: 'client_list',
     label: 'Client list',
     required: true,
     hint: 'client list to print.xlsx — owners and properties',
+    tip: 'Owners, properties, and bank accounts.',
   },
   {
     role: 'management',
     label: 'Management ledger',
     required: true,
     hint: 'Management expenses sheet.xlsx — expenses and inflows',
+    tip: 'Main ledger for expenses and inflows.',
   },
   {
     role: 'bank',
     label: 'Bank statement',
     required: false,
     hint: 'Bank Account example.xlsx — company bank rows',
+    tip: 'Optional company bank rows for matching.',
   },
   {
     role: 'credit_card_1',
     label: 'Credit card 1',
     required: false,
     hint: 'credit card 1 example.xlsx',
+    tip: 'Optional credit-card expense file.',
   },
   {
     role: 'credit_card_2',
     label: 'Credit card 2',
     required: false,
     hint: 'credit card 2 example.xlsx',
+    tip: 'Optional second credit-card expense file.',
   },
 ];
 
@@ -138,7 +145,7 @@ export function DataImportPage() {
             {FILE_FIELDS.map((field) => (
               <label key={field.role} className="text-sm">
                 <span className="label-text">
-                  {field.label}
+                  <Tooltip content={field.tip}>{field.label}</Tooltip>
                   {field.required ? ' (required)' : ' (optional)'}
                 </span>
                 <input
@@ -173,7 +180,11 @@ export function DataImportPage() {
                 }}
               />
               <span>
-                <strong>Reset database before import</strong>
+                <strong>
+                  <Tooltip content="Deletes current data, then reloads from the files above.">
+                    Reset database before import
+                  </Tooltip>
+                </strong>
                 <span className="block text-muted">
                   Wipes all owners, properties, expenses, deposits, and uploads, then imports from
                   the files above. Use this for a clean reload matching seed data.
@@ -229,8 +240,18 @@ export function DataImportPage() {
             <li>Deposits created: {result.deposits_created}</li>
             <li>Deposits skipped (duplicates): {result.deposits_skipped}</li>
             <li>Rows seen: {result.rows_seen}</li>
-            <li>Rows skipped (empty/unusable): {result.rows_skipped_empty}</li>
-            <li>Detailed skipped rows: {result.skipped_row_count}</li>
+            <li>
+              <Tooltip content="Blank or invalid rows ignored during import.">
+                Rows skipped (empty/unusable)
+              </Tooltip>
+              : {result.rows_skipped_empty}
+            </li>
+            <li>
+              <Tooltip content="Rows excluded with a reportable reason.">
+                Detailed skipped rows
+              </Tooltip>
+              : {result.skipped_row_count}
+            </li>
           </ul>
           <p className="mt-3 text-sm">
             <span className="text-muted">Files used:</span> {result.files_used.join(', ')}

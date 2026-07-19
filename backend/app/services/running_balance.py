@@ -14,11 +14,77 @@ from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import and_, func, select
 from sqlalchemy.orm import Session
 
 from app.models.deposit import Deposit
 from app.models.expense import Expense
+
+
+@dataclass(frozen=True)
+class PropertyFloatTotals:
+    incoming: Decimal
+    outgoing: Decimal
+
+    @property
+    def net(self) -> Decimal:
+        return (self.incoming - self.outgoing).quantize(Decimal("0.01"))
+
+
+def property_float_totals(
+    db: Session,
+    property_ids: list[UUID] | None = None,
+) -> dict[UUID, PropertyFloatTotals]:
+    """Company-float incoming/outgoing totals keyed by property_id."""
+    deposit_stmt = (
+        select(
+            Deposit.property_id,
+            func.coalesce(func.sum(Deposit.amount), 0),
+        )
+        .where(Deposit.is_rental_income.is_(False))
+        .group_by(Deposit.property_id)
+    )
+    expense_stmt = (
+        select(
+            Expense.property_id,
+            func.coalesce(func.sum(Expense.amount), 0),
+        )
+        .where(
+            and_(
+                Expense.paid_by_resident.is_(False),
+                Expense.paid_by_owner.is_(False),
+            )
+        )
+        .group_by(Expense.property_id)
+    )
+    if property_ids is not None:
+        unique_ids = list({pid for pid in property_ids if pid is not None})
+        if not unique_ids:
+            return {}
+        deposit_stmt = deposit_stmt.where(Deposit.property_id.in_(unique_ids))
+        expense_stmt = expense_stmt.where(Expense.property_id.in_(unique_ids))
+
+    incoming_map = {
+        property_id: Decimal(str(total)).quantize(Decimal("0.01"))
+        for property_id, total in db.execute(deposit_stmt).all()
+    }
+    outgoing_map = {
+        property_id: Decimal(str(total)).quantize(Decimal("0.01"))
+        for property_id, total in db.execute(expense_stmt).all()
+    }
+
+    keys = set(incoming_map) | set(outgoing_map)
+    if property_ids is not None:
+        keys |= set(unique_ids)
+
+    zero = Decimal("0.00")
+    return {
+        property_id: PropertyFloatTotals(
+            incoming=incoming_map.get(property_id, zero),
+            outgoing=outgoing_map.get(property_id, zero),
+        )
+        for property_id in keys
+    }
 
 
 @dataclass(frozen=True)

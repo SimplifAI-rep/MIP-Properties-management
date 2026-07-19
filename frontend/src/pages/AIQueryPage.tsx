@@ -3,6 +3,7 @@ import { useMutation } from '@tanstack/react-query';
 import { api } from '../api/client';
 import type { AIQueryResponse } from '../types';
 import { ErrorState, formatCurrency, formatDate, LoadingState } from '../components/ui/States';
+import { Tooltip } from '../components/ui/Tooltip';
 import { downloadAIQueryExcel } from '../utils/exportExcel';
 
 const EXAMPLE_PROMPTS = [
@@ -78,7 +79,11 @@ export function AIQueryPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="page-heading">AI Query</h2>
+        <h2 className="page-heading">
+          <Tooltip content="Ask natural-language questions over deposits and expenses.">
+            AI Query
+          </Tooltip>
+        </h2>
         <p className="page-desc">
           Ask natural-language questions about deposits and expenses. Uses rule-based parsing by
           default; set LLM_API_KEY for OpenAI-powered parsing.
@@ -139,9 +144,21 @@ export function AIQueryPage() {
           <div>
             <h3 className="section-title">Answer</h3>
             <p className="mt-2 body-text">{result.answer}</p>
-            <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
-              Domain: {result.query_used.domain ?? 'deposits'} · Query type:{' '}
-              {result.query_used.query_type} · Parser: {result.parser}
+            <p className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500 dark:text-slate-400">
+              <Tooltip content="Data area used for the answer, usually deposits or expenses.">
+                Domain
+              </Tooltip>
+              : {result.query_used.domain ?? 'deposits'}
+              <span aria-hidden>·</span>
+              <Tooltip content="Parsed report shape used to fetch the answer.">
+                Query type
+              </Tooltip>
+              : {result.query_used.query_type}
+              <span aria-hidden>·</span>
+              <Tooltip content="Rule-based parser, or OpenAI if LLM_API_KEY is set.">
+                Parser
+              </Tooltip>
+              : {result.parser}
             </p>
           </div>
           <div>

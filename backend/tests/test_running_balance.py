@@ -12,7 +12,7 @@ from app.models.deposit import Deposit
 from app.models.expense import Expense
 from app.models.owner import Owner
 from app.models.property import Property
-from app.services.running_balance import compute_running_balances
+from app.services.running_balance import compute_running_balances, property_float_totals
 
 
 @pytest.fixture
@@ -98,3 +98,8 @@ def test_running_balance_matches_company_float_net(db):
     assert balances[("expense", str(e2.id))] == Decimal("800.00")  # unchanged
     assert balances[("deposit", str(d2.id))] == Decimal("800.00")  # unchanged
     assert balances[("expense", str(e3.id))] == Decimal("700.00")  # MIP counts
+
+    totals = property_float_totals(db, [prop.id])[prop.id]
+    assert totals.incoming == Decimal("1000.00")
+    assert totals.outgoing == Decimal("300.00")  # 200 + 100 MIP; excludes resident 50
+    assert totals.net == Decimal("700.00")

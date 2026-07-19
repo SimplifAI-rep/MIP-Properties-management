@@ -8,6 +8,7 @@ import {
   ErrorState,
   LoadingState,
 } from '../components/ui/States';
+import { Tooltip } from '../components/ui/Tooltip';
 
 const CATEGORIES = [
   'maintenance',
@@ -156,9 +157,21 @@ export function AlertsPage() {
       </div>
 
       <div className="grid gap-4 sm:grid-cols-3">
-        <Card title="Open alerts" value={alertsQuery.data?.total ?? 0} />
-        <Card title="Errors" value={alertsQuery.data?.error_count ?? 0} />
-        <Card title="Warnings" value={alertsQuery.data?.warning_count ?? 0} />
+        <Card
+          title="Open alerts"
+          value={alertsQuery.data?.total ?? 0}
+          tooltip="Unresolved items needing review."
+        />
+        <Card
+          title="Errors"
+          value={alertsQuery.data?.error_count ?? 0}
+          tooltip="Problems that need fixing before data is complete."
+        />
+        <Card
+          title="Warnings"
+          value={alertsQuery.data?.warning_count ?? 0}
+          tooltip="Issues to review; may still be valid."
+        />
       </div>
 
       <div className="grid gap-6 xl:grid-cols-[1.4fr_1fr]">
@@ -172,8 +185,16 @@ export function AlertsPage() {
               <table className="table-shell">
                 <thead className="table-head">
                   <tr>
-                    <th className="px-5 py-3 font-medium">Severity</th>
-                    <th className="px-5 py-3 font-medium">Type</th>
+                    <th className="px-5 py-3 font-medium">
+                      <Tooltip content="Error needs a fix; warning needs a review.">
+                        Severity
+                      </Tooltip>
+                    </th>
+                    <th className="px-5 py-3 font-medium">
+                      <Tooltip content="Missing deposit, possible duplicate, or upload review.">
+                        Type
+                      </Tooltip>
+                    </th>
                     <th className="px-5 py-3 font-medium">Alert</th>
                     <th className="px-5 py-3 font-medium">Property</th>
                   </tr>

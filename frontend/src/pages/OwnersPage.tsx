@@ -8,6 +8,7 @@ import {
   formatCurrency,
   LoadingState,
 } from '../components/ui/States';
+import { Tooltip } from '../components/ui/Tooltip';
 
 export function OwnersPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -46,10 +47,18 @@ export function OwnersPage() {
               <thead className="table-head">
                 <tr>
                   <th className="px-5 py-3 font-medium">Owner</th>
-                  <th className="px-5 py-3 font-medium">Properties</th>
-                  <th className="px-5 py-3 font-medium">Deposits</th>
-                  <th className="px-5 py-3 font-medium">Expenses</th>
-                  <th className="px-5 py-3 font-medium">Net</th>
+                  <th className="px-5 py-3 font-medium">
+                    <Tooltip content="Properties linked to this owner.">Properties</Tooltip>
+                  </th>
+                  <th className="px-5 py-3 font-medium">
+                    <Tooltip content="Total deposits across linked properties.">Deposits</Tooltip>
+                  </th>
+                  <th className="px-5 py-3 font-medium">
+                    <Tooltip content="Total expenses across linked properties.">Expenses</Tooltip>
+                  </th>
+                  <th className="px-5 py-3 font-medium">
+                    <Tooltip content="Deposits minus expenses.">Net</Tooltip>
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -118,16 +127,22 @@ export function OwnersPage() {
               </div>
 
               <div className="grid gap-3 sm:grid-cols-2">
-                <Card title="Properties" value={String(detailQuery.data.property_count)} />
+                <Card
+                  title="Properties"
+                  value={String(detailQuery.data.property_count)}
+                  tooltip="Properties linked to this owner."
+                />
                 <Card
                   title="Total deposits"
                   value={formatCurrency(detailQuery.data.total_deposits)}
                   subtitle={`${detailQuery.data.deposit_count} transactions`}
+                  tooltip="Total deposits across linked properties."
                 />
                 <Card
                   title="Total expenses"
                   value={formatCurrency(detailQuery.data.total_expenses)}
                   subtitle={`${detailQuery.data.expense_count} transactions`}
+                  tooltip="Total expenses across linked properties."
                 />
                 <Card
                   title="Net"
@@ -135,6 +150,7 @@ export function OwnersPage() {
                     Number(detailQuery.data.total_deposits) -
                       Number(detailQuery.data.total_expenses),
                   )}
+                  tooltip="Deposits minus expenses."
                 />
               </div>
 

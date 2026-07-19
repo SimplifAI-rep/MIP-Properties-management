@@ -212,6 +212,17 @@ export const api = {
   getClientDataStatus: () => request<ClientDataStatusResponse>('/imports/client-data/status'),
   getClientDataSkipReportUrl: (reportId: string) =>
     `${API_BASE}/imports/client-data/reports/${reportId}`,
+  submitFeedback: (payload: {
+    message: string;
+    name?: string;
+    email?: string;
+    page_url?: string;
+  }) =>
+    request<{ ok: boolean; detail: string }>('/feedback', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }),
   importClientData: (payload: {
     clientList: File;
     management: File;

@@ -1,3 +1,4 @@
+from decimal import Decimal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -10,9 +11,14 @@ from app.models.deposit import Deposit
 from app.models.owner import Owner
 from app.models.property import Property
 from app.schemas import PropertyDetail, PropertyRead
-from app.services.deposit_query import deposit_to_read, list_deposits
+from app.services.deposit_query import list_deposits
+from app.services.running_balance import property_float_totals
 
 router = APIRouter(prefix="/properties", tags=["properties"])
+
+
+def _zero() -> Decimal:
+    return Decimal("0.00")
 
 
 @router.get("", response_model=list[PropertyRead])
@@ -30,6 +36,8 @@ def list_properties(db: Session = Depends(get_db)) -> list[PropertyRead]:
         .order_by(Property.client_prop_id)
     ).all()
 
+    floats = property_float_totals(db, [prop.id for prop, *_ in rows])
+
     return [
         PropertyRead(
             id=prop.id,
@@ -42,6 +50,9 @@ def list_properties(db: Session = Depends(get_db)) -> list[PropertyRead]:
             owner_name=owner_name,
             deposit_count=deposit_count or 0,
             total_deposits=total_deposits or 0,
+            total_incoming=(floats.get(prop.id).incoming if prop.id in floats else _zero()),
+            total_outgoing=(floats.get(prop.id).outgoing if prop.id in floats else _zero()),
+            net_balance=(floats.get(prop.id).net if prop.id in floats else _zero()),
         )
         for prop, owner_name, deposit_count, total_deposits in rows
     ]
@@ -67,6 +78,8 @@ def get_property(property_id: UUID, db: Session = Depends(get_db)) -> PropertyDe
         ).all()
     )
     recent, _ = list_deposits(db, property_id=property_id, page=1, page_size=10)
+    floats = property_float_totals(db, [property_id])
+    totals = floats.get(property_id)
 
     return PropertyDetail(
         id=prop.id,
@@ -79,6 +92,9 @@ def get_property(property_id: UUID, db: Session = Depends(get_db)) -> PropertyDe
         owner_name=owner.name,
         deposit_count=deposit_count or 0,
         total_deposits=total_deposits or 0,
+        total_incoming=totals.incoming if totals else _zero(),
+        total_outgoing=totals.outgoing if totals else _zero(),
+        net_balance=totals.net if totals else _zero(),
         owner=owner,
         bank_accounts=accounts,
         recent_deposits=recent,

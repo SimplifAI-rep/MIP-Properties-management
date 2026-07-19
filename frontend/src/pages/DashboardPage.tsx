@@ -63,7 +63,7 @@ function depositToRecent(deposit: Deposit): RecentItem {
     property_name: deposit.property_name,
     owner_name: deposit.owner_name,
     amount: deposit.amount,
-    label: deposit.description ?? deposit.account_number,
+    label: deposit.description ?? deposit.account_number ?? 'Deposit',
   };
 }
 

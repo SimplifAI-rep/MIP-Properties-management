@@ -19,6 +19,8 @@ import type {
   AlertResolveRequest,
   AlertItem,
   DepositCreate,
+  ClientDataStatusResponse,
+  ClientDataImportResponse,
 } from '../types';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000/api/v1';
@@ -207,4 +209,29 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     }),
+  getClientDataStatus: () => request<ClientDataStatusResponse>('/imports/client-data/status'),
+  getClientDataSkipReportUrl: (reportId: string) =>
+    `${API_BASE}/imports/client-data/reports/${reportId}`,
+  importClientData: (payload: {
+    clientList: File;
+    management: File;
+    bank?: File;
+    creditCard1?: File;
+    creditCard2?: File;
+    reset?: boolean;
+    confirmReset?: boolean;
+  }) => {
+    const form = new FormData();
+    form.append('client_list', payload.clientList);
+    form.append('management', payload.management);
+    if (payload.bank) form.append('bank', payload.bank);
+    if (payload.creditCard1) form.append('credit_card_1', payload.creditCard1);
+    if (payload.creditCard2) form.append('credit_card_2', payload.creditCard2);
+    form.append('reset', payload.reset ? 'true' : 'false');
+    form.append('confirm_reset', payload.confirmReset ? 'true' : 'false');
+    return request<ClientDataImportResponse>('/imports/client-data', {
+      method: 'POST',
+      body: form,
+    });
+  },
 };

@@ -132,6 +132,7 @@ class BankImportService:
                 description=description,
                 source="excel_import",
                 import_batch_id=batch.id,
+                source_file=batch.filename,
             )
             self.db.add(deposit)
             imported_count += 1

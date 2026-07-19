@@ -1195,6 +1195,7 @@ class DocumentImportService:
             description=draft.description,
             source="file_upload",
             receipt_ref=str(document.id),
+            source_file=document.filename,
         )
         self.db.add(deposit)
         self.db.flush()
@@ -1229,6 +1230,7 @@ class DocumentImportService:
             reference=draft.reference,
             description=draft.description,
             receipt_ref=str(document.id),
+            source_file=document.filename,
         )
         self.db.add(expense)
         self.db.flush()

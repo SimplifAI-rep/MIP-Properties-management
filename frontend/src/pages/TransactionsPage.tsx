@@ -28,6 +28,8 @@ interface UnifiedTransaction {
   details: string;
   description: string | null;
   receipt_ref?: string | null;
+  source_file?: string | null;
+  balance_after?: string | null;
   paid_by_resident?: boolean;
   paid_by_company?: boolean;
   paid_by_owner?: boolean;
@@ -88,6 +90,8 @@ function depositToUnified(deposit: Deposit): UnifiedTransaction {
     details: deposit.account_number ?? deposit.source,
     description: deposit.description,
     receipt_ref: deposit.receipt_ref ?? null,
+    source_file: deposit.source_file ?? null,
+    balance_after: deposit.balance_after ?? null,
     is_rental_income: Boolean(deposit.is_rental_income),
     from_bank_statement: deposit.source === 'bank_statement',
   };
@@ -108,6 +112,8 @@ function expenseToUnified(expense: Expense): UnifiedTransaction {
       ? `${expense.vendor_name}${expense.description ? ` — ${expense.description}` : ''}`
       : expense.description,
     receipt_ref: expense.receipt_ref ?? null,
+    source_file: expense.source_file ?? null,
+    balance_after: expense.balance_after ?? null,
     paid_by_resident: Boolean(expense.paid_by_resident),
     paid_by_company: Boolean(expense.paid_by_company),
     paid_by_owner: Boolean(expense.paid_by_owner),
@@ -372,6 +378,8 @@ export function TransactionsPage() {
                   currency: row.currency,
                   details: row.details,
                   description: row.description,
+                  source_file: row.source_file ?? '',
+                  balance_after: row.balance_after ?? '',
                   paid_by_resident: row.paid_by_resident ? 'yes' : '',
                   paid_by_company: row.paid_by_company ? 'yes' : '',
                   paid_by_owner: row.paid_by_owner ? 'yes' : '',
@@ -718,7 +726,9 @@ export function TransactionsPage() {
                 <th className="px-5 py-3 font-medium">Owner</th>
                 <th className="px-5 py-3 font-medium">Details</th>
                 <th className="px-5 py-3 font-medium">Amount</th>
+                <th className="px-5 py-3 font-medium">Balance</th>
                 <th className="px-5 py-3 font-medium">Description</th>
+                <th className="px-5 py-3 font-medium">Source file</th>
                 <th className="px-5 py-3 font-medium">Receipt</th>
               </tr>
             </thead>
@@ -837,7 +847,27 @@ export function TransactionsPage() {
                     {row.kind === 'deposit' ? '+' : '−'}
                     {formatCurrency(row.amount, row.currency)}
                   </td>
+                  <td
+                    className={`px-5 py-3 font-medium ${
+                      row.balance_after == null
+                        ? 'muted-text'
+                        : Number(row.balance_after) >= 0
+                          ? 'amount-deposit'
+                          : 'amount-expense'
+                    }`}
+                    title="Running company-float net for this property after this transaction (same rules as page Net)"
+                  >
+                    {row.balance_after == null
+                      ? '—'
+                      : formatCurrency(row.balance_after, row.currency)}
+                  </td>
                   <td className="px-5 py-3 muted-text">{row.description}</td>
+                  <td
+                    className="px-5 py-3 text-xs muted-text max-w-[14rem] truncate"
+                    title={row.source_file ?? undefined}
+                  >
+                    {row.source_file || '—'}
+                  </td>
                   <td className="px-5 py-3">
                     {isUploadReceiptRef(row.receipt_ref) ? (
                       <button

@@ -13,6 +13,12 @@ from app.models.expected_deposit import ExpectedDeposit
 from app.models.owner import Owner
 from app.models.property import Property
 from app.schemas import DepositCreate, DepositGap, DepositRead
+from app.services.running_balance import compute_running_balances
+from app.services.source_file import (
+    load_batch_filenames,
+    load_upload_filenames,
+    resolve_source_file,
+)
 
 
 def deposit_to_read(
@@ -21,7 +27,14 @@ def deposit_to_read(
     owner_name: str,
     account_number: str | None,
     client_prop_id: str,
+    *,
+    upload_names: dict[str, str] | None = None,
+    batch_names: dict[str, str] | None = None,
+    balances: dict[tuple[str, str], Decimal] | None = None,
 ) -> DepositRead:
+    balance = None
+    if balances is not None:
+        balance = balances.get(("deposit", str(deposit.id)))
     return DepositRead(
         id=deposit.id,
         property_id=deposit.property_id,
@@ -38,6 +51,15 @@ def deposit_to_read(
         source=deposit.source,
         is_rental_income=bool(deposit.is_rental_income),
         receipt_ref=deposit.receipt_ref,
+        source_file=resolve_source_file(
+            source_file=deposit.source_file,
+            receipt_ref=deposit.receipt_ref,
+            import_batch_id=deposit.import_batch_id,
+            source=deposit.source,
+            upload_names=upload_names,
+            batch_names=batch_names,
+        ),
+        balance_after=balance,
     )
 
 
@@ -93,9 +115,21 @@ def list_deposits(
         stmt.offset((page - 1) * page_size).limit(page_size)
     ).all()
 
+    deposits = [row[0] for row in rows]
+    upload_names = load_upload_filenames(db, [d.receipt_ref for d in deposits])
+    batch_names = load_batch_filenames(db, [d.import_batch_id for d in deposits])
+    balances = compute_running_balances(db, [d.property_id for d in deposits])
+
     items = [
         deposit_to_read(
-            deposit, property_name, owner_name, account_number, client_prop_id_val
+            deposit,
+            property_name,
+            owner_name,
+            account_number,
+            client_prop_id_val,
+            upload_names=upload_names,
+            batch_names=batch_names,
+            balances=balances,
         )
         for deposit, property_name, owner_name, account_number, client_prop_id_val in rows
     ]

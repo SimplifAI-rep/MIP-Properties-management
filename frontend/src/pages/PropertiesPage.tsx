@@ -79,7 +79,7 @@ export function PropertiesPage() {
           </div>
           {properties.length === 0 ? (
             <div className="p-5">
-              <EmptyState message="No properties found. Import client Excel data first (scripts/import_client_data.py)." />
+              <EmptyState message="No properties found. Import client Excel data from Data import." />
             </div>
           ) : null}
         </section>

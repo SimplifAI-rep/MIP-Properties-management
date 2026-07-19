@@ -71,6 +71,8 @@ class DepositRead(BaseModel):
     source: str
     is_rental_income: bool = False
     receipt_ref: str | None = None
+    source_file: str | None = None
+    balance_after: Decimal | None = None
 
 
 class PropertyRead(BaseModel):
@@ -139,6 +141,39 @@ class ImportResultRead(BaseModel):
     import_batch_id: str | None = None
 
 
+class ClientDataImportCounts(BaseModel):
+    owners: int = 0
+    properties: int = 0
+    bank_accounts: int = 0
+    expenses: int = 0
+    deposits: int = 0
+
+
+class ClientDataImportResponse(BaseModel):
+    reset: bool = False
+    files_used: list[str] = Field(default_factory=list)
+    owners_created: int = 0
+    properties_created: int = 0
+    bank_accounts_created: int = 0
+    expenses_created: int = 0
+    expenses_skipped: int = 0
+    deposits_created: int = 0
+    deposits_skipped: int = 0
+    rows_seen: int = 0
+    rows_skipped_empty: int = 0
+    skipped_row_count: int = 0
+    skip_report_id: str | None = None
+    skip_report_url: str | None = None
+    warnings: list[str] = Field(default_factory=list)
+    errors: list[str] = Field(default_factory=list)
+    database_counts: ClientDataImportCounts = Field(default_factory=ClientDataImportCounts)
+
+
+class ClientDataStatusResponse(BaseModel):
+    database_counts: ClientDataImportCounts
+    expected_files: list[str] = Field(default_factory=list)
+
+
 class HealthResponse(BaseModel):
     status: str
     timestamp: datetime
@@ -201,6 +236,8 @@ class ExpenseRead(BaseModel):
     description: str | None = None
     notes: str | None = None
     receipt_ref: str | None = None
+    source_file: str | None = None
+    balance_after: Decimal | None = None
     reconciled: bool = False
     paid_by_resident: bool = False
     paid_by_company: bool = False

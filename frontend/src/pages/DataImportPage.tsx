@@ -56,6 +56,9 @@ const FILE_FIELDS: {
   },
 ];
 
+const POLL_MS = 1500;
+const POLL_TIMEOUT_MS = 30 * 60 * 1000;
+
 export function DataImportPage() {
   const queryClient = useQueryClient();
   const [files, setFiles] = useState<Partial<Record<FileRole, File | null>>>({});
@@ -63,6 +66,7 @@ export function DataImportPage() {
   const [confirmReset, setConfirmReset] = useState(false);
   const [result, setResult] = useState<ClientDataImportResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [progressMessage, setProgressMessage] = useState<string | null>(null);
 
   const statusQuery = useQuery({
     queryKey: ['client-data-status'],
@@ -70,14 +74,15 @@ export function DataImportPage() {
   });
 
   const importMutation = useMutation({
-    mutationFn: () => {
+    mutationFn: async () => {
       if (!files.client_list || !files.management) {
         throw new Error('Client list and management ledger are required.');
       }
       if (reset && !confirmReset) {
         throw new Error('Confirm the database reset before importing.');
       }
-      return api.importClientData({
+      setProgressMessage('Uploading files…');
+      const accepted = await api.importClientData({
         clientList: files.client_list,
         management: files.management,
         bank: files.bank ?? undefined,
@@ -86,16 +91,36 @@ export function DataImportPage() {
         reset,
         confirmReset,
       });
+      setProgressMessage(accepted.message || 'Import queued…');
+
+      const started = Date.now();
+      while (Date.now() - started < POLL_TIMEOUT_MS) {
+        const job = await api.getClientDataImportJob(accepted.job_id);
+        setProgressMessage(job.message || job.status);
+        if (job.status === 'succeeded') {
+          if (!job.result) {
+            throw new Error('Import finished but returned no result.');
+          }
+          return job.result;
+        }
+        if (job.status === 'failed') {
+          throw new Error(job.error || job.message || 'Import failed.');
+        }
+        await new Promise((resolve) => setTimeout(resolve, POLL_MS));
+      }
+      throw new Error('Import timed out. Check Render logs — the job may still be running.');
     },
     onSuccess: (response) => {
       setResult(response);
       setError(null);
+      setProgressMessage(null);
       queryClient.invalidateQueries();
       statusQuery.refetch();
     },
     onError: (err: Error) => {
       setError(err.message);
       setResult(null);
+      setProgressMessage(null);
     },
   });
 
@@ -124,7 +149,8 @@ export function DataImportPage() {
         <h2 className="page-heading">Data import</h2>
         <p className="page-desc">
           Upload the ClientData Excel files to load owners, properties, expenses, and deposits —
-          the same pipeline as the offline seed import.
+          the same pipeline as the offline seed import. Large imports run in the background so the
+          request does not time out.
         </p>
       </div>
 
@@ -214,12 +240,16 @@ export function DataImportPage() {
               onClick={() => importMutation.mutate()}
             >
               {importMutation.isPending
-                ? 'Importing… (this can take a minute)'
+                ? 'Importing…'
                 : reset
                   ? 'Reset & import'
                   : 'Import into current database'}
             </button>
           </div>
+
+          {importMutation.isPending && progressMessage ? (
+            <p className="text-sm text-muted">{progressMessage}</p>
+          ) : null}
 
           {error ? <p className="text-negative text-sm whitespace-pre-wrap">{error}</p> : null}
         </div>

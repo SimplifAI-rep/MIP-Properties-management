@@ -304,6 +304,24 @@ export interface ClientDataImportResponse {
   database_counts: ClientDataImportCounts;
 }
 
+export interface ClientDataImportJobAccepted {
+  job_id: string;
+  status: string;
+  message: string;
+}
+
+export interface ClientDataImportJobStatus {
+  job_id: string;
+  status: string;
+  message: string;
+  error?: string | null;
+  reset: boolean;
+  files_used: string[];
+  result?: ClientDataImportResponse | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
 export interface DepositCreate {
   property_id: string;
   bank_account_id: string;

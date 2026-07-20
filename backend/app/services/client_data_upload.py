@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import gc
 import shutil
 import tempfile
 import uuid
+from collections.abc import Callable
 from pathlib import Path
 
 from fastapi import HTTPException, UploadFile
@@ -41,6 +43,8 @@ REQUIRED_ROLES = ("client_list", "management")
 MAX_CLIENT_DATA_BYTES = 50 * 1024 * 1024
 ALLOWED_SUFFIXES = {".xlsx", ".xls"}
 
+ProgressCallback = Callable[[str], None]
+
 
 def expected_file_labels() -> list[str]:
     return [
@@ -64,6 +68,7 @@ def reset_database() -> None:
     engine.dispose()
     Base.metadata.drop_all(bind=engine)
     init_db()
+    gc.collect()
 
 
 async def _read_excel_upload(upload: UploadFile | None, *, role: str) -> bytes | None:
@@ -93,8 +98,13 @@ async def stage_client_data_files(
     bank: UploadFile | None,
     credit_card_1: UploadFile | None,
     credit_card_2: UploadFile | None,
+    target_dir: Path | None = None,
 ) -> tuple[Path, list[str]]:
-    """Write uploads into a temp ClientData-shaped directory."""
+    """Write uploads into a ClientData-shaped directory.
+
+    If target_dir is set, files are written there (job staging).
+    Otherwise a temporary directory is created.
+    """
     uploads = {
         "client_list": client_list,
         "management": management,
@@ -119,16 +129,24 @@ async def stage_client_data_files(
             ),
         )
 
-    temp_dir = Path(tempfile.mkdtemp(prefix="simplifai-client-data-"))
+    owns_temp = target_dir is None
+    temp_dir = target_dir or Path(tempfile.mkdtemp(prefix="simplifai-client-data-"))
+    temp_dir.mkdir(parents=True, exist_ok=True)
     files_used: list[str] = []
     try:
         for role, content in staged.items():
             filename = FILE_ROLES[role]
             (temp_dir / filename).write_bytes(content)
             files_used.append(filename)
+            # Drop bytes from memory ASAP after write
+            staged[role] = b""
     except Exception:
-        shutil.rmtree(temp_dir, ignore_errors=True)
+        if owns_temp:
+            shutil.rmtree(temp_dir, ignore_errors=True)
         raise
+    finally:
+        staged.clear()
+        gc.collect()
 
     return temp_dir, files_used
 
@@ -139,21 +157,30 @@ def run_client_data_import(
     files_used: list[str],
     reset: bool,
     db: Session,
+    progress: ProgressCallback | None = None,
 ) -> ClientDataImportResponse:
+    def report(message: str) -> None:
+        if progress:
+            progress(message)
+
     work_db = db
     owns_session = False
     try:
         if reset:
+            report("Resetting database…")
             db.close()
             reset_database()
             work_db = SessionLocal()
             owns_session = True
 
-        stats = import_client_data(work_db, data_dir=data_dir)
+        report("Importing ClientData files…")
+        stats = import_client_data(work_db, data_dir=data_dir, progress=progress)
         counts = database_counts(work_db)
 
+        report("Building skip report…")
         report_id = None
         report_url = None
+        skipped_total = len(stats.skipped_rows) + getattr(stats, "skipped_rows_omitted", 0)
         if stats.skipped_rows or stats.rows_seen:
             report_id = uuid.uuid4().hex
             report_dir = get_storage_root() / "import_reports"
@@ -174,7 +201,7 @@ def run_client_data_import(
             deposits_skipped=stats.deposits_skipped,
             rows_seen=stats.rows_seen,
             rows_skipped_empty=stats.rows_skipped_empty,
-            skipped_row_count=len(stats.skipped_rows),
+            skipped_row_count=skipped_total,
             skip_report_id=report_id,
             skip_report_url=report_url,
             warnings=stats.warnings[:100],
@@ -184,6 +211,7 @@ def run_client_data_import(
     finally:
         if owns_session:
             work_db.close()
+        gc.collect()
 
 
 def get_skip_report_path(report_id: str) -> Path:

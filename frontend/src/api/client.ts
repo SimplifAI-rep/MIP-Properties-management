@@ -20,7 +20,8 @@ import type {
   AlertItem,
   DepositCreate,
   ClientDataStatusResponse,
-  ClientDataImportResponse,
+  ClientDataImportJobAccepted,
+  ClientDataImportJobStatus,
 } from '../types';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000/api/v1';
@@ -241,9 +242,11 @@ export const api = {
     if (payload.creditCard2) form.append('credit_card_2', payload.creditCard2);
     form.append('reset', payload.reset ? 'true' : 'false');
     form.append('confirm_reset', payload.confirmReset ? 'true' : 'false');
-    return request<ClientDataImportResponse>('/imports/client-data', {
+    return request<ClientDataImportJobAccepted>('/imports/client-data', {
       method: 'POST',
       body: form,
     });
   },
+  getClientDataImportJob: (jobId: string) =>
+    request<ClientDataImportJobStatus>(`/imports/client-data/jobs/${jobId}`),
 };

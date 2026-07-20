@@ -6,7 +6,8 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_db
 from app.schemas import (
-    ClientDataImportResponse,
+    ClientDataImportJobAccepted,
+    ClientDataImportJobStatus,
     ClientDataStatusResponse,
     ImportResultRead,
 )
@@ -15,8 +16,12 @@ from app.services.client_data_upload import (
     database_counts,
     expected_file_labels,
     get_skip_report_path,
-    run_client_data_import,
     stage_client_data_files,
+)
+from app.services.import_jobs import (
+    create_staged_job_dir,
+    enqueue_client_data_import,
+    get_import_job,
 )
 
 router = APIRouter(prefix="/imports", tags=["imports"])
@@ -50,7 +55,11 @@ def client_data_status(db: Session = Depends(get_db)) -> ClientDataStatusRespons
     )
 
 
-@router.post("/client-data", response_model=ClientDataImportResponse)
+@router.post(
+    "/client-data",
+    response_model=ClientDataImportJobAccepted,
+    status_code=202,
+)
 async def import_client_data_files(
     client_list: UploadFile = File(..., description="client list to print.xlsx"),
     management: UploadFile = File(..., description="Management expenses sheet.xlsx"),
@@ -59,9 +68,8 @@ async def import_client_data_files(
     credit_card_2: UploadFile | None = File(None, description="credit card 2 example.xlsx"),
     reset: bool = Form(False),
     confirm_reset: bool = Form(False),
-    db: Session = Depends(get_db),
-) -> ClientDataImportResponse:
-    """Import the full ClientData Excel bundle (same pipeline as scripts/import_client_data.py).
+) -> ClientDataImportJobAccepted:
+    """Queue a ClientData Excel import (background job — poll GET .../jobs/{job_id}).
 
     Required: client_list + management.
     Optional: bank, credit_card_1, credit_card_2.
@@ -73,22 +81,55 @@ async def import_client_data_files(
             detail="confirm_reset must be true when reset is requested",
         )
 
-    data_dir, files_used = await stage_client_data_files(
-        client_list=client_list,
-        management=management,
-        bank=bank,
-        credit_card_1=credit_card_1,
-        credit_card_2=credit_card_2,
-    )
+    job_id, files_dir = create_staged_job_dir()
     try:
-        return run_client_data_import(
-            data_dir=data_dir,
+        _, files_used = await stage_client_data_files(
+            client_list=client_list,
+            management=management,
+            bank=bank,
+            credit_card_1=credit_card_1,
+            credit_card_2=credit_card_2,
+            target_dir=files_dir,
+        )
+        meta = enqueue_client_data_import(
+            job_id=job_id,
             files_used=files_used,
             reset=reset,
-            db=db,
         )
-    finally:
-        shutil.rmtree(data_dir, ignore_errors=True)
+    except HTTPException:
+        shutil.rmtree(files_dir.parent, ignore_errors=True)
+        raise
+    except RuntimeError as exc:
+        shutil.rmtree(files_dir.parent, ignore_errors=True)
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except Exception:
+        shutil.rmtree(files_dir.parent, ignore_errors=True)
+        raise
+
+    return ClientDataImportJobAccepted(
+        job_id=meta["job_id"],
+        status=meta["status"],
+        message=meta.get("message") or "Import queued",
+    )
+
+
+@router.get("/client-data/jobs/{job_id}", response_model=ClientDataImportJobStatus)
+def client_data_import_job_status(job_id: str) -> ClientDataImportJobStatus:
+    """Poll status of a background ClientData import job."""
+    meta = get_import_job(job_id)
+    if meta is None:
+        raise HTTPException(status_code=404, detail="Import job not found")
+    return ClientDataImportJobStatus(
+        job_id=meta.get("job_id", job_id),
+        status=meta.get("status", "unknown"),
+        message=meta.get("message") or "",
+        error=meta.get("error"),
+        reset=bool(meta.get("reset")),
+        files_used=list(meta.get("files_used") or []),
+        result=meta.get("result"),
+        created_at=meta.get("created_at"),
+        updated_at=meta.get("updated_at"),
+    )
 
 
 @router.get("/client-data/reports/{report_id}")

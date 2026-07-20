@@ -11,8 +11,10 @@ Designed for idempotent re-runs via import_key on deposits/expenses.
 
 from __future__ import annotations
 
+import gc
 import logging
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
@@ -37,6 +39,13 @@ CLIENT_LIST_FILE = "client list to print.xlsx"
 MANAGEMENT_FILE = "Management expenses sheet.xlsx"
 BANK_FILE = "Bank Account example.xlsx"
 CREDIT_CARD_FILES = ("credit card 1 example.xlsx", "credit card 2 example.xlsx")
+
+# Cap detailed skip rows kept in memory (report still built from what we keep).
+MAX_SKIPPED_ROW_DETAILS = 2500
+MAX_WARNING_MESSAGES = 200
+COMMIT_EVERY_N_ROWS = 150
+
+ProgressCallback = Callable[[str], None]
 
 META_SHEETS = {
     "prop id",
@@ -100,6 +109,7 @@ class ImportStats:
     errors: list[str] = field(default_factory=list)
     sheet_counts: dict[str, dict[str, int]] = field(default_factory=dict)
     skipped_rows: list[SkippedRow] = field(default_factory=list)
+    skipped_rows_omitted: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -112,7 +122,7 @@ class ImportStats:
             "bank_accounts_created": self.bank_accounts_created,
             "rows_seen": self.rows_seen,
             "rows_skipped_empty": self.rows_skipped_empty,
-            "skipped_row_count": len(self.skipped_rows),
+            "skipped_row_count": len(self.skipped_rows) + self.skipped_rows_omitted,
             "warnings": self.warnings,
             "errors": self.errors,
             "sheet_counts": self.sheet_counts,
@@ -281,11 +291,17 @@ def _is_truthy_reconciled(value: Any) -> bool:
 
 
 class ClientDataImportService:
-    def __init__(self, db: Session, data_dir: Path | None = None):
+    def __init__(
+        self,
+        db: Session,
+        data_dir: Path | None = None,
+        progress: ProgressCallback | None = None,
+    ):
         self.db = db
         self.data_dir = data_dir or CLIENT_DATA_DIR
         self.settings = get_settings()
         self.stats = ImportStats()
+        self.progress = progress
         # alias_key -> client_prop_id (canonical)
         self.alias_to_prop: dict[str, str] = {}
         # client_prop_id -> Property
@@ -293,15 +309,37 @@ class ClientDataImportService:
         self.existing_expense_keys: set[str] = set()
         self.existing_deposit_keys: set[str] = set()
 
+    def _report(self, message: str) -> None:
+        if self.progress:
+            self.progress(message)
+
+    def _open_workbook(self, path: Path):
+        # read_only keeps peak RAM much lower on large management ledgers
+        return openpyxl.load_workbook(path, read_only=True, data_only=True)
+
+    def _checkpoint(self) -> None:
+        """Commit and release ORM identity map to limit memory growth."""
+        self.db.commit()
+        self.db.expire_all()
+        gc.collect()
+
     def import_all(self, *, include_bank: bool = True, include_credit_cards: bool = True) -> ImportStats:
         self._load_existing_keys()
         self._ensure_company_owner_and_buffer()
+        self._report("Importing client list…")
         self._import_client_list()
+        self._checkpoint()
+        self._report("Importing management ledger…")
         self._import_management_workbook()
+        self._checkpoint()
         if include_bank:
+            self._report("Importing bank statement…")
             self._import_bank_statement()
+            self._checkpoint()
         if include_credit_cards:
+            self._report("Importing credit cards…")
             self._import_credit_cards()
+            self._checkpoint()
         self.db.commit()
         return self.stats
 
@@ -341,6 +379,10 @@ class ClientDataImportService:
                 return value.isoformat()
             text = str(value).strip()
             return text or None
+
+        if len(self.stats.skipped_rows) >= MAX_SKIPPED_ROW_DETAILS:
+            self.stats.skipped_rows_omitted += 1
+            return
 
         self.stats.skipped_rows.append(
             SkippedRow(
@@ -440,108 +482,120 @@ class ClientDataImportService:
             self.stats.errors.append(f"Missing client list: {path}")
             return
 
-        wb = openpyxl.load_workbook(path, data_only=True)
-        current = wb["current clients"] if "current clients" in wb.sheetnames else wb[wb.sheetnames[0]]
-        past_name = next((n for n in wb.sheetnames if n.strip().lower().startswith("past")), None)
+        wb = self._open_workbook(path)
+        try:
+            current = (
+                wb["current clients"] if "current clients" in wb.sheetnames else wb[wb.sheetnames[0]]
+            )
+            past_name = next(
+                (n for n in wb.sheetnames if n.strip().lower().startswith("past")),
+                None,
+            )
 
-        owners_by_name: dict[str, Owner] = {
-            o.name: o for o in self.db.scalars(select(Owner)).all()
-        }
+            owners_by_name: dict[str, Owner] = {
+                o.name: o for o in self.db.scalars(select(Owner)).all()
+            }
 
-        def upsert_row(row_values: list[Any], *, status: str) -> None:
-            if not row_values:
-                return
-            prop_raw = row_values[0] if len(row_values) > 0 else None
-            last_name = row_values[1] if len(row_values) > 1 else None
-            first_name = row_values[2] if len(row_values) > 2 else None
-            hebrew = row_values[3] if len(row_values) > 3 else None
-            address = row_values[4] if len(row_values) > 4 else None
-            city = row_values[5] if len(row_values) > 5 else None
+            def upsert_row(row_values: list[Any], *, status: str) -> None:
+                if not row_values:
+                    return
+                prop_raw = row_values[0] if len(row_values) > 0 else None
+                last_name = row_values[1] if len(row_values) > 1 else None
+                first_name = row_values[2] if len(row_values) > 2 else None
+                hebrew = row_values[3] if len(row_values) > 3 else None
+                address = row_values[4] if len(row_values) > 4 else None
+                city = row_values[5] if len(row_values) > 5 else None
 
-            # skip header
-            if prop_raw is None:
-                return
-            header_probe = str(prop_raw).strip().lower()
-            if header_probe in {"property number", "property\nnumber", "#", "prop id"}:
-                return
+                # skip header
+                if prop_raw is None:
+                    return
+                header_probe = str(prop_raw).strip().lower()
+                if header_probe in {"property number", "property\nnumber", "#", "prop id"}:
+                    return
 
-            canonical = normalize_prop_key(prop_raw)
-            if not canonical:
-                self.stats.warnings.append(f"Skipped client row with empty prop id: {row_values[:3]}")
-                self._record_skip(
-                    source_file=CLIENT_LIST_FILE,
-                    sheet=status,
-                    row_number=0,
-                    reason="empty_prop_id",
-                    details=str(row_values[:6]),
-                )
-                return
+                canonical = normalize_prop_key(prop_raw)
+                if not canonical:
+                    if len(self.stats.warnings) < MAX_WARNING_MESSAGES:
+                        self.stats.warnings.append(
+                            f"Skipped client row with empty prop id: {row_values[:3]}"
+                        )
+                    self._record_skip(
+                        source_file=CLIENT_LIST_FILE,
+                        sheet=status,
+                        row_number=0,
+                        reason="empty_prop_id",
+                        details=str(row_values[:6]),
+                    )
+                    return
 
-            owner_name = _owner_display_name(last_name, first_name, hebrew)
-            owner = owners_by_name.get(owner_name)
-            if not owner:
-                owner = Owner(name=owner_name)
-                self.db.add(owner)
-                self.db.flush()
-                owners_by_name[owner_name] = owner
-                self.stats.owners_created += 1
+                owner_name = _owner_display_name(last_name, first_name, hebrew)
+                owner = owners_by_name.get(owner_name)
+                if not owner:
+                    owner = Owner(name=owner_name)
+                    self.db.add(owner)
+                    self.db.flush()
+                    owners_by_name[owner_name] = owner
+                    self.stats.owners_created += 1
 
-            existing = self.properties_by_id.get(canonical)
-            if existing is None:
-                existing = self.db.scalars(
-                    select(Property).where(Property.client_prop_id == canonical)
-                ).first()
+                existing = self.properties_by_id.get(canonical)
+                if existing is None:
+                    existing = self.db.scalars(
+                        select(Property).where(Property.client_prop_id == canonical)
+                    ).first()
 
-            addr = _optional_str(address)
-            city_s = _optional_str(city)
-            display_name = f"{addr}" if addr else f"Property {canonical}"
-            if city_s and addr:
-                display_name = f"{addr}, {city_s}"
+                addr = _optional_str(address)
+                city_s = _optional_str(city)
+                display_name = f"{addr}" if addr else f"Property {canonical}"
+                if city_s and addr:
+                    display_name = f"{addr}, {city_s}"
 
-            if existing is None:
-                existing = Property(
-                    owner_id=owner.id,
-                    client_prop_id=canonical,
-                    name=display_name,
-                    address=addr,
-                    city=city_s,
-                    status=status,
-                )
-                self.db.add(existing)
-                self.db.flush()
-                self.stats.properties_created += 1
-            else:
-                # Keep current list as source of truth when overlapping
-                if status == "active" or existing.status != "active":
-                    existing.owner_id = owner.id
-                    existing.name = display_name
-                    existing.address = addr
-                    existing.city = city_s
-                    existing.status = status
+                if existing is None:
+                    existing = Property(
+                        owner_id=owner.id,
+                        client_prop_id=canonical,
+                        name=display_name,
+                        address=addr,
+                        city=city_s,
+                        status=status,
+                    )
+                    self.db.add(existing)
+                    self.db.flush()
+                    self.stats.properties_created += 1
+                else:
+                    # Keep current list as source of truth when overlapping
+                    if status == "active" or existing.status != "active":
+                        existing.owner_id = owner.id
+                        existing.name = display_name
+                        existing.address = addr
+                        existing.city = city_s
+                        existing.status = status
 
-            self.properties_by_id[canonical] = existing
-            self._register_aliases(canonical, prop_raw)
+                self.properties_by_id[canonical] = existing
+                self._register_aliases(canonical, prop_raw)
 
-        for i, row in enumerate(current.iter_rows(values_only=True), 1):
-            if i == 1:
-                continue
-            upsert_row(list(row), status="active")
-
-        if past_name:
-            past = wb[past_name]
-            for i, row in enumerate(past.iter_rows(values_only=True), 1):
+            for i, row in enumerate(current.iter_rows(values_only=True), 1):
                 if i == 1:
                     continue
-                vals = list(row)
-                prop_raw = vals[0] if vals else None
-                canonical = normalize_prop_key(prop_raw)
-                if canonical and canonical in self.properties_by_id:
-                    # already active from current list — do not downgrade
-                    self._register_aliases(canonical, prop_raw)
-                    continue
-                upsert_row(vals, status="inactive")
+                upsert_row(list(row), status="active")
 
-        self.db.flush()
+            if past_name:
+                past = wb[past_name]
+                for i, row in enumerate(past.iter_rows(values_only=True), 1):
+                    if i == 1:
+                        continue
+                    vals = list(row)
+                    prop_raw = vals[0] if vals else None
+                    canonical = normalize_prop_key(prop_raw)
+                    if canonical and canonical in self.properties_by_id:
+                        # already active from current list — do not downgrade
+                        self._register_aliases(canonical, prop_raw)
+                        continue
+                    upsert_row(vals, status="inactive")
+
+            self.db.flush()
+        finally:
+            wb.close()
+            gc.collect()
 
     def _import_management_workbook(self) -> None:
         path = self.data_dir / MANAGEMENT_FILE
@@ -549,53 +603,59 @@ class ClientDataImportService:
             self.stats.errors.append(f"Missing management workbook: {path}")
             return
 
-        wb = openpyxl.load_workbook(path, data_only=True)
+        wb = self._open_workbook(path)
+        try:
+            # Import Buffer sheet onto BUFFER property
+            if "Buffer" in wb.sheetnames:
+                self._import_ledger_sheet(wb["Buffer"], default_prop_id=BUFFER_PROP_ID, sheet_label="Buffer")
 
-        # Import Buffer sheet onto BUFFER property
-        if "Buffer" in wb.sheetnames:
-            self._import_ledger_sheet(wb["Buffer"], default_prop_id=BUFFER_PROP_ID, sheet_label="Buffer")
-
-        for sheet_name in wb.sheetnames:
-            if sheet_name.strip().lower() in META_SHEETS:
-                continue
-            # Combined multi-property sheet — import with per-row Prop ID
-            if sheet_name.strip() in {"801-618- 619", "801-618-619"}:
-                self._import_ledger_sheet(wb[sheet_name], default_prop_id=None, sheet_label=sheet_name)
-                continue
-
-            prop = self._resolve_property(sheet_name)
-            if prop is None:
-                # Auto-create property from sheet name so we don't lose history
-                canonical = normalize_prop_key(sheet_name)
-                if not canonical:
-                    self.stats.warnings.append(f"Skipping sheet with unusable name: {sheet_name!r}")
+            for sheet_name in wb.sheetnames:
+                if sheet_name.strip().lower() in META_SHEETS:
                     continue
-                company = self.db.scalars(
-                    select(Owner).where(Owner.name == COMPANY_OWNER_NAME)
-                ).first()
-                assert company is not None
-                prop = Property(
-                    owner_id=company.id,
-                    client_prop_id=canonical,
-                    name=f"Property {canonical} (from ledger)",
-                    status="active",
-                )
-                self.db.add(prop)
-                self.db.flush()
-                self.properties_by_id[canonical] = prop
-                self._register_aliases(canonical, sheet_name)
-                self.stats.properties_created += 1
-                self.stats.warnings.append(
-                    f"Created property {canonical} from sheet {sheet_name!r} (not in client list)"
-                )
+                # Combined multi-property sheet — import with per-row Prop ID
+                if sheet_name.strip() in {"801-618- 619", "801-618-619"}:
+                    self._import_ledger_sheet(wb[sheet_name], default_prop_id=None, sheet_label=sheet_name)
+                    continue
 
-            self._import_ledger_sheet(
-                wb[sheet_name],
-                default_prop_id=prop.client_prop_id,
-                sheet_label=sheet_name,
-            )
+                prop = self._resolve_property(sheet_name)
+                if prop is None:
+                    # Auto-create property from sheet name so we don't lose history
+                    canonical = normalize_prop_key(sheet_name)
+                    if not canonical:
+                        self.stats.warnings.append(f"Skipping sheet with unusable name: {sheet_name!r}")
+                        continue
+                    company = self.db.scalars(
+                        select(Owner).where(Owner.name == COMPANY_OWNER_NAME)
+                    ).first()
+                    assert company is not None
+                    prop = Property(
+                        owner_id=company.id,
+                        client_prop_id=canonical,
+                        name=f"Property {canonical} (from ledger)",
+                        status="active",
+                    )
+                    self.db.add(prop)
+                    self.db.flush()
+                    self.properties_by_id[canonical] = prop
+                    self._register_aliases(canonical, sheet_name)
+                    self.stats.properties_created += 1
+                    if len(self.stats.warnings) < MAX_WARNING_MESSAGES:
+                        self.stats.warnings.append(
+                            f"Created property {canonical} from sheet {sheet_name!r} (not in client list)"
+                        )
 
-        self.db.flush()
+                self._report(f"Importing sheet {sheet_name}…")
+                self._import_ledger_sheet(
+                    wb[sheet_name],
+                    default_prop_id=prop.client_prop_id,
+                    sheet_label=sheet_name,
+                )
+                self._checkpoint()
+
+            self.db.flush()
+        finally:
+            wb.close()
+            gc.collect()
 
     def _import_ledger_sheet(
         self,
@@ -619,6 +679,11 @@ class ClientDataImportService:
         }
         header_idx: dict[str, int] | None = None
 
+        # read_only mode can under-report dimensions; clear so all rows stream
+        reset_dims = getattr(ws, "reset_dimensions", None)
+        if callable(reset_dims):
+            reset_dims()
+
         for row_number, row in enumerate(ws.iter_rows(values_only=True), 1):
             values = list(row)
             if not any(v is not None and str(v).strip() != "" for v in values):
@@ -634,6 +699,8 @@ class ClientDataImportService:
 
             counts["seen"] += 1
             self.stats.rows_seen += 1
+            if counts["seen"] % COMMIT_EVERY_N_ROWS == 0:
+                self._checkpoint()
 
             def col(name: str) -> Any:
                 idx = header_idx.get(name)  # type: ignore[union-attr]
@@ -1036,123 +1103,127 @@ class ClientDataImportService:
             return
 
         wb = openpyxl.load_workbook(path, data_only=True)
-        ws = wb[wb.sheetnames[0]]
-        account = self.db.scalars(
-            select(BankAccount).where(BankAccount.account_number == COMPANY_ACCOUNT_NUMBER)
-        ).first()
-        buffer = self.properties_by_id[BUFFER_PROP_ID]
+        try:
+            ws = wb[wb.sheetnames[0]]
+            account = self.db.scalars(
+                select(BankAccount).where(BankAccount.account_number == COMPANY_ACCOUNT_NUMBER)
+            ).first()
+            buffer = self.properties_by_id[BUFFER_PROP_ID]
 
-        header_row = None
-        headers: list[str] = []
-        for i, row in enumerate(ws.iter_rows(values_only=True), 1):
-            vals = [str(v).strip() if v is not None else "" for v in row]
-            if "תאריך" in vals and ("בחובה" in vals or "בזכות" in vals):
-                header_row = i
-                headers = vals
-                break
+            header_row = None
+            headers: list[str] = []
+            for i, row in enumerate(ws.iter_rows(values_only=True), 1):
+                vals = [str(v).strip() if v is not None else "" for v in row]
+                if "תאריך" in vals and ("בחובה" in vals or "בזכות" in vals):
+                    header_row = i
+                    headers = vals
+                    break
 
-        if header_row is None:
-            self.stats.errors.append("Could not find bank statement header row")
-            return
+            if header_row is None:
+                self.stats.errors.append("Could not find bank statement header row")
+                return
 
-        col = {name: idx for idx, name in enumerate(headers) if name}
+            col = {name: idx for idx, name in enumerate(headers) if name}
 
-        def get(row_vals: list[Any], name: str) -> Any:
-            idx = col.get(name)
-            if idx is None or idx >= len(row_vals):
-                return None
-            return row_vals[idx]
+            def get(row_vals: list[Any], name: str) -> Any:
+                idx = col.get(name)
+                if idx is None or idx >= len(row_vals):
+                    return None
+                return row_vals[idx]
 
-        for row_number, row in enumerate(ws.iter_rows(values_only=True), 1):
-            if row_number <= header_row:
-                continue
-            values = list(row)
-            tx_date = _parse_date(get(values, "תאריך"))
-            if tx_date is None:
-                continue
+            for row_number, row in enumerate(ws.iter_rows(values_only=True), 1):
+                if row_number <= header_row:
+                    continue
+                values = list(row)
+                tx_date = _parse_date(get(values, "תאריך"))
+                if tx_date is None:
+                    continue
 
-            debit = _parse_amount(get(values, "בחובה"))
-            credit = _parse_amount(get(values, "בזכות"))
-            ref = _optional_str(get(values, "אסמכתא"))
-            desc = _optional_str(get(values, "תיאור"))
-            extended = _optional_str(get(values, "תאור מורחב"))
-            full_desc = " | ".join(p for p in (desc, extended) if p)
+                debit = _parse_amount(get(values, "בחובה"))
+                credit = _parse_amount(get(values, "בזכות"))
+                ref = _optional_str(get(values, "אסמכתא"))
+                desc = _optional_str(get(values, "תיאור"))
+                extended = _optional_str(get(values, "תאור מורחב"))
+                full_desc = " | ".join(p for p in (desc, extended) if p)
 
-            prop = self._guess_property_from_text(full_desc) or buffer
+                prop = self._guess_property_from_text(full_desc) or buffer
 
-            if credit is not None:
-                import_key = f"bank:{COMPANY_ACCOUNT_NUMBER}:r{row_number}:credit:{tx_date}:{credit}:{ref or ''}"
-                if import_key not in self.existing_deposit_keys:
-                    self.db.add(
-                        Deposit(
-                            bank_account_id=account.id if account else None,
-                            property_id=prop.id,
+                if credit is not None:
+                    import_key = f"bank:{COMPANY_ACCOUNT_NUMBER}:r{row_number}:credit:{tx_date}:{credit}:{ref or ''}"
+                    if import_key not in self.existing_deposit_keys:
+                        self.db.add(
+                            Deposit(
+                                bank_account_id=account.id if account else None,
+                                property_id=prop.id,
+                                transaction_date=tx_date,
+                                amount=credit,
+                                currency=self.settings.default_currency,
+                                reference=ref,
+                                description=full_desc,
+                                source="bank_statement",
+                                import_key=import_key,
+                                source_file=BANK_FILE,
+                            )
+                        )
+                        self.existing_deposit_keys.add(import_key)
+                        self.stats.deposits_created += 1
+                    else:
+                        self.stats.deposits_skipped += 1
+                        self._record_skip(
+                            source_file=BANK_FILE,
+                            sheet=ws.title,
+                            row_number=row_number,
+                            reason="duplicate_deposit",
+                            prop_id=prop.client_prop_id,
                             transaction_date=tx_date,
                             amount=credit,
-                            currency=self.settings.default_currency,
-                            reference=ref,
-                            description=full_desc,
-                            source="bank_statement",
+                            notes=full_desc,
+                            details="Duplicate bank credit",
                             import_key=import_key,
-                            source_file=BANK_FILE,
                         )
-                    )
-                    self.existing_deposit_keys.add(import_key)
-                    self.stats.deposits_created += 1
-                else:
-                    self.stats.deposits_skipped += 1
-                    self._record_skip(
-                        source_file=BANK_FILE,
-                        sheet=ws.title,
-                        row_number=row_number,
-                        reason="duplicate_deposit",
-                        prop_id=prop.client_prop_id,
-                        transaction_date=tx_date,
-                        amount=credit,
-                        notes=full_desc,
-                        details="Duplicate bank credit",
-                        import_key=import_key,
-                    )
 
-            if debit is not None:
-                import_key = f"bank:{COMPANY_ACCOUNT_NUMBER}:r{row_number}:debit:{tx_date}:{debit}:{ref or ''}"
-                if import_key not in self.existing_expense_keys:
-                    self.db.add(
-                        Expense(
-                            property_id=prop.id,
+                if debit is not None:
+                    import_key = f"bank:{COMPANY_ACCOUNT_NUMBER}:r{row_number}:debit:{tx_date}:{debit}:{ref or ''}"
+                    if import_key not in self.existing_expense_keys:
+                        self.db.add(
+                            Expense(
+                                property_id=prop.id,
+                                transaction_date=tx_date,
+                                amount=debit,
+                                currency=self.settings.default_currency,
+                                category=desc or "bank_transfer",
+                                source="bank_statement",
+                                payment_method="bank_transfer",
+                                vendor_name=None,
+                                reference=ref,
+                                description=full_desc,
+                                receipt_ref=ref,
+                                reconciled=False,
+                                import_key=import_key,
+                                source_file=BANK_FILE,
+                            )
+                        )
+                        self.existing_expense_keys.add(import_key)
+                        self.stats.expenses_created += 1
+                    else:
+                        self.stats.expenses_skipped += 1
+                        self._record_skip(
+                            source_file=BANK_FILE,
+                            sheet=ws.title,
+                            row_number=row_number,
+                            reason="duplicate_expense",
+                            prop_id=prop.client_prop_id,
                             transaction_date=tx_date,
                             amount=debit,
-                            currency=self.settings.default_currency,
-                            category=desc or "bank_transfer",
-                            source="bank_statement",
-                            payment_method="bank_transfer",
-                            vendor_name=None,
-                            reference=ref,
-                            description=full_desc,
-                            receipt_ref=ref,
-                            reconciled=False,
+                            notes=full_desc,
+                            details="Duplicate bank debit",
                             import_key=import_key,
-                            source_file=BANK_FILE,
                         )
-                    )
-                    self.existing_expense_keys.add(import_key)
-                    self.stats.expenses_created += 1
-                else:
-                    self.stats.expenses_skipped += 1
-                    self._record_skip(
-                        source_file=BANK_FILE,
-                        sheet=ws.title,
-                        row_number=row_number,
-                        reason="duplicate_expense",
-                        prop_id=prop.client_prop_id,
-                        transaction_date=tx_date,
-                        amount=debit,
-                        notes=full_desc,
-                        details="Duplicate bank debit",
-                        import_key=import_key,
-                    )
 
-        self.db.flush()
+            self.db.flush()
+        finally:
+            wb.close()
+            gc.collect()
 
     def _guess_property_from_text(self, text: str | None) -> Property | None:
         if not text:
@@ -1184,153 +1255,161 @@ class ClientDataImportService:
                 continue
 
             wb = openpyxl.load_workbook(path, data_only=True)
-            ws = wb[wb.sheetnames[0]]
+            try:
+                ws = wb[wb.sheetnames[0]]
 
-            card_last4 = "unknown"
-            for row in ws.iter_rows(values_only=True, max_row=10):
-                for cell in row:
-                    if cell is None:
-                        continue
-                    m = re.search(r"(\d{4})\s*$", str(cell))
-                    if m and "מסטרקארד" in str(cell):
-                        card_last4 = m.group(1)
+                card_last4 = "unknown"
+                for row in ws.iter_rows(values_only=True, max_row=10):
+                    for cell in row:
+                        if cell is None:
+                            continue
+                        m = re.search(r"(\d{4})\s*$", str(cell))
+                        if m and "מסטרקארד" in str(cell):
+                            card_last4 = m.group(1)
+                            break
+
+                account_number = f"{COMPANY_CC_ACCOUNT_PREFIX}{card_last4}"
+                account = self.db.scalars(
+                    select(BankAccount).where(BankAccount.account_number == account_number)
+                ).first()
+                if not account:
+                    account = BankAccount(
+                        property_id=None,
+                        bank_name="Bank Leumi Mastercard",
+                        account_number=account_number,
+                        currency=self.settings.default_currency,
+                        label=f"Credit card ••{card_last4}",
+                    )
+                    self.db.add(account)
+                    self.db.flush()
+                    self.stats.bank_accounts_created += 1
+
+                header_row = None
+                headers: list[str] = []
+                for i, row in enumerate(ws.iter_rows(values_only=True), 1):
+                    vals = [str(v).strip() if v is not None else "" for v in row]
+                    if "תאריך העסקה" in vals and "סכום חיוב" in vals:
+                        header_row = i
+                        headers = vals
                         break
-
-            account_number = f"{COMPANY_CC_ACCOUNT_PREFIX}{card_last4}"
-            account = self.db.scalars(
-                select(BankAccount).where(BankAccount.account_number == account_number)
-            ).first()
-            if not account:
-                account = BankAccount(
-                    property_id=None,
-                    bank_name="Bank Leumi Mastercard",
-                    account_number=account_number,
-                    currency=self.settings.default_currency,
-                    label=f"Credit card ••{card_last4}",
-                )
-                self.db.add(account)
-                self.db.flush()
-                self.stats.bank_accounts_created += 1
-
-            header_row = None
-            headers: list[str] = []
-            for i, row in enumerate(ws.iter_rows(values_only=True), 1):
-                vals = [str(v).strip() if v is not None else "" for v in row]
-                if "תאריך העסקה" in vals and "סכום חיוב" in vals:
-                    header_row = i
-                    headers = vals
-                    break
-            if header_row is None:
-                self.stats.errors.append(f"No credit-card header in {filename}")
-                continue
-
-            col = {name: idx for idx, name in enumerate(headers) if name}
-
-            def get(row_vals: list[Any], name: str) -> Any:
-                idx = col.get(name)
-                if idx is None or idx >= len(row_vals):
-                    return None
-                return row_vals[idx]
-
-            for row_number, row in enumerate(ws.iter_rows(values_only=True), 1):
-                if row_number <= header_row:
-                    continue
-                values = list(row)
-                # Skip totals
-                if any(v is not None and "סה" in str(v) for v in values[:5]):
+                if header_row is None:
+                    self.stats.errors.append(f"No credit-card header in {filename}")
                     continue
 
-                tx_date = _parse_date(get(values, "תאריך העסקה"))
-                merchant = _optional_str(get(values, "שם בית העסק"))
-                charge = get(values, "סכום חיוב")
-                # Negative charge = fee credit/refund — skip or treat as deposit
-                if charge is None:
-                    continue
-                try:
-                    charge_dec = Decimal(str(charge))
-                except (InvalidOperation, ValueError):
-                    continue
+                col = {name: idx for idx, name in enumerate(headers) if name}
 
-                if tx_date is None or merchant is None:
-                    continue
+                def get(row_vals: list[Any], name: str) -> Any:
+                    idx = col.get(name)
+                    if idx is None or idx >= len(row_vals):
+                        return None
+                    return row_vals[idx]
 
-                if charge_dec < 0:
-                    # Card credit / fee waiver
-                    amount = abs(charge_dec).quantize(Decimal("0.01"))
-                    import_key = f"cc:{card_last4}:r{row_number}:credit:{tx_date}:{amount}"
-                    if import_key not in self.existing_deposit_keys:
+                for row_number, row in enumerate(ws.iter_rows(values_only=True), 1):
+                    if row_number <= header_row:
+                        continue
+                    values = list(row)
+                    # Skip totals
+                    if any(v is not None and "סה" in str(v) for v in values[:5]):
+                        continue
+
+                    tx_date = _parse_date(get(values, "תאריך העסקה"))
+                    merchant = _optional_str(get(values, "שם בית העסק"))
+                    charge = get(values, "סכום חיוב")
+                    # Negative charge = fee credit/refund — skip or treat as deposit
+                    if charge is None:
+                        continue
+                    try:
+                        charge_dec = Decimal(str(charge))
+                    except (InvalidOperation, ValueError):
+                        continue
+
+                    if tx_date is None or merchant is None:
+                        continue
+
+                    if charge_dec < 0:
+                        # Card credit / fee waiver
+                        amount = abs(charge_dec).quantize(Decimal("0.01"))
+                        import_key = f"cc:{card_last4}:r{row_number}:credit:{tx_date}:{amount}"
+                        if import_key not in self.existing_deposit_keys:
+                            self.db.add(
+                                Deposit(
+                                    bank_account_id=account.id,
+                                    property_id=buffer.id,
+                                    transaction_date=tx_date,
+                                    amount=amount,
+                                    currency=self.settings.default_currency,
+                                    reference=None,
+                                    description=merchant,
+                                    source="credit_card",
+                                    import_key=import_key,
+                                    source_file=filename,
+                                )
+                            )
+                            self.existing_deposit_keys.add(import_key)
+                            self.stats.deposits_created += 1
+                        else:
+                            self.stats.deposits_skipped += 1
+                            self._record_skip(
+                                source_file=filename,
+                                sheet=ws.title,
+                                row_number=row_number,
+                                reason="duplicate_deposit",
+                                transaction_date=tx_date,
+                                amount=amount,
+                                notes=merchant,
+                                details="Duplicate credit-card credit",
+                                import_key=import_key,
+                            )
+                        continue
+
+                    amount = charge_dec.quantize(Decimal("0.01"))
+                    if amount <= 0:
+                        continue
+                    import_key = f"cc:{card_last4}:r{row_number}:expense:{tx_date}:{amount}:{merchant}"
+                    if import_key not in self.existing_expense_keys:
                         self.db.add(
-                            Deposit(
-                                bank_account_id=account.id,
+                            Expense(
                                 property_id=buffer.id,
                                 transaction_date=tx_date,
                                 amount=amount,
                                 currency=self.settings.default_currency,
-                                reference=None,
-                                description=merchant,
+                                category=merchant[:255],
                                 source="credit_card",
+                                payment_method="credit_card",
+                                vendor_name=merchant,
+                                description=merchant,
                                 import_key=import_key,
                                 source_file=filename,
                             )
                         )
-                        self.existing_deposit_keys.add(import_key)
-                        self.stats.deposits_created += 1
+                        self.existing_expense_keys.add(import_key)
+                        self.stats.expenses_created += 1
                     else:
-                        self.stats.deposits_skipped += 1
+                        self.stats.expenses_skipped += 1
                         self._record_skip(
                             source_file=filename,
                             sheet=ws.title,
                             row_number=row_number,
-                            reason="duplicate_deposit",
+                            reason="duplicate_expense",
                             transaction_date=tx_date,
                             amount=amount,
                             notes=merchant,
-                            details="Duplicate credit-card credit",
+                            details="Duplicate credit-card expense",
                             import_key=import_key,
                         )
-                    continue
-
-                amount = charge_dec.quantize(Decimal("0.01"))
-                if amount <= 0:
-                    continue
-                import_key = f"cc:{card_last4}:r{row_number}:expense:{tx_date}:{amount}:{merchant}"
-                if import_key not in self.existing_expense_keys:
-                    self.db.add(
-                        Expense(
-                            property_id=buffer.id,
-                            transaction_date=tx_date,
-                            amount=amount,
-                            currency=self.settings.default_currency,
-                            category=merchant[:255],
-                            source="credit_card",
-                            payment_method="credit_card",
-                            vendor_name=merchant,
-                            description=merchant,
-                            import_key=import_key,
-                            source_file=filename,
-                        )
-                    )
-                    self.existing_expense_keys.add(import_key)
-                    self.stats.expenses_created += 1
-                else:
-                    self.stats.expenses_skipped += 1
-                    self._record_skip(
-                        source_file=filename,
-                        sheet=ws.title,
-                        row_number=row_number,
-                        reason="duplicate_expense",
-                        transaction_date=tx_date,
-                        amount=amount,
-                        notes=merchant,
-                        details="Duplicate credit-card expense",
-                        import_key=import_key,
-                    )
+            finally:
+                wb.close()
+                gc.collect()
 
         self.db.flush()
 
 
-def import_client_data(db: Session, data_dir: Path | None = None) -> ImportStats:
-    service = ClientDataImportService(db, data_dir=data_dir)
+def import_client_data(
+    db: Session,
+    data_dir: Path | None = None,
+    progress: ProgressCallback | None = None,
+) -> ImportStats:
+    service = ClientDataImportService(db, data_dir=data_dir, progress=progress)
     return service.import_all()
 
 

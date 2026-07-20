@@ -178,6 +178,24 @@ class ClientDataStatusResponse(BaseModel):
     expected_files: list[str] = Field(default_factory=list)
 
 
+class ClientDataImportJobAccepted(BaseModel):
+    job_id: str
+    status: str
+    message: str = "Import queued"
+
+
+class ClientDataImportJobStatus(BaseModel):
+    job_id: str
+    status: str
+    message: str = ""
+    error: str | None = None
+    reset: bool = False
+    files_used: list[str] = Field(default_factory=list)
+    result: ClientDataImportResponse | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
+
+
 class HealthResponse(BaseModel):
     status: str
     timestamp: datetime

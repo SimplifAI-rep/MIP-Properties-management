@@ -1,4 +1,5 @@
 from pathlib import Path
+import time
 
 import pytest
 from fastapi.testclient import TestClient
@@ -10,6 +11,7 @@ from app.api.deps import get_db
 from app.core.database import Base
 from app.main import app
 from app.models.owner import Owner
+from app.services import import_jobs
 from app.services.client_import import CLIENT_DATA_DIR, CLIENT_LIST_FILE, MANAGEMENT_FILE
 
 CLIENT_LIST_PATH = CLIENT_DATA_DIR / CLIENT_LIST_FILE
@@ -25,20 +27,44 @@ def db():
         poolclass=StaticPool,
     )
     Base.metadata.create_all(engine)
-    session = sessionmaker(bind=engine)()
+    TestingSession = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+    session = TestingSession()
     yield session
     session.close()
 
 
 @pytest.fixture
 def client(db):
+    engine = db.get_bind()
+    TestingSession = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+
     def override_get_db():
         yield db
+
+    previous_factory = import_jobs._session_factory
+    import_jobs.set_session_factory(TestingSession)
+    # Allow a fresh job after previous tests
+    import_jobs._ACTIVE_JOB_ID = None
 
     app.dependency_overrides[get_db] = override_get_db
     with TestClient(app) as test_client:
         yield test_client
+    import_jobs.set_session_factory(previous_factory)
+    import_jobs._ACTIVE_JOB_ID = None
     app.dependency_overrides.clear()
+
+
+def _wait_for_job(client, job_id: str, timeout_s: float = 120.0) -> dict:
+    deadline = time.time() + timeout_s
+    last = None
+    while time.time() < deadline:
+        response = client.get(f"/api/v1/imports/client-data/jobs/{job_id}")
+        assert response.status_code == 200, response.text
+        last = response.json()
+        if last["status"] in {"succeeded", "failed"}:
+            return last
+        time.sleep(0.2)
+    raise AssertionError(f"Import job {job_id} did not finish: {last}")
 
 
 def test_client_data_status(client):
@@ -100,8 +126,15 @@ def test_client_data_import_loads_owners(client, db):
             ),
         },
     )
-    assert response.status_code == 200, response.text
-    body = response.json()
+    assert response.status_code == 202, response.text
+    accepted = response.json()
+    assert accepted["job_id"]
+    assert accepted["status"] in {"queued", "running"}
+
+    job = _wait_for_job(client, accepted["job_id"])
+    assert job["status"] == "succeeded", job
+    body = job["result"]
+    assert body is not None
     assert body["owners_created"] > 0
     assert body["properties_created"] > 0
     assert body["database_counts"]["owners"] > 0

@@ -194,6 +194,8 @@ export function PropertiesPage() {
                   state={propertyTransactionsState(
                     detailQuery.data.id,
                     detailQuery.data.client_prop_id,
+                    null,
+                    'deposit',
                   )}
                   className="block"
                 >
@@ -208,6 +210,8 @@ export function PropertiesPage() {
                   state={propertyTransactionsState(
                     detailQuery.data.id,
                     detailQuery.data.client_prop_id,
+                    null,
+                    'expense',
                   )}
                   className="block"
                 >

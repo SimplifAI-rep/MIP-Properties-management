@@ -186,6 +186,7 @@ export function TransactionsPage() {
       ownerId?: string;
       dateFrom?: string;
       dateTo?: string;
+      typeFilter?: TypeFilter;
     } | null;
     if (state?.showUpload) {
       setShowUpload(true);
@@ -210,6 +211,12 @@ export function TransactionsPage() {
       setDateFrom(state.dateFrom);
       setDateTo(state.dateTo);
       setPage(1);
+    }
+    if (state?.typeFilter) {
+      setTypeFilter(state.typeFilter);
+      setPage(1);
+    } else if (state?.propertyId || state?.clientPropId || state?.ownerId) {
+      setTypeFilter('all');
     }
   }, [location.state]);
 

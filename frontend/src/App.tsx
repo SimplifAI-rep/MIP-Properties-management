@@ -5,6 +5,7 @@ import { ThemeProvider } from './context/ThemeContext';
 import { AIQueryPage } from './pages/AIQueryPage';
 import { AlertsPage } from './pages/AlertsPage';
 import { DashboardPage } from './pages/DashboardPage';
+import { DataImportPage } from './pages/DataImportPage';
 import { TransactionsPage } from './pages/TransactionsPage';
 import { OwnersPage } from './pages/OwnersPage';
 import { PropertiesPage } from './pages/PropertiesPage';
@@ -30,6 +31,7 @@ export default function App() {
             <Route path="owners" element={<OwnersPage />} />
             <Route path="transactions" element={<TransactionsPage />} />
             <Route path="alerts" element={<AlertsPage />} />
+            <Route path="data-import" element={<DataImportPage />} />
             <Route path="deposits" element={<Navigate to="/transactions" replace />} />
             <Route path="expenses" element={<Navigate to="/transactions" replace />} />
             <Route path="ai" element={<AIQueryPage />} />

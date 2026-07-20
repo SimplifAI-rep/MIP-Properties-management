@@ -54,6 +54,38 @@ COMPANY_CC_ACCOUNT_PREFIX = "MIP-LEUMI-CC-"
 
 
 @dataclass
+class SkippedRow:
+    source_file: str
+    sheet: str
+    row_number: int
+    reason: str
+    prop_id: str | None = None
+    transaction_date: str | None = None
+    amount: str | None = None
+    inflow: str | None = None
+    section: str | None = None
+    notes: str | None = None
+    details: str | None = None
+    import_key: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "source_file": self.source_file,
+            "sheet": self.sheet,
+            "row_number": self.row_number,
+            "reason": self.reason,
+            "prop_id": self.prop_id,
+            "transaction_date": self.transaction_date,
+            "amount": self.amount,
+            "inflow": self.inflow,
+            "section": self.section,
+            "notes": self.notes,
+            "details": self.details,
+            "import_key": self.import_key,
+        }
+
+
+@dataclass
 class ImportStats:
     owners_created: int = 0
     properties_created: int = 0
@@ -67,6 +99,7 @@ class ImportStats:
     warnings: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     sheet_counts: dict[str, dict[str, int]] = field(default_factory=dict)
+    skipped_rows: list[SkippedRow] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -79,6 +112,7 @@ class ImportStats:
             "bank_accounts_created": self.bank_accounts_created,
             "rows_seen": self.rows_seen,
             "rows_skipped_empty": self.rows_skipped_empty,
+            "skipped_row_count": len(self.skipped_rows),
             "warnings": self.warnings,
             "errors": self.errors,
             "sheet_counts": self.sheet_counts,
@@ -149,26 +183,39 @@ def _optional_str(value: Any) -> str | None:
 
 
 def _parse_date(value: Any) -> date | None:
+    """Parse a ledger date; reject Excel serial leftovers (year before 2000)."""
     if value is None:
         return None
     if isinstance(value, datetime):
-        return value.date()
-    if isinstance(value, date):
-        return value
-    text = str(value).strip()
-    if not text:
+        parsed = value.date()
+    elif isinstance(value, date):
+        parsed = value
+    elif isinstance(value, (int, float)) and not isinstance(value, bool):
+        # Bare Excel serial numbers (e.g. 28 → 1900-01-28) are not real transaction dates.
         return None
-    try:
-        parsed = datetime.fromisoformat(text.replace("Z", ""))
-        return parsed.date()
-    except ValueError:
-        pass
-    for fmt in ("%d.%m.%Y", "%d/%m/%Y", "%Y-%m-%d", "%d.%m.%y", "%d/%m/%y"):
+    else:
+        text = str(value).strip()
+        if not text or text.lower() in {"none", "nan", "nat"}:
+            return None
+        parsed = None
         try:
-            return datetime.strptime(text, fmt).date()
+            parsed = datetime.fromisoformat(text.replace("Z", "")).date()
         except ValueError:
-            continue
-    return None
+            pass
+        if parsed is None:
+            for fmt in ("%d.%m.%Y", "%d/%m/%Y", "%Y-%m-%d", "%d.%m.%y", "%d/%m/%y"):
+                try:
+                    parsed = datetime.strptime(text, fmt).date()
+                    break
+                except ValueError:
+                    continue
+        if parsed is None:
+            return None
+
+    # Excel often turns day-only / serial cells into January 1900.
+    if parsed.year < 2000:
+        return None
+    return parsed
 
 
 def _parse_amount(value: Any) -> Decimal | None:
@@ -268,6 +315,49 @@ class ClientDataImportService:
         for prop in self.db.scalars(select(Property)).all():
             self.properties_by_id[prop.client_prop_id] = prop
             self.alias_to_prop[normalize_prop_key(prop.client_prop_id)] = prop.client_prop_id
+
+    def _record_skip(
+        self,
+        *,
+        source_file: str,
+        sheet: str,
+        row_number: int,
+        reason: str,
+        prop_id: Any = None,
+        transaction_date: Any = None,
+        amount: Any = None,
+        inflow: Any = None,
+        section: Any = None,
+        notes: Any = None,
+        details: str | None = None,
+        import_key: str | None = None,
+    ) -> None:
+        def _fmt(value: Any) -> str | None:
+            if value is None:
+                return None
+            if isinstance(value, Decimal):
+                return str(value)
+            if isinstance(value, date):
+                return value.isoformat()
+            text = str(value).strip()
+            return text or None
+
+        self.stats.skipped_rows.append(
+            SkippedRow(
+                source_file=source_file,
+                sheet=sheet,
+                row_number=row_number,
+                reason=reason,
+                prop_id=_fmt(prop_id),
+                transaction_date=_fmt(transaction_date),
+                amount=_fmt(amount),
+                inflow=_fmt(inflow),
+                section=_fmt(section),
+                notes=_fmt(notes),
+                details=details,
+                import_key=import_key,
+            )
+        )
 
     def _ensure_company_owner_and_buffer(self) -> None:
         owner = self.db.scalars(
@@ -378,6 +468,13 @@ class ClientDataImportService:
             canonical = normalize_prop_key(prop_raw)
             if not canonical:
                 self.stats.warnings.append(f"Skipped client row with empty prop id: {row_values[:3]}")
+                self._record_skip(
+                    source_file=CLIENT_LIST_FILE,
+                    sheet=status,
+                    row_number=0,
+                    reason="empty_prop_id",
+                    details=str(row_values[:6]),
+                )
                 return
 
             owner_name = _owner_display_name(last_name, first_name, hebrew)
@@ -560,6 +657,19 @@ class ClientDataImportService:
                     self.stats.warnings.append(
                         f"{sheet_label} R{row_number}: could not resolve property {prop_raw!r}"
                     )
+                self._record_skip(
+                    source_file=MANAGEMENT_FILE,
+                    sheet=sheet_label,
+                    row_number=row_number,
+                    reason="unresolved_property",
+                    prop_id=prop_raw,
+                    transaction_date=col("date"),
+                    amount=col("amount"),
+                    inflow=col("inflow"),
+                    section=col("section") or col("type"),
+                    notes=col("notes"),
+                    details="Could not match Prop ID to a property",
+                )
                 continue
 
             tx_date = _parse_date(col("date"))
@@ -581,11 +691,27 @@ class ClientDataImportService:
 
             if tx_date is None:
                 # Starting balance / header-like rows
-                if section and "starting" in section.lower():
-                    counts["skipped"] += 1
-                    continue
+                reason = (
+                    "starting_balance"
+                    if section and "starting" in section.lower()
+                    else "missing_date"
+                )
                 counts["skipped"] += 1
-                self.stats.rows_skipped_empty += 1
+                if reason == "missing_date":
+                    self.stats.rows_skipped_empty += 1
+                self._record_skip(
+                    source_file=MANAGEMENT_FILE,
+                    sheet=sheet_label,
+                    row_number=row_number,
+                    reason=reason,
+                    prop_id=prop.client_prop_id,
+                    transaction_date=col("date"),
+                    amount=amount,
+                    inflow=inflow,
+                    section=section,
+                    notes=notes,
+                    details="Row has no usable transaction date",
+                )
                 continue
 
             # Any money column on the ledger row
@@ -602,6 +728,17 @@ class ClientDataImportService:
             ):
                 counts["skipped"] += 1
                 self.stats.rows_skipped_empty += 1
+                self._record_skip(
+                    source_file=MANAGEMENT_FILE,
+                    sheet=sheet_label,
+                    row_number=row_number,
+                    reason="no_money_columns",
+                    prop_id=prop.client_prop_id,
+                    transaction_date=tx_date,
+                    section=section,
+                    notes=notes,
+                    details="Date present but Amount/Inflow/paid columns are empty",
+                )
                 continue
 
             source, payment_method, method_ref = _map_payment(method)
@@ -627,6 +764,19 @@ class ClientDataImportService:
                 )
                 if import_key in self.existing_expense_keys:
                     self.stats.expenses_skipped += 1
+                    self._record_skip(
+                        source_file=MANAGEMENT_FILE,
+                        sheet=sheet_label,
+                        row_number=row_number,
+                        reason="duplicate_expense",
+                        prop_id=prop.client_prop_id,
+                        transaction_date=tx_date,
+                        amount=exp_amount,
+                        section=section,
+                        notes=notes,
+                        details=f"Duplicate expense ({key_kind})",
+                        import_key=import_key,
+                    )
                     return
                 self.db.add(
                     Expense(
@@ -648,6 +798,7 @@ class ClientDataImportService:
                         paid_by_owner=paid_by_owner,
                         ledger_column=ledger_column,
                         import_key=import_key,
+                        source_file=MANAGEMENT_FILE,
                     )
                 )
                 self.existing_expense_keys.add(import_key)
@@ -744,6 +895,7 @@ class ClientDataImportService:
                             source="management_ledger",
                             is_rental_income=False,
                             import_key=import_key,
+                            source_file=MANAGEMENT_FILE,
                         )
                     )
                     self.existing_deposit_keys.add(import_key)
@@ -751,6 +903,19 @@ class ClientDataImportService:
                     counts["deposits"] += 1
                 else:
                     self.stats.deposits_skipped += 1
+                    self._record_skip(
+                        source_file=MANAGEMENT_FILE,
+                        sheet=sheet_label,
+                        row_number=row_number,
+                        reason="duplicate_deposit",
+                        prop_id=prop.client_prop_id,
+                        transaction_date=tx_date,
+                        inflow=inflow,
+                        section=section,
+                        notes=notes,
+                        details="Duplicate inflow deposit",
+                        import_key=import_key,
+                    )
 
             # Rental income — shown in UI, excluded from company float totals
             if rental_income_amount is not None:
@@ -771,6 +936,7 @@ class ClientDataImportService:
                             source="rental_income",
                             is_rental_income=True,
                             import_key=import_key,
+                            source_file=MANAGEMENT_FILE,
                         )
                     )
                     self.existing_deposit_keys.add(import_key)
@@ -779,6 +945,19 @@ class ClientDataImportService:
                     counts["rental_income"] = counts.get("rental_income", 0) + 1
                 else:
                     self.stats.deposits_skipped += 1
+                    self._record_skip(
+                        source_file=MANAGEMENT_FILE,
+                        sheet=sheet_label,
+                        row_number=row_number,
+                        reason="duplicate_deposit",
+                        prop_id=prop.client_prop_id,
+                        transaction_date=tx_date,
+                        amount=rental_income_amount,
+                        section=section,
+                        notes=notes,
+                        details="Duplicate rental income deposit",
+                        import_key=import_key,
+                    )
 
         self.stats.sheet_counts[sheet_label] = counts
 
@@ -915,12 +1094,25 @@ class ClientDataImportService:
                             description=full_desc,
                             source="bank_statement",
                             import_key=import_key,
+                            source_file=BANK_FILE,
                         )
                     )
                     self.existing_deposit_keys.add(import_key)
                     self.stats.deposits_created += 1
                 else:
                     self.stats.deposits_skipped += 1
+                    self._record_skip(
+                        source_file=BANK_FILE,
+                        sheet=ws.title,
+                        row_number=row_number,
+                        reason="duplicate_deposit",
+                        prop_id=prop.client_prop_id,
+                        transaction_date=tx_date,
+                        amount=credit,
+                        notes=full_desc,
+                        details="Duplicate bank credit",
+                        import_key=import_key,
+                    )
 
             if debit is not None:
                 import_key = f"bank:{COMPANY_ACCOUNT_NUMBER}:r{row_number}:debit:{tx_date}:{debit}:{ref or ''}"
@@ -940,12 +1132,25 @@ class ClientDataImportService:
                             receipt_ref=ref,
                             reconciled=False,
                             import_key=import_key,
+                            source_file=BANK_FILE,
                         )
                     )
                     self.existing_expense_keys.add(import_key)
                     self.stats.expenses_created += 1
                 else:
                     self.stats.expenses_skipped += 1
+                    self._record_skip(
+                        source_file=BANK_FILE,
+                        sheet=ws.title,
+                        row_number=row_number,
+                        reason="duplicate_expense",
+                        prop_id=prop.client_prop_id,
+                        transaction_date=tx_date,
+                        amount=debit,
+                        notes=full_desc,
+                        details="Duplicate bank debit",
+                        import_key=import_key,
+                    )
 
         self.db.flush()
 
@@ -1065,12 +1270,24 @@ class ClientDataImportService:
                                 description=merchant,
                                 source="credit_card",
                                 import_key=import_key,
+                                source_file=filename,
                             )
                         )
                         self.existing_deposit_keys.add(import_key)
                         self.stats.deposits_created += 1
                     else:
                         self.stats.deposits_skipped += 1
+                        self._record_skip(
+                            source_file=filename,
+                            sheet=ws.title,
+                            row_number=row_number,
+                            reason="duplicate_deposit",
+                            transaction_date=tx_date,
+                            amount=amount,
+                            notes=merchant,
+                            details="Duplicate credit-card credit",
+                            import_key=import_key,
+                        )
                     continue
 
                 amount = charge_dec.quantize(Decimal("0.01"))
@@ -1090,12 +1307,24 @@ class ClientDataImportService:
                             vendor_name=merchant,
                             description=merchant,
                             import_key=import_key,
+                            source_file=filename,
                         )
                     )
                     self.existing_expense_keys.add(import_key)
                     self.stats.expenses_created += 1
                 else:
                     self.stats.expenses_skipped += 1
+                    self._record_skip(
+                        source_file=filename,
+                        sheet=ws.title,
+                        row_number=row_number,
+                        reason="duplicate_expense",
+                        transaction_date=tx_date,
+                        amount=amount,
+                        notes=merchant,
+                        details="Duplicate credit-card expense",
+                        import_key=import_key,
+                    )
 
         self.db.flush()
 
@@ -1103,3 +1332,96 @@ class ClientDataImportService:
 def import_client_data(db: Session, data_dir: Path | None = None) -> ImportStats:
     service = ClientDataImportService(db, data_dir=data_dir)
     return service.import_all()
+
+
+def build_skip_report_excel(stats: ImportStats) -> bytes:
+    """Build a detailed Excel workbook of skipped import rows."""
+    from collections import Counter
+    from io import BytesIO
+
+    from openpyxl import Workbook
+    from openpyxl.styles import Font
+
+    wb = Workbook()
+
+    # Summary sheet
+    summary = wb.active
+    summary.title = "Summary"
+    summary.append(["Metric", "Value"])
+    summary["A1"].font = Font(bold=True)
+    summary["B1"].font = Font(bold=True)
+    summary_rows = [
+        ("rows_seen", stats.rows_seen),
+        ("skipped_rows_detailed", len(stats.skipped_rows)),
+        ("rows_skipped_empty", stats.rows_skipped_empty),
+        ("expenses_created", stats.expenses_created),
+        ("expenses_skipped_duplicates", stats.expenses_skipped),
+        ("deposits_created", stats.deposits_created),
+        ("deposits_skipped_duplicates", stats.deposits_skipped),
+        ("owners_created", stats.owners_created),
+        ("properties_created", stats.properties_created),
+        ("warnings", len(stats.warnings)),
+        ("errors", len(stats.errors)),
+    ]
+    for key, value in summary_rows:
+        summary.append([key, value])
+
+    summary.append([])
+    summary.append(["Skip reason", "Count"])
+    summary[f"A{summary.max_row}"].font = Font(bold=True)
+    summary[f"B{summary.max_row}"].font = Font(bold=True)
+    reason_counts = Counter(row.reason for row in stats.skipped_rows)
+    for reason, count in sorted(reason_counts.items(), key=lambda item: (-item[1], item[0])):
+        summary.append([reason, count])
+
+    summary.append([])
+    summary.append(["Sheet", "Skipped count"])
+    summary[f"A{summary.max_row}"].font = Font(bold=True)
+    summary[f"B{summary.max_row}"].font = Font(bold=True)
+    sheet_counts = Counter(row.sheet for row in stats.skipped_rows)
+    for sheet_name, count in sorted(sheet_counts.items(), key=lambda item: (-item[1], item[0])):
+        summary.append([sheet_name, count])
+
+    # Detail sheet
+    detail = wb.create_sheet("Skipped rows")
+    headers = [
+        "source_file",
+        "sheet",
+        "row_number",
+        "reason",
+        "prop_id",
+        "transaction_date",
+        "amount",
+        "inflow",
+        "section",
+        "notes",
+        "details",
+        "import_key",
+    ]
+    detail.append(headers)
+    for cell in detail[1]:
+        cell.font = Font(bold=True)
+
+    for row in stats.skipped_rows:
+        data = row.to_dict()
+        detail.append([data.get(h) for h in headers])
+
+    # Reason legend
+    legend = wb.create_sheet("Reason legend")
+    legend.append(["reason", "meaning"])
+    legend["A1"].font = Font(bold=True)
+    legend["B1"].font = Font(bold=True)
+    for reason, meaning in [
+        ("unresolved_property", "Prop ID on the row could not be matched to a property"),
+        ("missing_date", "Row has no usable transaction date"),
+        ("starting_balance", "Starting-balance / opening row (intentionally skipped)"),
+        ("no_money_columns", "Date present but no Amount/Inflow/paid amounts"),
+        ("empty_prop_id", "Client-list row without a property number"),
+        ("duplicate_expense", "Expense already exists (same import_key)"),
+        ("duplicate_deposit", "Deposit already exists (same import_key)"),
+    ]:
+        legend.append([reason, meaning])
+
+    buffer = BytesIO()
+    wb.save(buffer)
+    return buffer.getvalue()

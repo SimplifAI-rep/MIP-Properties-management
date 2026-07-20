@@ -86,10 +86,13 @@ export function monthsInPeriod(period: DashboardPeriod): Array<{ year: number; m
   }));
 }
 
-export function periodOptions() {
+export function periodOptions(availableYears?: number[]) {
   const now = new Date();
   const currentYear = now.getFullYear();
-  const years = [currentYear - 1, currentYear, currentYear + 1];
+  const years =
+    availableYears && availableYears.length > 0
+      ? [...availableYears].sort((a, b) => b - a)
+      : [currentYear - 1, currentYear, currentYear + 1];
   const months = Array.from({ length: 12 }, (_, index) => {
     const month = index + 1;
     return {

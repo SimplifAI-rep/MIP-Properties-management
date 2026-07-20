@@ -10,6 +10,8 @@ from app.models.expense import Expense
 from app.models.owner import Owner
 from app.models.property import Property
 from app.schemas import ExpenseCategoryTotal, ExpenseCreate, ExpenseRead
+from app.services.running_balance import compute_running_balances
+from app.services.source_file import load_upload_filenames, resolve_source_file
 
 
 def expense_to_read(
@@ -17,7 +19,13 @@ def expense_to_read(
     property_name: str,
     owner_name: str,
     client_prop_id: str,
+    *,
+    upload_names: dict[str, str] | None = None,
+    balances: dict[tuple[str, str], Decimal] | None = None,
 ) -> ExpenseRead:
+    balance = None
+    if balances is not None:
+        balance = balances.get(("expense", str(expense.id)))
     return ExpenseRead(
         id=expense.id,
         property_id=expense.property_id,
@@ -35,6 +43,13 @@ def expense_to_read(
         description=expense.description,
         notes=expense.notes,
         receipt_ref=expense.receipt_ref,
+        source_file=resolve_source_file(
+            source_file=expense.source_file,
+            receipt_ref=expense.receipt_ref,
+            source=expense.source,
+            upload_names=upload_names,
+        ),
+        balance_after=balance,
         reconciled=bool(expense.reconciled),
         paid_by_resident=bool(expense.paid_by_resident),
         paid_by_company=bool(expense.paid_by_company),
@@ -118,8 +133,18 @@ def list_expenses(
     total = db.scalar(count_stmt) or 0
 
     rows = db.execute(stmt.offset((page - 1) * page_size).limit(page_size)).all()
+    expenses = [row[0] for row in rows]
+    upload_names = load_upload_filenames(db, [e.receipt_ref for e in expenses])
+    balances = compute_running_balances(db, [e.property_id for e in expenses])
     items = [
-        expense_to_read(expense, property_name, owner_name, client_prop_id_val)
+        expense_to_read(
+            expense,
+            property_name,
+            owner_name,
+            client_prop_id_val,
+            upload_names=upload_names,
+            balances=balances,
+        )
         for expense, property_name, owner_name, client_prop_id_val in rows
     ]
     return items, total

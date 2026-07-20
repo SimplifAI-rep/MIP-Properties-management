@@ -1195,6 +1195,7 @@ class DocumentImportService:
             description=draft.description,
             source="file_upload",
             receipt_ref=str(document.id),
+            source_file=document.filename,
         )
         self.db.add(deposit)
         self.db.flush()
@@ -1229,6 +1230,7 @@ class DocumentImportService:
             reference=draft.reference,
             description=draft.description,
             receipt_ref=str(document.id),
+            source_file=document.filename,
         )
         self.db.add(expense)
         self.db.flush()
@@ -1261,7 +1263,17 @@ class DocumentImportService:
                 FieldWarning(field=field, message=f"Invalid date: {value}", severity="error")
             )
             return None
-        return parsed.date()
+        result = parsed.date() if hasattr(parsed, "date") else parsed
+        if isinstance(result, date) and result.year < 2000:
+            warnings.append(
+                FieldWarning(
+                    field=field,
+                    message=f"Date looks like an Excel serial leftover ({result}); ignored.",
+                    severity="error",
+                )
+            )
+            return None
+        return result
 
     def _parse_optional_amount(
         self,

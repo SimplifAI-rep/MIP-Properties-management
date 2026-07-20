@@ -40,6 +40,8 @@ class Deposit(Base, TimestampMixin):
     import_key: Mapped[str | None] = mapped_column(String(255))
     # UploadedDocument.id when created from a receipt/PDF/image upload
     receipt_ref: Mapped[str | None] = mapped_column(String(100))
+    # Original upload/import filename (Excel workbook, PDF receipt, etc.)
+    source_file: Mapped[str | None] = mapped_column(String(255))
 
     bank_account: Mapped["BankAccount | None"] = relationship(back_populates="deposits")
     property: Mapped["Property"] = relationship(back_populates="deposits")

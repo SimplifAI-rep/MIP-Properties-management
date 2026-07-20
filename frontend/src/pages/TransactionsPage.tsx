@@ -11,6 +11,7 @@ import {
   formatDate,
   LoadingState,
 } from '../components/ui/States';
+import { Tooltip } from '../components/ui/Tooltip';
 import { TransactionUploadPanel } from '../components/TransactionUploadPanel';
 
 type TransactionKind = 'deposit' | 'expense';
@@ -28,6 +29,8 @@ interface UnifiedTransaction {
   details: string;
   description: string | null;
   receipt_ref?: string | null;
+  source_file?: string | null;
+  balance_after?: string | null;
   paid_by_resident?: boolean;
   paid_by_company?: boolean;
   paid_by_owner?: boolean;
@@ -88,6 +91,8 @@ function depositToUnified(deposit: Deposit): UnifiedTransaction {
     details: deposit.account_number ?? deposit.source,
     description: deposit.description,
     receipt_ref: deposit.receipt_ref ?? null,
+    source_file: deposit.source_file ?? null,
+    balance_after: deposit.balance_after ?? null,
     is_rental_income: Boolean(deposit.is_rental_income),
     from_bank_statement: deposit.source === 'bank_statement',
   };
@@ -108,6 +113,8 @@ function expenseToUnified(expense: Expense): UnifiedTransaction {
       ? `${expense.vendor_name}${expense.description ? ` — ${expense.description}` : ''}`
       : expense.description,
     receipt_ref: expense.receipt_ref ?? null,
+    source_file: expense.source_file ?? null,
+    balance_after: expense.balance_after ?? null,
     paid_by_resident: Boolean(expense.paid_by_resident),
     paid_by_company: Boolean(expense.paid_by_company),
     paid_by_owner: Boolean(expense.paid_by_owner),
@@ -171,7 +178,16 @@ export function TransactionsPage() {
   const [formError, setFormError] = useState<string | null>(null);
 
   useEffect(() => {
-    const state = location.state as { showUpload?: boolean; showForm?: boolean } | null;
+    const state = location.state as {
+      showUpload?: boolean;
+      showForm?: boolean;
+      propertyId?: string;
+      clientPropId?: string;
+      ownerId?: string;
+      dateFrom?: string;
+      dateTo?: string;
+      typeFilter?: TypeFilter;
+    } | null;
     if (state?.showUpload) {
       setShowUpload(true);
       setShowForm(false);
@@ -179,6 +195,28 @@ export function TransactionsPage() {
     if (state?.showForm) {
       setShowForm(true);
       setShowUpload(false);
+    }
+    if (state?.propertyId || state?.clientPropId) {
+      setPropertyId(state.propertyId);
+      setClientPropId(state.clientPropId);
+      setOwnerId(undefined);
+      setPage(1);
+    } else if (state?.ownerId) {
+      setOwnerId(state.ownerId);
+      setPropertyId(undefined);
+      setClientPropId(undefined);
+      setPage(1);
+    }
+    if (state?.dateFrom != null || state?.dateTo != null) {
+      setDateFrom(state.dateFrom);
+      setDateTo(state.dateTo);
+      setPage(1);
+    }
+    if (state?.typeFilter) {
+      setTypeFilter(state.typeFilter);
+      setPage(1);
+    } else if (state?.propertyId || state?.clientPropId || state?.ownerId) {
+      setTypeFilter('all');
     }
   }, [location.state]);
 
@@ -312,6 +350,29 @@ export function TransactionsPage() {
 
   const resetPage = () => setPage(1);
 
+  const hasActiveFilters = Boolean(
+    typeFilter !== 'all' ||
+      propertyId ||
+      clientPropId ||
+      ownerId ||
+      dateFrom ||
+      dateTo ||
+      category ||
+      source,
+  );
+
+  function clearFilters() {
+    setTypeFilter('all');
+    setPropertyId(undefined);
+    setClientPropId(undefined);
+    setOwnerId(undefined);
+    setDateFrom(undefined);
+    setDateTo(undefined);
+    setCategory(undefined);
+    setSource(undefined);
+    setPage(1);
+  }
+
   if (isLoading) return <LoadingState />;
   if (isError) {
     return <ErrorState message="Could not load transactions from the API." />;
@@ -372,6 +433,8 @@ export function TransactionsPage() {
                   currency: row.currency,
                   details: row.details,
                   description: row.description,
+                  source_file: row.source_file ?? '',
+                  balance_after: row.balance_after ?? '',
                   paid_by_resident: row.paid_by_resident ? 'yes' : '',
                   paid_by_company: row.paid_by_company ? 'yes' : '',
                   paid_by_owner: row.paid_by_owner ? 'yes' : '',
@@ -394,18 +457,26 @@ export function TransactionsPage() {
           title="Total deposits"
           value={formatCurrency(depositTotal)}
           subtitle={`${depositCount} matching deposit(s), excluding rental income`}
+          tooltip="Filtered deposits, excluding rental income."
         />
         <Card
           title="Total expenses"
           value={formatCurrency(expenseTotal)}
           subtitle={`${expenseCount} matching expense(s), excluding He/She & owner paid`}
+          tooltip="Filtered expenses, excluding resident/owner paid."
         />
         <Card
           title="Net"
           value={formatCurrency(netTotal)}
           subtitle="Deposits minus expenses (current filters)"
+          tooltip="Deposits minus expenses for current filters."
         />
-        <Card title="Showing" value={items.length} subtitle={`${total} matching transaction(s)`} />
+        <Card
+          title="Showing"
+          value={items.length}
+          subtitle={`${total} matching transaction(s)`}
+          tooltip="Rows on this page, not the full ledger."
+        />
       </section>
 
       <div className="flex flex-wrap gap-2">
@@ -560,6 +631,18 @@ export function TransactionsPage() {
         </section>
       ) : null}
 
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-sm font-medium text-slate-600 dark:text-slate-300">Filters</p>
+        <button
+          type="button"
+          className="btn-secondary text-xs"
+          disabled={!hasActiveFilters}
+          onClick={clearFilters}
+        >
+          Clear
+        </button>
+      </div>
+
       <section
         className={`filter-panel ${
           typeFilter === 'expense' || typeFilter === 'all'
@@ -706,20 +789,36 @@ export function TransactionsPage() {
         ) : null}
       </section>
 
-      <section className="panel">
+      <section className="panel overflow-hidden">
         <div className="overflow-x-auto">
           <table className="table-shell">
             <thead className="table-head">
               <tr>
                 <th className="px-5 py-3 font-medium">Type</th>
-                <th className="px-5 py-3 font-medium">Prop ID</th>
+                <th className="px-5 py-3 font-medium">
+                  <Tooltip content="Client property ID from the source files.">Prop ID</Tooltip>
+                </th>
                 <th className="px-5 py-3 font-medium">Date</th>
                 <th className="px-5 py-3 font-medium">Property</th>
                 <th className="px-5 py-3 font-medium">Owner</th>
-                <th className="px-5 py-3 font-medium">Details</th>
+                <th className="px-5 py-3 font-medium">
+                  <Tooltip content="Account for deposits, or category/source for expenses.">
+                    Details
+                  </Tooltip>
+                </th>
                 <th className="px-5 py-3 font-medium">Amount</th>
+                <th className="px-5 py-3 font-medium">
+                  <Tooltip content="Running company-float net for this property after this row.">
+                    Balance
+                  </Tooltip>
+                </th>
                 <th className="px-5 py-3 font-medium">Description</th>
-                <th className="px-5 py-3 font-medium">Receipt</th>
+                <th className="px-5 py-3 font-medium">
+                  <Tooltip content="File this transaction was imported from.">Source file</Tooltip>
+                </th>
+                <th className="px-5 py-3 font-medium">
+                  <Tooltip content="Linked receipt image or PDF, if uploaded.">Receipt</Tooltip>
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -746,65 +845,50 @@ export function TransactionsPage() {
                                     : 'row-expense'
                   }
                 >
-                  <td className="px-5 py-3">
-                    <div className="flex flex-wrap items-center gap-1.5">
+                  <td className="px-5 py-3 whitespace-nowrap">
+                    <div className="flex flex-nowrap items-center gap-1.5">
                       <span className={row.kind === 'deposit' ? 'badge-deposit' : 'badge-expense'}>
                         {row.kind === 'deposit' ? 'Deposit' : 'Expense'}
                       </span>
                       {row.paid_by_resident ? (
-                        <span
-                          className="badge-resident-paid"
-                          title="Paid directly by resident (He/She paid)"
-                        >
-                          Resident paid
-                        </span>
+                        <Tooltip content="Paid by the resident — excluded from company float.">
+                          <span className="badge-resident-paid">Resident paid</span>
+                        </Tooltip>
                       ) : null}
                       {row.paid_by_owner ? (
-                        <span
-                          className="badge-owner-paid"
-                          title="Paid by the property owner (אהרון שילם)"
-                        >
-                          Owner paid
-                        </span>
+                        <Tooltip content="Paid by the owner — excluded from company float.">
+                          <span className="badge-owner-paid">Owner paid</span>
+                        </Tooltip>
                       ) : null}
                       {row.paid_by_company ? (
-                        <span
-                          className="badge-mip-paid"
-                          title="Paid by the company (MIP)"
-                        >
-                          MIP paid
-                        </span>
+                        <Tooltip content="Paid by the company (MIP) — counts in company float.">
+                          <span className="badge-mip-paid">MIP paid</span>
+                        </Tooltip>
                       ) : null}
                       {row.ledger_column === 'nearly_cc' ? (
-                        <span className="badge-nearly-cc" title="From Nearly CC column">
-                          Nearly CC
-                        </span>
+                        <Tooltip content="From the Nearly credit-card column.">
+                          <span className="badge-nearly-cc">Nearly CC</span>
+                        </Tooltip>
                       ) : null}
                       {row.ledger_column === 'cash' ? (
-                        <span className="badge-cash-paid" title="From Cash column">
-                          Cash
-                        </span>
+                        <Tooltip content="From the Cash column in the ledger.">
+                          <span className="badge-cash-paid">Cash</span>
+                        </Tooltip>
                       ) : null}
                       {row.ledger_column === 'other' ? (
-                        <span className="badge-other-paid" title="From Other column">
-                          Other
-                        </span>
+                        <Tooltip content="From the Other column in the ledger.">
+                          <span className="badge-other-paid">Other</span>
+                        </Tooltip>
                       ) : null}
                       {row.is_rental_income ? (
-                        <span
-                          className="badge-rental-income"
-                          title="Rental income (not company float)"
-                        >
-                          Rental income
-                        </span>
+                        <Tooltip content="Tenant rent — tracked separately from company float.">
+                          <span className="badge-rental-income">Rental income</span>
+                        </Tooltip>
                       ) : null}
                       {row.from_bank_statement ? (
-                        <span
-                          className="badge-bank-statement"
-                          title="Imported from company bank statement"
-                        >
-                          Bank statement
-                        </span>
+                        <Tooltip content="Imported from the company bank statement.">
+                          <span className="badge-bank-statement">Bank statement</span>
+                        </Tooltip>
                       ) : null}
                     </div>
                   </td>
@@ -814,7 +898,7 @@ export function TransactionsPage() {
                   <td className="px-5 py-3">{row.owner_name}</td>
                   <td className="px-5 py-3">{row.details}</td>
                   <td
-                    className={`px-5 py-3 ${
+                    className={`px-5 py-3 whitespace-nowrap tabular-nums ${
                       row.paid_by_resident
                         ? 'amount-resident-paid'
                         : row.paid_by_owner
@@ -837,7 +921,26 @@ export function TransactionsPage() {
                     {row.kind === 'deposit' ? '+' : '−'}
                     {formatCurrency(row.amount, row.currency)}
                   </td>
+                  <td
+                    className={`px-5 py-3 whitespace-nowrap tabular-nums font-medium ${
+                      row.balance_after == null
+                        ? 'muted-text'
+                        : Number(row.balance_after) >= 0
+                          ? 'amount-deposit'
+                          : 'amount-expense'
+                    }`}
+                  >
+                    {row.balance_after == null
+                      ? '—'
+                      : formatCurrency(row.balance_after, row.currency)}
+                  </td>
                   <td className="px-5 py-3 muted-text">{row.description}</td>
+                  <td
+                    className="px-5 py-3 text-xs muted-text max-w-[14rem] truncate"
+                    title={row.source_file ?? undefined}
+                  >
+                    {row.source_file || '—'}
+                  </td>
                   <td className="px-5 py-3">
                     {isUploadReceiptRef(row.receipt_ref) ? (
                       <button

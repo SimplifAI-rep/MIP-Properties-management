@@ -36,6 +36,7 @@ def init_db() -> None:
     Base.metadata.create_all(bind=engine)
     _ensure_sqlite_upload_nullable_columns()
     _ensure_sqlite_deposit_receipt_ref()
+    _ensure_sqlite_source_file_columns()
 
 
 def _ensure_sqlite_deposit_receipt_ref() -> None:
@@ -52,6 +53,24 @@ def _ensure_sqlite_deposit_receipt_ref() -> None:
         if "receipt_ref" in cols:
             return
         conn.exec_driver_sql("ALTER TABLE deposits ADD COLUMN receipt_ref VARCHAR(100)")
+
+
+def _ensure_sqlite_source_file_columns() -> None:
+    """Add source_file to deposits/expenses for original upload filenames."""
+    settings = get_settings()
+    if not settings.database_url.startswith("sqlite"):
+        return
+
+    with engine.begin() as conn:
+        for table in ("deposits", "expenses"):
+            rows = conn.exec_driver_sql(f"PRAGMA table_info({table})").fetchall()
+            if not rows:
+                continue
+            cols = {row[1] for row in rows}
+            if "source_file" not in cols:
+                conn.exec_driver_sql(
+                    f"ALTER TABLE {table} ADD COLUMN source_file VARCHAR(255)"
+                )
 
 
 def _ensure_sqlite_upload_nullable_columns() -> None:

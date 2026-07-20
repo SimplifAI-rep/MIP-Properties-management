@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
 import type { Property, TransactionDraft, UploadAnalyzeResponse } from '../types';
+import { Tooltip } from './ui/Tooltip';
 
 const CATEGORIES = [
   'maintenance',
@@ -209,7 +210,10 @@ export function TransactionUploadPanel({ properties, onClose }: TransactionUploa
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
             <label className="text-sm">
               <span className="label-text">
-                Property {spreadsheet ? '(required)' : '(optional — auto-match)'}
+                <Tooltip content="Leave blank to auto-match from the document when possible.">
+                  Property
+                </Tooltip>
+                {spreadsheet ? ' (required)' : ' (optional — auto-match)'}
               </span>
               <select
                 className="field"
@@ -225,7 +229,11 @@ export function TransactionUploadPanel({ properties, onClose }: TransactionUploa
               </select>
             </label>
             <label className="text-sm">
-              <span className="label-text">Transaction type</span>
+              <span className="label-text">
+                <Tooltip content="Choose deposit or expense for extracted rows.">
+                  Transaction type
+                </Tooltip>
+              </span>
               <select
                 className="field"
                 value={transactionType}
@@ -271,14 +279,24 @@ export function TransactionUploadPanel({ properties, onClose }: TransactionUploa
       {step === 'confirm' && analyzeResult ? (
         <div className="space-y-4">
           <div className="flex flex-wrap items-center gap-2 text-sm">
-            <span className="badge-neutral">Parser: {analyzeResult.parser}</span>
-            <span className={confidenceClass(analyzeResult.match_confidence)}>
-              Match: {analyzeResult.match_confidence ?? 'none'}
-            </span>
+            <Tooltip content="How the file was read (rules or AI).">
+              <span className="badge-neutral">Parser: {analyzeResult.parser}</span>
+            </Tooltip>
+            <Tooltip content="Confidence that the property match is correct.">
+              <span className={confidenceClass(analyzeResult.match_confidence)}>
+                Match: {analyzeResult.match_confidence ?? 'none'}
+              </span>
+            </Tooltip>
             <span className="badge-neutral">{analyzeResult.transaction_type}</span>
-            <span className="badge-deposit">{reviewStats.ready} ready</span>
-            <span className="badge-neutral">{reviewStats.review} need review</span>
-            <span className="badge-expense">{reviewStats.error} errors</span>
+            <Tooltip content="Rows ready to save without edits.">
+              <span className="badge-deposit">{reviewStats.ready} ready</span>
+            </Tooltip>
+            <Tooltip content="Rows that need a quick check before saving.">
+              <span className="badge-neutral">{reviewStats.review} need review</span>
+            </Tooltip>
+            <Tooltip content="Rows that cannot be saved until fixed.">
+              <span className="badge-expense">{reviewStats.error} errors</span>
+            </Tooltip>
           </div>
 
           {analyzeResult.message ? (
@@ -343,7 +361,11 @@ export function TransactionUploadPanel({ properties, onClose }: TransactionUploa
                     {primaryDraft.client_prop_id || '—'}
                   </p>
                   <label className="block">
-                    <span className="label-text">Transaction type</span>
+                    <span className="label-text">
+                <Tooltip content="Choose deposit or expense for extracted rows.">
+                  Transaction type
+                </Tooltip>
+              </span>
                     <select
                       className="field"
                       value={primaryDraft.transaction_type}

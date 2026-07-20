@@ -55,6 +55,8 @@ export interface Deposit {
   source: string;
   is_rental_income?: boolean;
   receipt_ref?: string | null;
+  source_file?: string | null;
+  balance_after?: string | null;
 }
 
 export interface Property {
@@ -68,6 +70,9 @@ export interface Property {
   owner_name: string;
   deposit_count: number;
   total_deposits: string;
+  total_incoming?: string;
+  total_outgoing?: string;
+  net_balance?: string;
 }
 
 export interface PropertyDetail extends Property {
@@ -153,6 +158,8 @@ export interface Expense {
   description: string | null;
   notes?: string | null;
   receipt_ref?: string | null;
+  source_file?: string | null;
+  balance_after?: string | null;
   reconciled?: boolean;
   paid_by_resident?: boolean;
   paid_by_company?: boolean;
@@ -262,6 +269,39 @@ export interface UploadConfirmResponse {
   imported_expense_count: number;
   skipped_count: number;
   errors: string[];
+}
+
+export interface ClientDataImportCounts {
+  owners: number;
+  properties: number;
+  bank_accounts: number;
+  expenses: number;
+  deposits: number;
+}
+
+export interface ClientDataStatusResponse {
+  database_counts: ClientDataImportCounts;
+  expected_files: string[];
+}
+
+export interface ClientDataImportResponse {
+  reset: boolean;
+  files_used: string[];
+  owners_created: number;
+  properties_created: number;
+  bank_accounts_created: number;
+  expenses_created: number;
+  expenses_skipped: number;
+  deposits_created: number;
+  deposits_skipped: number;
+  rows_seen: number;
+  rows_skipped_empty: number;
+  skipped_row_count: number;
+  skip_report_id?: string | null;
+  skip_report_url?: string | null;
+  warnings: string[];
+  errors: string[];
+  database_counts: ClientDataImportCounts;
 }
 
 export interface DepositCreate {

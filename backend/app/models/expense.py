@@ -81,5 +81,7 @@ class Expense(Base, TimestampMixin):
     # Special ledger money column for UI badge: nearly_cc | cash | other (null = Amount/etc.)
     ledger_column: Mapped[str | None] = mapped_column(String(50))
     import_key: Mapped[str | None] = mapped_column(String(255))
+    # Original upload/import filename (Excel workbook, PDF receipt, etc.)
+    source_file: Mapped[str | None] = mapped_column(String(255))
 
     property: Mapped["Property"] = relationship(back_populates="expenses")

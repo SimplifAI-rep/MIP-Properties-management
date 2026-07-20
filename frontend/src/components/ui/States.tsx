@@ -1,3 +1,5 @@
+import { Tooltip } from './Tooltip';
+
 export function LoadingState({ label = 'Loading...' }: { label?: string }) {
   return (
     <div className="panel p-8 text-center muted-text">
@@ -26,14 +28,22 @@ export function Card({
   title,
   value,
   subtitle,
+  tooltip,
 }: {
   title: string;
   value: string | number;
   subtitle?: string;
+  tooltip?: string;
 }) {
   return (
     <div className="panel p-5">
-      <p className="text-sm font-medium text-slate-500 dark:text-slate-400">{title}</p>
+      <p className="text-sm font-medium text-slate-500 dark:text-slate-400">
+        {tooltip ? (
+          <Tooltip content={tooltip}>{title}</Tooltip>
+        ) : (
+          title
+        )}
+      </p>
       <p className="mt-2 text-2xl font-bold text-slate-900 dark:text-slate-100">{value}</p>
       {subtitle ? <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{subtitle}</p> : null}
     </div>

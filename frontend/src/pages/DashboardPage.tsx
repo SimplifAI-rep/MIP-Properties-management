@@ -538,11 +538,22 @@ export function DashboardPage() {
         ) : propertyHealth.length > 0 ? (
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
             {propertyHealth.map((item) => (
-              <div key={item.property.id} className="panel p-5">
+              <Link
+                key={item.property.id}
+                to="/transactions"
+                state={{
+                  propertyId: item.property.id,
+                  clientPropId: item.property.client_prop_id,
+                }}
+                className="panel block p-5 transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/60"
+              >
                 <div className="flex items-start justify-between gap-2">
                   <div>
                     <p className="font-semibold">{item.property.name}</p>
                     <p className="text-xs text-muted">{item.property.owner_name}</p>
+                    <p className="mt-0.5 font-mono text-xs text-muted">
+                      Prop ID: {item.property.client_prop_id}
+                    </p>
                   </div>
                   <Tooltip
                     content={
@@ -587,7 +598,7 @@ export function DashboardPage() {
                 ) : (
                   <p className="mt-3 text-xs text-muted">Expected deposits on track</p>
                 )}
-              </div>
+              </Link>
             ))}
           </div>
         ) : (

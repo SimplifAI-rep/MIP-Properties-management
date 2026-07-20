@@ -178,7 +178,12 @@ export function TransactionsPage() {
   const [formError, setFormError] = useState<string | null>(null);
 
   useEffect(() => {
-    const state = location.state as { showUpload?: boolean; showForm?: boolean } | null;
+    const state = location.state as {
+      showUpload?: boolean;
+      showForm?: boolean;
+      propertyId?: string;
+      clientPropId?: string;
+    } | null;
     if (state?.showUpload) {
       setShowUpload(true);
       setShowForm(false);
@@ -186,6 +191,11 @@ export function TransactionsPage() {
     if (state?.showForm) {
       setShowForm(true);
       setShowUpload(false);
+    }
+    if (state?.propertyId || state?.clientPropId) {
+      setPropertyId(state.propertyId);
+      setClientPropId(state.clientPropId);
+      setPage(1);
     }
   }, [location.state]);
 
@@ -779,8 +789,8 @@ export function TransactionsPage() {
                                     : 'row-expense'
                   }
                 >
-                  <td className="px-5 py-3">
-                    <div className="flex flex-wrap items-center gap-1.5">
+                  <td className="px-5 py-3 whitespace-nowrap">
+                    <div className="flex flex-nowrap items-center gap-1.5">
                       <span className={row.kind === 'deposit' ? 'badge-deposit' : 'badge-expense'}>
                         {row.kind === 'deposit' ? 'Deposit' : 'Expense'}
                       </span>
@@ -832,7 +842,7 @@ export function TransactionsPage() {
                   <td className="px-5 py-3">{row.owner_name}</td>
                   <td className="px-5 py-3">{row.details}</td>
                   <td
-                    className={`px-5 py-3 ${
+                    className={`px-5 py-3 whitespace-nowrap tabular-nums ${
                       row.paid_by_resident
                         ? 'amount-resident-paid'
                         : row.paid_by_owner
@@ -856,7 +866,7 @@ export function TransactionsPage() {
                     {formatCurrency(row.amount, row.currency)}
                   </td>
                   <td
-                    className={`px-5 py-3 font-medium ${
+                    className={`px-5 py-3 whitespace-nowrap tabular-nums font-medium ${
                       row.balance_after == null
                         ? 'muted-text'
                         : Number(row.balance_after) >= 0

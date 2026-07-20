@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useEffect, useMemo, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
 import type { Deposit, DepositGap, Expense, Property } from '../types';
@@ -12,6 +12,10 @@ import {
   LoadingState,
 } from '../components/ui/States';
 import { Tooltip } from '../components/ui/Tooltip';
+import {
+  ownerTransactionsState,
+  propertyTransactionsState,
+} from '../utils/transactionsNav';
 import {
   buildDashboardPeriod,
   defaultDashboardPeriod,
@@ -28,7 +32,10 @@ interface RecentItem {
   id: string;
   kind: 'deposit' | 'expense';
   transaction_date: string;
+  property_id: string;
+  client_prop_id: string;
   property_name: string;
+  owner_id?: string;
   owner_name: string;
   amount: string;
   label: string;
@@ -44,6 +51,7 @@ interface PropertyHealth {
 }
 
 interface OwnerPeriodRow {
+  ownerId: string;
   ownerName: string;
   propertyCount: number;
   depositTotal: number;
@@ -61,6 +69,8 @@ function depositToRecent(deposit: Deposit): RecentItem {
     id: deposit.id,
     kind: 'deposit',
     transaction_date: deposit.transaction_date,
+    property_id: deposit.property_id,
+    client_prop_id: deposit.client_prop_id,
     property_name: deposit.property_name,
     owner_name: deposit.owner_name,
     amount: deposit.amount,
@@ -73,6 +83,8 @@ function expenseToRecent(expense: Expense): RecentItem {
     id: expense.id,
     kind: 'expense',
     transaction_date: expense.transaction_date,
+    property_id: expense.property_id,
+    client_prop_id: expense.client_prop_id,
     property_name: expense.property_name,
     owner_name: expense.owner_name,
     amount: expense.amount,
@@ -115,12 +127,29 @@ async function fetchPeriodGaps(period: DashboardPeriod): Promise<DepositGap[]> {
 }
 
 export function DashboardPage() {
+  const navigate = useNavigate();
   const defaults = defaultDashboardPeriod();
-  const { years, months } = periodOptions();
+  const { months } = periodOptions();
 
   const [periodType, setPeriodType] = useState<PeriodType>('month');
   const [year, setYear] = useState(defaults.year);
   const [month, setMonth] = useState(defaults.month);
+
+  const yearsQuery = useQuery({
+    queryKey: ['transaction-years'],
+    queryFn: api.getTransactionYears,
+  });
+  const years = useMemo(
+    () => periodOptions(yearsQuery.data?.years).years,
+    [yearsQuery.data?.years],
+  );
+
+  useEffect(() => {
+    if (years.length === 0) return;
+    if (!years.includes(year)) {
+      setYear(years[0]);
+    }
+  }, [years, year]);
 
   const period = useMemo(
     () => buildDashboardPeriod(periodType, year, month),
@@ -231,6 +260,9 @@ export function DashboardPage() {
           gapCount,
         };
       })
+      .filter(
+        (item) => item.depositTotal > 0 || item.expenseTotal > 0 || item.gapCount > 0,
+      )
       .sort((a, b) => b.net - a.net);
   }, [
     propertiesQuery.data,
@@ -247,7 +279,8 @@ export function DashboardPage() {
     const byOwner = new Map<string, OwnerPeriodRow>();
 
     properties.forEach((property) => {
-      const existing = byOwner.get(property.owner_name) ?? {
+      const existing = byOwner.get(property.owner_id) ?? {
+        ownerId: property.owner_id,
         ownerName: property.owner_name,
         propertyCount: 0,
         depositTotal: 0,
@@ -256,27 +289,43 @@ export function DashboardPage() {
         expenseCount: 0,
       };
       existing.propertyCount += 1;
-      byOwner.set(property.owner_name, existing);
+      byOwner.set(property.owner_id, existing);
     });
 
+    const ownerIdByName = new Map(
+      properties.map((property) => [property.owner_name, property.owner_id] as const),
+    );
+
     deposits.forEach((deposit) => {
-      const existing = byOwner.get(deposit.owner_name);
+      const ownerId = ownerIdByName.get(deposit.owner_name);
+      if (!ownerId) return;
+      const existing = byOwner.get(ownerId);
       if (!existing) return;
       existing.depositTotal += Number(deposit.amount);
       existing.depositCount += 1;
     });
 
     expenses.forEach((expense) => {
-      const existing = byOwner.get(expense.owner_name);
+      const ownerId = ownerIdByName.get(expense.owner_name);
+      if (!ownerId) return;
+      const existing = byOwner.get(ownerId);
       if (!existing) return;
       existing.expenseTotal += Number(expense.amount);
       existing.expenseCount += 1;
     });
 
-    return Array.from(byOwner.values()).sort(
-      (a, b) => b.depositTotal - b.expenseTotal - (a.depositTotal - a.expenseTotal),
-    );
+    return Array.from(byOwner.values())
+      .filter((owner) => owner.depositTotal > 0 || owner.expenseTotal > 0)
+      .sort(
+        (a, b) => b.depositTotal - b.expenseTotal - (a.depositTotal - a.expenseTotal),
+      );
   }, [periodDepositsQuery.data, periodExpensesQuery.data, propertiesQuery.data]);
+
+  const propertyById = useMemo(() => {
+    const map = new Map<string, Property>();
+    (propertiesQuery.data ?? []).forEach((property) => map.set(property.id, property));
+    return map;
+  }, [propertiesQuery.data]);
 
   const recentActivity = useMemo(() => {
     const deposits = (periodDepositsQuery.data?.items ?? []).map(depositToRecent);
@@ -304,6 +353,7 @@ export function DashboardPage() {
   const netTotal = depositTotal - expenseTotal;
   const totalTransactions =
     depositSummaryQuery.data!.deposit_count + expenseSummaryQuery.data!.expense_count;
+  const periodDates = { dateFrom: period.dateFrom, dateTo: period.dateTo };
 
   return (
     <div className="space-y-6">
@@ -530,7 +580,7 @@ export function DashboardPage() {
             </Tooltip>
           </h3>
           <p className="section-subtitle">
-            Per-property deposits, expenses, net, and expected deposit status for {period.label}.
+            Properties with deposits, expenses, or missing expected deposits in {period.label}.
           </p>
         </div>
         {propertiesQuery.isLoading || periodDepositsQuery.isLoading || periodExpensesQuery.isLoading ? (
@@ -541,10 +591,11 @@ export function DashboardPage() {
               <Link
                 key={item.property.id}
                 to="/transactions"
-                state={{
-                  propertyId: item.property.id,
-                  clientPropId: item.property.client_prop_id,
-                }}
+                state={propertyTransactionsState(
+                  item.property.id,
+                  item.property.client_prop_id,
+                  periodDates,
+                )}
                 className="panel block p-5 transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/60"
               >
                 <div className="flex items-start justify-between gap-2">
@@ -677,18 +728,36 @@ export function DashboardPage() {
                 </tr>
               </thead>
               <tbody>
-                {gapsQuery.data.map((gap) => (
-                  <tr key={`${gap.property_id}-${gap.period_start}`} className="table-row">
-                    <td className="px-5 py-3 font-medium">{gap.property_name}</td>
-                    <td className="px-5 py-3">{gap.owner_name}</td>
-                    <td className="px-5 py-3">{formatDate(gap.period_start)}</td>
-                    <td className="px-5 py-3">{formatCurrency(gap.expected_amount)}</td>
-                    <td className="px-5 py-3">{gap.due_day}</td>
-                    <td className="px-5 py-3">
-                      <span className="badge-warning">{gap.status}</span>
-                    </td>
-                  </tr>
-                ))}
+                {gapsQuery.data.map((gap) => {
+                  const property = propertyById.get(gap.property_id);
+                  return (
+                    <tr
+                      key={`${gap.property_id}-${gap.period_start}`}
+                      className="table-row-link"
+                      onClick={() =>
+                        navigate(
+                          '/transactions',
+                          {
+                            state: propertyTransactionsState(
+                              gap.property_id,
+                              property?.client_prop_id,
+                              periodDates,
+                            ),
+                          },
+                        )
+                      }
+                    >
+                      <td className="px-5 py-3 font-medium">{gap.property_name}</td>
+                      <td className="px-5 py-3">{gap.owner_name}</td>
+                      <td className="px-5 py-3">{formatDate(gap.period_start)}</td>
+                      <td className="px-5 py-3">{formatCurrency(gap.expected_amount)}</td>
+                      <td className="px-5 py-3">{gap.due_day}</td>
+                      <td className="px-5 py-3">
+                        <span className="badge-warning">{gap.status}</span>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -724,7 +793,15 @@ export function DashboardPage() {
                 {ownerPeriodRows.map((owner) => {
                   const net = owner.depositTotal - owner.expenseTotal;
                   return (
-                    <tr key={owner.ownerName} className="table-row">
+                    <tr
+                      key={owner.ownerId}
+                      className="table-row-link"
+                      onClick={() =>
+                        navigate('/transactions', {
+                          state: ownerTransactionsState(owner.ownerId, periodDates),
+                        })
+                      }
+                    >
                       <td className="px-5 py-3 font-medium">{owner.ownerName}</td>
                       <td className="px-5 py-3">{owner.propertyCount}</td>
                       <td className="px-5 py-3">
@@ -785,7 +862,16 @@ export function DashboardPage() {
                 {recentActivity.map((item) => (
                   <tr
                     key={`${item.kind}-${item.id}`}
-                    className={item.kind === 'deposit' ? 'row-deposit' : 'row-expense'}
+                    className={`${item.kind === 'deposit' ? 'row-deposit' : 'row-expense'} table-row-link`}
+                    onClick={() =>
+                      navigate('/transactions', {
+                        state: propertyTransactionsState(
+                          item.property_id,
+                          item.client_prop_id,
+                          periodDates,
+                        ),
+                      })
+                    }
                   >
                     <td className="px-5 py-3">
                       <span className={item.kind === 'deposit' ? 'badge-deposit' : 'badge-expense'}>

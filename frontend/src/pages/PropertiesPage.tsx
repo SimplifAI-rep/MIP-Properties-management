@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
 import {
@@ -10,8 +11,13 @@ import {
   LoadingState,
 } from '../components/ui/States';
 import { Tooltip } from '../components/ui/Tooltip';
+import {
+  ownerTransactionsState,
+  propertyTransactionsState,
+} from '../utils/transactionsNav';
 
 export function PropertiesPage() {
+  const navigate = useNavigate();
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
   const propertiesQuery = useQuery({
@@ -37,12 +43,13 @@ export function PropertiesPage() {
       <div>
         <h2 className="page-heading">Properties</h2>
         <p className="page-desc">
-          View properties, company-float incoming/outgoing/net, and linked accounts.
+          View properties, company-float incoming/outgoing/net, and linked accounts. Click a row to
+          open filtered transactions.
         </p>
       </div>
 
       <div className="grid gap-6 xl:grid-cols-[2fr_1fr]">
-        <section className="panel">
+        <section className="panel overflow-hidden">
           <div className="overflow-x-auto">
             <table className="table-shell">
               <thead className="table-head">
@@ -70,14 +77,19 @@ export function PropertiesPage() {
                       Status
                     </Tooltip>
                   </th>
+                  <th className="px-5 py-3 font-medium" />
                 </tr>
               </thead>
               <tbody>
                 {properties.map((property) => (
                   <tr
                     key={property.id}
-                    onClick={() => setSelectedId(property.id)}
-                    className={`table-row-interactive ${
+                    onClick={() =>
+                      navigate('/transactions', {
+                        state: propertyTransactionsState(property.id, property.client_prop_id),
+                      })
+                    }
+                    className={`table-row-link ${
                       selectedId === property.id ? 'table-row-selected' : ''
                     }`}
                   >
@@ -90,7 +102,17 @@ export function PropertiesPage() {
                         </span>
                       ) : null}
                     </td>
-                    <td className="px-5 py-3">{property.owner_name}</td>
+                    <td
+                      className="px-5 py-3"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        navigate('/transactions', {
+                          state: ownerTransactionsState(property.owner_id),
+                        });
+                      }}
+                    >
+                      <span className="nav-text-link">{property.owner_name}</span>
+                    </td>
                     <td className="px-5 py-3 amount-deposit">
                       {formatCurrency(property.total_incoming ?? '0')}
                     </td>
@@ -107,6 +129,18 @@ export function PropertiesPage() {
                       {formatCurrency(property.net_balance ?? '0')}
                     </td>
                     <td className="px-5 py-3 capitalize">{property.status}</td>
+                    <td className="px-5 py-3">
+                      <button
+                        type="button"
+                        className="btn-secondary text-xs"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          setSelectedId(property.id);
+                        }}
+                      >
+                        Details
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -121,7 +155,9 @@ export function PropertiesPage() {
 
         <aside className="panel-padded">
           {!selectedId ? (
-            <p className="muted-text">Select a property to view details.</p>
+            <p className="muted-text">
+              Click a row to open transactions, or Details to preview here.
+            </p>
           ) : detailQuery.isLoading ? (
             <LoadingState label="Loading property..." />
           ) : detailQuery.isError || !detailQuery.data ? (
@@ -135,23 +171,66 @@ export function PropertiesPage() {
                   Prop ID: {detailQuery.data.client_prop_id}
                 </p>
               </div>
-              <Card title="Owner" value={detailQuery.data.owner.name} />
+              <Link
+                to="/transactions"
+                state={propertyTransactionsState(
+                  detailQuery.data.id,
+                  detailQuery.data.client_prop_id,
+                )}
+                className="btn-primary inline-flex"
+              >
+                View transactions
+              </Link>
+              <Link
+                to="/transactions"
+                state={ownerTransactionsState(detailQuery.data.owner_id)}
+                className="block"
+              >
+                <Card title="Owner" value={detailQuery.data.owner.name} />
+              </Link>
               <div className="grid gap-3 sm:grid-cols-1">
-                <Card
-                  title="Incoming"
-                  value={formatCurrency(detailQuery.data.total_incoming ?? '0')}
-                  tooltip="Company-float deposits (excludes rental income)."
-                />
-                <Card
-                  title="Outgoing"
-                  value={formatCurrency(detailQuery.data.total_outgoing ?? '0')}
-                  tooltip="Company-float expenses (excludes resident/owner paid)."
-                />
-                <Card
-                  title="Net"
-                  value={formatCurrency(detailQuery.data.net_balance ?? '0')}
-                  tooltip="Incoming minus outgoing."
-                />
+                <Link
+                  to="/transactions"
+                  state={propertyTransactionsState(
+                    detailQuery.data.id,
+                    detailQuery.data.client_prop_id,
+                  )}
+                  className="block"
+                >
+                  <Card
+                    title="Incoming"
+                    value={formatCurrency(detailQuery.data.total_incoming ?? '0')}
+                    tooltip="Company-float deposits (excludes rental income)."
+                  />
+                </Link>
+                <Link
+                  to="/transactions"
+                  state={propertyTransactionsState(
+                    detailQuery.data.id,
+                    detailQuery.data.client_prop_id,
+                  )}
+                  className="block"
+                >
+                  <Card
+                    title="Outgoing"
+                    value={formatCurrency(detailQuery.data.total_outgoing ?? '0')}
+                    tooltip="Company-float expenses (excludes resident/owner paid)."
+                  />
+                </Link>
+                <Link
+                  to="/transactions"
+                  state={propertyTransactionsState(
+                    detailQuery.data.id,
+                    detailQuery.data.client_prop_id,
+                  )}
+                  className="block"
+                >
+                  <Card
+                    title="Net"
+                    value={formatCurrency(detailQuery.data.net_balance ?? '0')}
+                    tooltip="Incoming minus outgoing."
+                  />
+                </Link>
               </div>
               <div>
                 <h4 className="subheading">
@@ -179,11 +258,20 @@ export function PropertiesPage() {
                     <li className="muted-text">No recent deposits.</li>
                   ) : (
                     detailQuery.data.recent_deposits.map((deposit) => (
-                      <li key={deposit.id} className="list-item">
-                        <p className="font-medium">{formatCurrency(deposit.amount)}</p>
-                        <p className="muted-text">
-                          {formatDate(deposit.transaction_date)} · {deposit.description}
-                        </p>
+                      <li key={deposit.id}>
+                        <Link
+                          to="/transactions"
+                          state={propertyTransactionsState(
+                            detailQuery.data.id,
+                            detailQuery.data.client_prop_id,
+                          )}
+                          className="list-item block hover:bg-slate-50 dark:hover:bg-slate-800/60"
+                        >
+                          <p className="font-medium">{formatCurrency(deposit.amount)}</p>
+                          <p className="muted-text">
+                            {formatDate(deposit.transaction_date)} · {deposit.description}
+                          </p>
+                        </Link>
                       </li>
                     ))
                   )}

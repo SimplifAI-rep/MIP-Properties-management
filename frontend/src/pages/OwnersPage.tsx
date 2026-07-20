@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
 import {
@@ -9,8 +10,13 @@ import {
   LoadingState,
 } from '../components/ui/States';
 import { Tooltip } from '../components/ui/Tooltip';
+import {
+  ownerTransactionsState,
+  propertyTransactionsState,
+} from '../utils/transactionsNav';
 
 export function OwnersPage() {
+  const navigate = useNavigate();
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
   const ownersQuery = useQuery({
@@ -36,12 +42,13 @@ export function OwnersPage() {
       <div>
         <h2 className="page-heading">Property Owners</h2>
         <p className="page-desc">
-          View owners, their properties, and aggregated deposit and expense totals.
+          View owners, their properties, and aggregated deposit and expense totals. Click a row to
+          open filtered transactions.
         </p>
       </div>
 
       <div className="grid gap-6 xl:grid-cols-[2fr_1fr]">
-        <section className="panel">
+        <section className="panel overflow-hidden">
           <div className="overflow-x-auto">
             <table className="table-shell">
               <thead className="table-head">
@@ -59,6 +66,7 @@ export function OwnersPage() {
                   <th className="px-5 py-3 font-medium">
                     <Tooltip content="Deposits minus expenses.">Net</Tooltip>
                   </th>
+                  <th className="px-5 py-3 font-medium" />
                 </tr>
               </thead>
               <tbody>
@@ -68,8 +76,12 @@ export function OwnersPage() {
                   return (
                     <tr
                       key={owner.id}
-                      onClick={() => setSelectedId(owner.id)}
-                      className={`table-row-interactive ${
+                      onClick={() =>
+                        navigate('/transactions', {
+                          state: ownerTransactionsState(owner.id),
+                        })
+                      }
+                      className={`table-row-link ${
                         selectedId === owner.id ? 'table-row-selected' : ''
                       }`}
                     >
@@ -94,6 +106,18 @@ export function OwnersPage() {
                       >
                         {formatCurrency(net)}
                       </td>
+                      <td className="px-5 py-3">
+                        <button
+                          type="button"
+                          className="btn-secondary text-xs"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setSelectedId(owner.id);
+                          }}
+                        >
+                          Details
+                        </button>
+                      </td>
                     </tr>
                   );
                 })}
@@ -109,7 +133,9 @@ export function OwnersPage() {
 
         <aside className="panel-padded">
           {!selectedId ? (
-            <p className="muted-text">Select an owner to view details.</p>
+            <p className="muted-text">
+              Click a row to open transactions, or Details to preview here.
+            </p>
           ) : detailQuery.isLoading ? (
             <LoadingState label="Loading owner..." />
           ) : detailQuery.isError || !detailQuery.data ? (
@@ -126,49 +152,82 @@ export function OwnersPage() {
                 ) : null}
               </div>
 
+              <Link
+                to="/transactions"
+                state={ownerTransactionsState(detailQuery.data.id)}
+                className="btn-primary inline-flex"
+              >
+                View transactions
+              </Link>
+
               <div className="grid gap-3 sm:grid-cols-2">
                 <Card
                   title="Properties"
                   value={String(detailQuery.data.property_count)}
                   tooltip="Properties linked to this owner."
                 />
-                <Card
-                  title="Total deposits"
-                  value={formatCurrency(detailQuery.data.total_deposits)}
-                  subtitle={`${detailQuery.data.deposit_count} transactions`}
-                  tooltip="Total deposits across linked properties."
-                />
-                <Card
-                  title="Total expenses"
-                  value={formatCurrency(detailQuery.data.total_expenses)}
-                  subtitle={`${detailQuery.data.expense_count} transactions`}
-                  tooltip="Total expenses across linked properties."
-                />
-                <Card
-                  title="Net"
-                  value={formatCurrency(
-                    Number(detailQuery.data.total_deposits) -
-                      Number(detailQuery.data.total_expenses),
-                  )}
-                  tooltip="Deposits minus expenses."
-                />
+                <Link
+                  to="/transactions"
+                  state={ownerTransactionsState(detailQuery.data.id)}
+                  className="block"
+                >
+                  <Card
+                    title="Total deposits"
+                    value={formatCurrency(detailQuery.data.total_deposits)}
+                    subtitle={`${detailQuery.data.deposit_count} transactions`}
+                    tooltip="Total deposits across linked properties."
+                  />
+                </Link>
+                <Link
+                  to="/transactions"
+                  state={ownerTransactionsState(detailQuery.data.id)}
+                  className="block"
+                >
+                  <Card
+                    title="Total expenses"
+                    value={formatCurrency(detailQuery.data.total_expenses)}
+                    subtitle={`${detailQuery.data.expense_count} transactions`}
+                    tooltip="Total expenses across linked properties."
+                  />
+                </Link>
+                <Link
+                  to="/transactions"
+                  state={ownerTransactionsState(detailQuery.data.id)}
+                  className="block"
+                >
+                  <Card
+                    title="Net"
+                    value={formatCurrency(
+                      Number(detailQuery.data.total_deposits) -
+                        Number(detailQuery.data.total_expenses),
+                    )}
+                    tooltip="Deposits minus expenses."
+                  />
+                </Link>
               </div>
 
               <div>
                 <h4 className="subheading">Properties</h4>
                 <ul className="mt-2 space-y-2 text-sm">
                   {detailQuery.data.properties.map((property) => (
-                    <li key={property.id} className="list-item">
-                      <p className="font-medium text-slate-900 dark:text-slate-100">
-                        {property.name}
-                      </p>
-                      {property.address ? (
-                        <p className="muted-text">{property.address}</p>
-                      ) : null}
-                      <p className="mt-1 text-slate-600 dark:text-slate-300">
-                        Deposits: {formatCurrency(property.total_deposits)} ({property.deposit_count})
-                        · Expenses: {formatCurrency(property.total_expenses)} ({property.expense_count})
-                      </p>
+                    <li key={property.id}>
+                      <Link
+                        to="/transactions"
+                        state={propertyTransactionsState(property.id, property.client_prop_id)}
+                        className="list-item block hover:bg-slate-50 dark:hover:bg-slate-800/60"
+                      >
+                        <p className="font-medium text-slate-900 dark:text-slate-100">
+                          {property.name}
+                        </p>
+                        {property.address ? (
+                          <p className="muted-text">{property.address}</p>
+                        ) : null}
+                        <p className="mt-1 text-slate-600 dark:text-slate-300">
+                          Deposits: {formatCurrency(property.total_deposits)} (
+                          {property.deposit_count}) · Expenses:{' '}
+                          {formatCurrency(property.total_expenses)} ({property.expense_count})
+                        </p>
+                      </Link>
                     </li>
                   ))}
                 </ul>

@@ -183,6 +183,9 @@ export function TransactionsPage() {
       showForm?: boolean;
       propertyId?: string;
       clientPropId?: string;
+      ownerId?: string;
+      dateFrom?: string;
+      dateTo?: string;
     } | null;
     if (state?.showUpload) {
       setShowUpload(true);
@@ -195,6 +198,17 @@ export function TransactionsPage() {
     if (state?.propertyId || state?.clientPropId) {
       setPropertyId(state.propertyId);
       setClientPropId(state.clientPropId);
+      setOwnerId(undefined);
+      setPage(1);
+    } else if (state?.ownerId) {
+      setOwnerId(state.ownerId);
+      setPropertyId(undefined);
+      setClientPropId(undefined);
+      setPage(1);
+    }
+    if (state?.dateFrom != null || state?.dateTo != null) {
+      setDateFrom(state.dateFrom);
+      setDateTo(state.dateTo);
       setPage(1);
     }
   }, [location.state]);
@@ -328,6 +342,29 @@ export function TransactionsPage() {
     (typeFilter !== 'deposit' && expenseSummaryQuery.isError);
 
   const resetPage = () => setPage(1);
+
+  const hasActiveFilters = Boolean(
+    typeFilter !== 'all' ||
+      propertyId ||
+      clientPropId ||
+      ownerId ||
+      dateFrom ||
+      dateTo ||
+      category ||
+      source,
+  );
+
+  function clearFilters() {
+    setTypeFilter('all');
+    setPropertyId(undefined);
+    setClientPropId(undefined);
+    setOwnerId(undefined);
+    setDateFrom(undefined);
+    setDateTo(undefined);
+    setCategory(undefined);
+    setSource(undefined);
+    setPage(1);
+  }
 
   if (isLoading) return <LoadingState />;
   if (isError) {
@@ -587,6 +624,18 @@ export function TransactionsPage() {
         </section>
       ) : null}
 
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-sm font-medium text-slate-600 dark:text-slate-300">Filters</p>
+        <button
+          type="button"
+          className="btn-secondary text-xs"
+          disabled={!hasActiveFilters}
+          onClick={clearFilters}
+        >
+          Clear
+        </button>
+      </div>
+
       <section
         className={`filter-panel ${
           typeFilter === 'expense' || typeFilter === 'all'
@@ -733,7 +782,7 @@ export function TransactionsPage() {
         ) : null}
       </section>
 
-      <section className="panel">
+      <section className="panel overflow-hidden">
         <div className="overflow-x-auto">
           <table className="table-shell">
             <thead className="table-head">

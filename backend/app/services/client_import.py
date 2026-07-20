@@ -183,26 +183,39 @@ def _optional_str(value: Any) -> str | None:
 
 
 def _parse_date(value: Any) -> date | None:
+    """Parse a ledger date; reject Excel serial leftovers (year before 2000)."""
     if value is None:
         return None
     if isinstance(value, datetime):
-        return value.date()
-    if isinstance(value, date):
-        return value
-    text = str(value).strip()
-    if not text:
+        parsed = value.date()
+    elif isinstance(value, date):
+        parsed = value
+    elif isinstance(value, (int, float)) and not isinstance(value, bool):
+        # Bare Excel serial numbers (e.g. 28 → 1900-01-28) are not real transaction dates.
         return None
-    try:
-        parsed = datetime.fromisoformat(text.replace("Z", ""))
-        return parsed.date()
-    except ValueError:
-        pass
-    for fmt in ("%d.%m.%Y", "%d/%m/%Y", "%Y-%m-%d", "%d.%m.%y", "%d/%m/%y"):
+    else:
+        text = str(value).strip()
+        if not text or text.lower() in {"none", "nan", "nat"}:
+            return None
+        parsed = None
         try:
-            return datetime.strptime(text, fmt).date()
+            parsed = datetime.fromisoformat(text.replace("Z", "")).date()
         except ValueError:
-            continue
-    return None
+            pass
+        if parsed is None:
+            for fmt in ("%d.%m.%Y", "%d/%m/%Y", "%Y-%m-%d", "%d.%m.%y", "%d/%m/%y"):
+                try:
+                    parsed = datetime.strptime(text, fmt).date()
+                    break
+                except ValueError:
+                    continue
+        if parsed is None:
+            return None
+
+    # Excel often turns day-only / serial cells into January 1900.
+    if parsed.year < 2000:
+        return None
+    return parsed
 
 
 def _parse_amount(value: Any) -> Decimal | None:

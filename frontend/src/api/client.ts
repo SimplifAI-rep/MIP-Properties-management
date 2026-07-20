@@ -51,6 +51,7 @@ function toQuery(params: Record<string, string | number | undefined>): string {
 
 export const api = {
   getHealth: () => request<{ status: string }>('/health'),
+  getTransactionYears: () => request<{ years: number[] }>('/meta/transaction-years'),
   getOwners: () => request<OwnerSummary[]>('/owners'),
   getOwner: (id: string) => request<OwnerDetail>(`/owners/${id}`),
   getProperties: () => request<Property[]>('/properties'),

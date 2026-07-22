@@ -9,8 +9,6 @@ from sqlalchemy.types import JSON
 from app.core.database import Base
 from app.models.base import TimestampMixin, uuid_pk
 
-ALERT_ACTIONS = ("dismissed", "resolved")
-
 
 class AlertAction(Base, TimestampMixin):
     __tablename__ = "alert_actions"

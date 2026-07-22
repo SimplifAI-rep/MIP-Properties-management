@@ -31,7 +31,7 @@ const FETCH_SIZE = 200;
 interface RecentItem {
   id: string;
   kind: 'deposit' | 'expense';
-  transaction_date: string;
+  transaction_date: string | null;
   property_id: string;
   client_prop_id: string;
   property_name: string;
@@ -331,10 +331,11 @@ export function DashboardPage() {
     const deposits = (periodDepositsQuery.data?.items ?? []).map(depositToRecent);
     const expenses = (periodExpensesQuery.data?.items ?? []).map(expenseToRecent);
     return [...deposits, ...expenses]
-      .sort(
-        (a, b) =>
-          new Date(b.transaction_date).getTime() - new Date(a.transaction_date).getTime(),
-      )
+      .sort((a, b) => {
+        const aTime = a.transaction_date ? new Date(a.transaction_date).getTime() : 0;
+        const bTime = b.transaction_date ? new Date(b.transaction_date).getTime() : 0;
+        return bTime - aTime;
+      })
       .slice(0, RECENT_LIMIT);
   }, [periodDepositsQuery.data, periodExpensesQuery.data]);
 

@@ -1,7 +1,7 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Tooltip } from './Tooltip';
 
-export interface FilterOption {
+interface FilterOption {
   value: string;
   label: string;
 }

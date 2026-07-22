@@ -32,8 +32,6 @@ export default function App() {
             <Route path="transactions" element={<TransactionsPage />} />
             <Route path="alerts" element={<AlertsPage />} />
             <Route path="data-import" element={<DataImportPage />} />
-            <Route path="deposits" element={<Navigate to="/transactions" replace />} />
-            <Route path="expenses" element={<Navigate to="/transactions" replace />} />
             <Route path="ai" element={<AIQueryPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>

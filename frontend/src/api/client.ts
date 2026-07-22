@@ -20,7 +20,6 @@ import type {
   AlertSummary,
   AlertResolveRequest,
   AlertItem,
-  DepositCreate,
   FixIncompletePayload,
   FixIncompleteResponse,
   ClientDataStatusResponse,
@@ -40,7 +39,14 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     const detail = await response.text();
     throw new Error(detail || `Request failed: ${response.status}`);
   }
-  return response.json() as Promise<T>;
+  if (response.status === 204) {
+    return undefined as T;
+  }
+  const text = await response.text();
+  if (!text) {
+    return undefined as T;
+  }
+  return JSON.parse(text) as T;
 }
 
 function toQuery(params: Record<string, string | number | undefined>): string {
@@ -55,7 +61,6 @@ function toQuery(params: Record<string, string | number | undefined>): string {
 }
 
 export const api = {
-  getHealth: () => request<{ status: string }>('/health'),
   getTransactionYears: () => request<{ years: number[] }>('/meta/transaction-years'),
   getOwners: () => request<OwnerSummary[]>('/owners'),
   getOwner: (id: string) => request<OwnerDetail>(`/owners/${id}`),
@@ -182,6 +187,14 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     }),
+  deleteExpense: (id: string) =>
+    request<void>(`/expenses/${id}`, {
+      method: 'DELETE',
+    }),
+  deleteDeposit: (id: string) =>
+    request<void>(`/deposits/${id}`, {
+      method: 'DELETE',
+    }),
   analyzeUpload: (
     file: File,
     options?: {
@@ -226,12 +239,6 @@ export const api = {
     }),
   fixIncompleteTransaction: (payload: FixIncompletePayload) =>
     request<FixIncompleteResponse>('/alerts/fix-incomplete', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    }),
-  createDeposit: (payload: DepositCreate) =>
-    request<import('../types').Deposit>('/deposits', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),

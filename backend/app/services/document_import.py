@@ -38,7 +38,6 @@ from app.schemas import (
     UploadConfirmResponse,
 )
 from app.services.bank_import import BankImportService, RowError
-from app.services.document_storage import get_storage_root
 from app.services.expense_query import _validate_expense_enums
 
 logger = logging.getLogger(__name__)
@@ -181,8 +180,6 @@ class DocumentImportService:
             ready_count=ready_count,
             needs_review_count=review_count,
             error_count=error_count,
-            preview_url=f"/api/v1/uploads/{document.id}/file",
-            storage_uri=_storage_uri_safe(document.stored_path),
         )
 
     def confirm(
@@ -241,12 +238,6 @@ class DocumentImportService:
             document.transaction_type = first_confirmed.transaction_type
 
         document.status = "confirmed"
-        document.confirmed_json = {
-            "deposit_ids": imported_deposit_ids,
-            "expense_ids": imported_expense_ids,
-            "skipped_count": skipped_count,
-            "errors": errors,
-        }
         self.db.commit()
 
         return UploadConfirmResponse(
@@ -1303,18 +1294,3 @@ class DocumentImportService:
             return None
         text = str(value).strip()
         return text or None
-
-    def read_stored_file(self, document: UploadedDocument) -> bytes:
-        path = get_storage_root() / document.stored_path
-        if not path.exists():
-            raise HTTPException(status_code=404, detail="Stored file not found")
-        return path.read_bytes()
-
-
-def _storage_uri_safe(stored_path: str) -> str | None:
-    try:
-        from app.services.document_storage import storage_uri_for
-
-        return storage_uri_for(stored_path)
-    except (OSError, ValueError):
-        return None

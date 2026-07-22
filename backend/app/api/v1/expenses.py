@@ -9,6 +9,7 @@ from app.api.deps import get_db
 from app.schemas import ExpenseCreate, ExpenseListResponse, ExpenseRead, ExpenseSummary, ExpenseUpdate
 from app.services.expense_query import (
     create_expense,
+    delete_expense,
     get_expense_summary,
     list_expenses,
     update_expense,
@@ -100,3 +101,11 @@ def patch_expense(
     db: Session = Depends(get_db),
 ) -> ExpenseRead:
     return update_expense(db, expense_id, payload)
+
+
+@router.delete("/{expense_id}", status_code=204)
+def remove_expense(
+    expense_id: UUID,
+    db: Session = Depends(get_db),
+) -> None:
+    delete_expense(db, expense_id)

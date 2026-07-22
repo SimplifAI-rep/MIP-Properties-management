@@ -1,30 +1,32 @@
 # SimplifAI — Property Asset Management
 
-A property asset management platform for tracking income, expenses, documents, and financial analysis on behalf of property owners.
+Web app for property managers to track deposits, expenses, documents, and alerts on behalf of owners.
 
-**Current status:** MVP web UI + AI query layer — view deposits, ask natural-language questions.
+**Current status:** Full local MVP — Dashboard, Properties, Owners, Transactions, Alerts, Data Import, uploads, feedback, and AI query.
 
-## MVP Scope (Phase 1)
+## Features
 
-- **Bank deposits** — import simulated deposit data from Excel, view and filter by property/owner/date
-- **Gap detection** — compare expected vs actual owner deposits per property
-- **Web UI** — Dashboard, Properties, Deposits, AI Query pages
-- **AI querying** — natural-language deposit questions (rule-based parser; optional OpenAI via `LLM_API_KEY`)
+- **Transactions** — unified deposits + expenses, filters, inline edit, CSV export
+- **Data Import** — upload ClientData Excel files from the UI (no auto-seed on startup)
+- **Receipt / file upload** — analyze PDFs/images/Excel, confirm drafts, download linked files
+- **Alerts** — missing deposits, incomplete import rows, resolve/dismiss flows
+- **AI querying** — natural-language questions (rule-based; optional OpenAI via `LLM_API_KEY`)
+- **Feedback** — in-app form emailed via SMTP
 
-**Not yet implemented:** expenses, credit cards, document ingestion, alerts, trend analysis, multi-tenant auth.
+**Not yet implemented:** multi-tenant auth, durable cloud DB/storage for production (SQLite is fine locally).
 
 ## Documentation
 
-**[docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md)** — full architecture, data model, API design, and phased checklists.
+- **[docs/DEPLOY.md](docs/DEPLOY.md)** — Vercel + Render deploy
+- **[docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md)** — historical architecture plan (partially outdated)
 
 ## Tech Stack
 
 | Layer | Technology |
 |-------|------------|
-| Backend | Python 3.14, FastAPI, SQLAlchemy |
-| Database | SQLite (`simplifai.db` at project root) |
+| Backend | Python 3.12+, FastAPI, SQLAlchemy |
+| Database | SQLite (`simplifai.db` at project root by default) |
 | Frontend | React, TypeScript, Vite, Tailwind CSS, TanStack Query |
-| Seed data | Excel (`.xlsx`) → import script → database |
 
 ## Project Structure
 
@@ -32,17 +34,18 @@ A property asset management platform for tracking income, expenses, documents, a
 SimplifAI/
 ├── backend/          # FastAPI API
 ├── frontend/         # React web UI
-├── data/seed/        # Simulated bank deposit Excel/CSV
-├── scripts/          # Import, seed, inspect utilities
-├── docs/             # Implementation specification
-└── simplifai.db      # SQLite database (after import)
+├── data/             # Optional ClientData / seed fixtures
+├── scripts/          # Dev startup + optional CLI import tools
+├── docs/             # Deploy + planning docs
+├── storage/          # Uploaded files (local)
+└── simplifai.db      # SQLite database (created on first run)
 ```
 
 ## Quick Start — One Command
 
 **Prerequisites:** Python 3.12+, Node.js 18+, git
 
-Clone the repo, then from the **project root**:
+From the **project root**:
 
 ```powershell
 # Windows
@@ -57,46 +60,31 @@ python scripts/start_dev.py
 ```
 
 The script will:
+
 1. Create `backend/.venv` and install Python dependencies (first run)
 2. Run `npm install` in `frontend/` (first run)
-3. Seed the database and import sample deposits **if empty**
-4. Start the API on http://127.0.0.1:8000
-5. Start the web UI on http://localhost:5173
+3. Start the API on http://127.0.0.1:8000
+4. Start the web UI on http://localhost:5173
+
+The database starts **empty** (tables only). Load data via **Data Import** in the UI.
 
 Press **Ctrl+C** to stop both servers.
 
-> **Note:** If ports 8000/5173 are busy, the script automatically uses the next free port (e.g. 8002, 5174). Check the terminal output for the actual URLs.
-
----
+> **Note:** If ports 8000/5173 are busy, the script picks the next free port. Use the URLs printed in the terminal.
 
 ## Quick Start — Manual Steps
 
-### 1. Load sample data (first time only)
-
-From the **project root**:
-
-```powershell
-cd c:\Users\Administrator\Desktop\SimplifAI
-
-# Generate Excel seed file (if not already present)
-backend\.venv\Scripts\python.exe scripts\generate_bank_deposits.py
-
-# Seed owners/properties/accounts and import 15 deposits
-backend\.venv\Scripts\python.exe scripts\import_deposits.py data\seed\bank_deposits.xlsx --seed
-```
-
-### 2. Start the API server
+### 1. Start the API
 
 ```powershell
 cd backend
+.\.venv\Scripts\pip.exe install -r requirements.txt
 .\.venv\Scripts\uvicorn.exe app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
 API docs: http://127.0.0.1:8000/docs
 
-### 3. Start the web UI
-
-In a **second terminal**:
+### 2. Start the web UI
 
 ```powershell
 cd frontend
@@ -106,77 +94,51 @@ npm run dev
 
 Open: **http://localhost:5173**
 
-### 4. Pages
+### 3. Pages
 
 | Page | URL | What you can do |
 |------|-----|-----------------|
-| Dashboard | `/` | Total deposits, counts, March 2026 gap alert |
-| Properties | `/properties` | List properties, click row for detail panel |
-| Deposits | `/deposits` | Filter by property/owner/date, export CSV |
-| AI Query | `/ai` | Ask natural-language questions about deposits |
+| Dashboard | `/` | Period totals, gaps, recent activity |
+| Properties | `/properties` | Property list + detail |
+| Owners | `/owners` | Owner list + detail |
+| Transactions | `/transactions` | Deposits/expenses, upload, edit |
+| Alerts | `/alerts` | Review and resolve alerts |
+| Data Import | `/data-import` | Upload ClientData Excel packs |
+| AI Query | `/ai` | Natural-language questions |
 
 ## Troubleshooting
 
-### Ports already in use / can't kill processes
+### Ports already in use
 
-Old dev servers often run in **hidden Cursor or VS Code terminal tabs** — `netstat` shows PIDs that `Stop-Process` can't find because those terminals own the process.
-
-**Option 1 — Use the stop script:**
 ```powershell
 .\stop.ps1
 ```
 
-**Option 2 — Close terminal tabs in Cursor/VS Code** that are running `uvicorn` or `npm run dev` (look for old agent/background terminals).
+Or let `.\start.ps1` choose the next free port and open the URLs it prints.
 
-**Option 3 — Just run start anyway** — `.\start.ps1` now **automatically picks the next free port** if 8000 or 5173 are busy. Watch the output:
-```
-[start] Port 8000 is busy — using API port 8002
-  Web UI:  http://localhost:5173
-  API:     http://127.0.0.1:8002
-```
-Open the URLs printed in **your current terminal**, not an old bookmark.
+Always stop with **Ctrl+C** in the terminal where `.\start.ps1` is running.
 
-**Option 4 — Nuclear option (reboot)** clears ghost sockets if nothing else works.
-
-Always stop dev servers with **Ctrl+C** in the terminal where `.\start.ps1` is running.
-
-## Utility Scripts
+## Utility Scripts (optional)
 
 ```powershell
-# Inspect database contents in the terminal
+# Inspect database contents
 backend\.venv\Scripts\python.exe scripts\inspect_database.py
 
-# Run import tests
+# CLI ClientData import (UI import is preferred)
+backend\.venv\Scripts\python.exe scripts\import_client_data.py --reset
+
+# Tests
 cd backend
-..\.venv\Scripts\python.exe -m pytest tests\test_bank_import.py -v
+..\.venv\Scripts\python.exe -m pytest -v
 ```
-
-## API Endpoints
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/api/v1/health` | Health check |
-| GET | `/api/v1/owners` | List owners |
-| GET | `/api/v1/properties` | List properties with deposit totals |
-| GET | `/api/v1/properties/{id}` | Property detail |
-| GET | `/api/v1/deposits` | Paginated deposits with filters |
-| GET | `/api/v1/deposits/summary` | Dashboard summary |
-| GET | `/api/v1/deposits/gaps` | Missing expected deposits |
-| POST | `/api/v1/imports/deposits` | Upload Excel file |
-| POST | `/api/v1/ai/query` | Natural-language deposit query |
-
-### AI Query examples
-
-```json
-POST /api/v1/ai/query
-{ "question": "Show all deposits for Rothschild 12 in Q1 2026" }
-```
-
-Works without an API key (rule-based parser). Set `LLM_API_KEY` in `.env` for OpenAI-powered parsing.
 
 ## Environment
 
-- Backend DB path is fixed to `simplifai.db` at the project root (not relative to cwd).
-- Frontend API URL: `frontend/.env` → `VITE_API_BASE_URL=http://localhost:8000/api/v1`
+Copy `.env.example` to `.env` at the project root.
 
-See [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) for the full phase-by-phase roadmap.
+- **Database:** leave `DATABASE_URL` unset to use `simplifai.db` at the project root (recommended). Relative SQLite URLs resolve from process cwd and can point at the wrong file.
+- **Frontend API URL:** `frontend/.env` → `VITE_API_BASE_URL=http://localhost:8000/api/v1`
+- **AI:** optional `LLM_API_KEY`
+- **Feedback email:** SMTP settings in `.env`
+
+See [docs/DEPLOY.md](docs/DEPLOY.md) for production deploy notes.

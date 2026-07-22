@@ -16,6 +16,7 @@ from app.schemas import (
 )
 from app.services.deposit_query import (
     create_deposit,
+    delete_deposit,
     find_deposit_gaps,
     get_deposit_summary,
     list_deposits,
@@ -113,3 +114,11 @@ def patch_deposit(
     db: Session = Depends(get_db),
 ) -> DepositRead:
     return update_deposit(db, deposit_id, payload)
+
+
+@router.delete("/{deposit_id}", status_code=204)
+def remove_deposit(
+    deposit_id: UUID,
+    db: Session = Depends(get_db),
+) -> None:
+    delete_deposit(db, deposit_id)

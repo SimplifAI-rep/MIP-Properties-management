@@ -32,6 +32,7 @@ async def import_deposits(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
 ) -> ImportResultRead:
+    """Legacy bank-deposit Excel import (CLI/admin). Prefer Data Import in the UI."""
     content = await file.read()
     service = BankImportService(db)
     result = service.import_deposits(content, filename=file.filename or "upload.xlsx")

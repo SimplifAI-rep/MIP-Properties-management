@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
 import type { AlertItem, DepositCreate, TransactionDraft } from '../types';
@@ -12,15 +12,7 @@ import {
 } from '../components/ui/States';
 import { Tooltip } from '../components/ui/Tooltip';
 import { DateInputDMY } from '../components/ui/DateInputDMY';
-
-const CATEGORIES = [
-  'maintenance',
-  'tax',
-  'insurance',
-  'utilities',
-  'management_fee',
-  'other',
-] as const;
+import { EXPENSE_CATEGORIES as CATEGORIES } from '../constants/expenseOptions';
 
 function label(value: string) {
   return value.replace(/_/g, ' ');
@@ -66,7 +58,9 @@ function buildDepositForm(alert: AlertItem): DepositCreate {
 
 export function AlertsPage() {
   const queryClient = useQueryClient();
+  const detailPanelRef = useRef<HTMLElement>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [checkedIds, setCheckedIds] = useState<string[]>([]);
   const [depositForm, setDepositForm] = useState<DepositCreate | null>(null);
   const [drafts, setDrafts] = useState<TransactionDraft[]>([]);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -78,9 +72,14 @@ export function AlertsPage() {
     queryFn: api.getAlerts,
   });
 
+  const alerts = alertsQuery.data?.items ?? [];
+  const checkedSet = useMemo(() => new Set(checkedIds), [checkedIds]);
+  const allChecked = alerts.length > 0 && alerts.every((alert) => checkedSet.has(alert.id));
+  const someChecked = checkedIds.length > 0;
+
   const selectedAlert = useMemo(
-    () => alertsQuery.data?.items.find((alert) => alert.id === selectedId) ?? null,
-    [alertsQuery.data, selectedId],
+    () => alerts.find((alert) => alert.id === selectedId) ?? null,
+    [alerts, selectedId],
   );
 
   const propertyQuery = useQuery({
@@ -100,6 +99,31 @@ export function AlertsPage() {
       queryClient.invalidateQueries({ queryKey: ['alert-summary'] });
       setSelectedId(null);
       setActionError(null);
+    },
+    onError: (error: Error) => setActionError(error.message),
+  });
+
+  const dismissManyMutation = useMutation({
+    mutationFn: async (alertIds: string[]) => {
+      const results = await Promise.allSettled(
+        alertIds.map((alertId) => api.dismissAlert(alertId)),
+      );
+      const failed = results.filter((result) => result.status === 'rejected').length;
+      if (failed > 0 && failed === results.length) {
+        throw new Error(`Could not dismiss ${failed} alert(s).`);
+      }
+      return { total: alertIds.length, failed };
+    },
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ['alerts'] });
+      queryClient.invalidateQueries({ queryKey: ['alert-summary'] });
+      setCheckedIds([]);
+      setSelectedId(null);
+      setActionError(
+        result.failed > 0
+          ? `Dismissed ${result.total - result.failed} of ${result.total}; ${result.failed} failed.`
+          : null,
+      );
     },
     onError: (error: Error) => setActionError(error.message),
   });
@@ -160,6 +184,40 @@ export function AlertsPage() {
     }
   };
 
+  const toggleChecked = (alertId: string) => {
+    setCheckedIds((current) =>
+      current.includes(alertId)
+        ? current.filter((id) => id !== alertId)
+        : [...current, alertId],
+    );
+  };
+
+  const toggleCheckAll = () => {
+    if (allChecked) {
+      setCheckedIds([]);
+      return;
+    }
+    setCheckedIds(alerts.map((alert) => alert.id));
+  };
+
+  const dismissSelected = () => {
+    if (checkedIds.length === 0) return;
+    const confirmed = window.confirm(
+      `Dismiss ${checkedIds.length} selected alert${checkedIds.length === 1 ? '' : 's'}?`,
+    );
+    if (!confirmed) return;
+    dismissManyMutation.mutate(checkedIds);
+  };
+
+  const dismissAll = () => {
+    if (alerts.length === 0) return;
+    const confirmed = window.confirm(
+      `Dismiss all ${alerts.length} open alert${alerts.length === 1 ? '' : 's'}?`,
+    );
+    if (!confirmed) return;
+    dismissManyMutation.mutate(alerts.map((alert) => alert.id));
+  };
+
   const updateDraft = (index: number, patch: Partial<TransactionDraft>) => {
     setDrafts((current) =>
       current.map((draft, draftIndex) =>
@@ -177,18 +235,40 @@ export function AlertsPage() {
     return <ErrorState message="Could not load alerts from the API." />;
   }
 
-  const alerts = alertsQuery.data?.items ?? [];
+  const bulkBusy = dismissManyMutation.isPending;
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h2 className="page-heading">Alerts</h2>
-        <p className="page-desc">
-          Review missing deposits, incomplete imports, and uploaded files that need attention.
-        </p>
+    <div className="flex flex-col gap-3 overflow-hidden xl:h-[calc(100dvh-2rem)]">
+      <div className="flex shrink-0 flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h2 className="page-heading">Alerts</h2>
+          <p className="page-desc">
+            Review missing deposits, incomplete imports, and uploaded files that need attention.
+          </p>
+        </div>
+        {alerts.length > 0 ? (
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              className="btn-secondary"
+              disabled={!someChecked || bulkBusy}
+              onClick={dismissSelected}
+            >
+              {bulkBusy ? 'Dismissing…' : `Dismiss selected (${checkedIds.length})`}
+            </button>
+            <button
+              type="button"
+              className="btn-secondary"
+              disabled={bulkBusy}
+              onClick={dismissAll}
+            >
+              Dismiss all
+            </button>
+          </div>
+        ) : null}
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-3">
+      <div className="grid shrink-0 gap-3 sm:grid-cols-3">
         <Card
           title="Open alerts"
           value={alertsQuery.data?.total ?? 0}
@@ -206,29 +286,42 @@ export function AlertsPage() {
         />
       </div>
 
-      <div className="grid gap-6 xl:grid-cols-[1.4fr_1fr]">
-        <section className="panel">
+      {actionError && !selectedAlert ? (
+        <p className="shrink-0 text-negative text-sm">{actionError}</p>
+      ) : null}
+
+      <div className="grid min-h-0 flex-1 gap-4 xl:grid-cols-[1.4fr_1fr]">
+        <section className="panel flex min-h-0 flex-col overflow-hidden">
           {alerts.length === 0 ? (
             <div className="p-5">
               <EmptyState message="No open alerts. Everything looks good." />
             </div>
           ) : (
-            <div className="overflow-x-auto">
+            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
               <table className="table-shell">
-                <thead className="table-head">
+                <thead className="table-head sticky top-0 z-10">
                   <tr>
-                    <th className="px-5 py-3 font-medium">
+                    <th className="w-10 px-3 py-3">
+                      <input
+                        type="checkbox"
+                        className="align-middle"
+                        checked={allChecked}
+                        aria-label="Select all alerts"
+                        onChange={toggleCheckAll}
+                      />
+                    </th>
+                    <th className="px-3 py-3 font-medium">
                       <Tooltip content="Error needs a fix; warning needs a review.">
                         Severity
                       </Tooltip>
                     </th>
-                    <th className="px-5 py-3 font-medium">
+                    <th className="px-3 py-3 font-medium">
                       <Tooltip content="Missing deposit, incomplete import, duplicate, or upload review.">
                         Type
                       </Tooltip>
                     </th>
-                    <th className="px-5 py-3 font-medium">Alert</th>
-                    <th className="px-5 py-3 font-medium">Property</th>
+                    <th className="px-3 py-3 font-medium">Alert</th>
+                    <th className="px-3 py-3 font-medium">Property</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -240,17 +333,40 @@ export function AlertsPage() {
                         selectedId === alert.id ? 'table-row-selected' : ''
                       }`}
                     >
-                      <td className="px-5 py-3">
+                      <td
+                        className="px-3 py-3"
+                        onClick={(event) => event.stopPropagation()}
+                      >
+                        <input
+                          type="checkbox"
+                          className="align-middle"
+                          checked={checkedSet.has(alert.id)}
+                          aria-label={`Select ${alert.title}`}
+                          onChange={() => toggleChecked(alert.id)}
+                        />
+                      </td>
+                      <td className="px-3 py-3">
                         <span className={severityBadge(alert.severity)}>{alert.severity}</span>
                       </td>
-                      <td className="px-5 py-3">{typeLabel(alert.alert_type)}</td>
-                      <td className="px-5 py-3">
-                        <p className="font-medium">{alert.title}</p>
-                        <p className="text-xs text-muted">{alert.message}</p>
+                      <td className="px-3 py-3">{typeLabel(alert.alert_type)}</td>
+                      <td className="px-3 py-3">
+                        <p className="font-medium truncate" title={alert.title}>
+                          {alert.title}
+                        </p>
+                        <p className="text-xs text-muted truncate" title={alert.message}>
+                          {alert.message}
+                        </p>
                       </td>
-                      <td className="px-5 py-3">
-                        <p>{alert.property_name}</p>
-                        <p className="text-xs text-muted">{alert.owner_name}</p>
+                      <td className="px-3 py-3">
+                        <p className="truncate" title={alert.property_name ?? undefined}>
+                          {alert.property_name}
+                        </p>
+                        <p
+                          className="text-xs text-muted truncate"
+                          title={alert.owner_name ?? undefined}
+                        >
+                          {alert.owner_name}
+                        </p>
                       </td>
                     </tr>
                   ))}
@@ -260,7 +376,10 @@ export function AlertsPage() {
           )}
         </section>
 
-        <section className="panel p-4">
+        <section
+          ref={detailPanelRef}
+          className="panel flex min-h-0 flex-col overflow-y-auto overscroll-contain p-4"
+        >
           {!selectedAlert ? (
             <p className="muted-text">Select an alert to review and resolve it.</p>
           ) : (
@@ -402,22 +521,18 @@ export function AlertsPage() {
                       ))}
                     </select>
                   </label>
-                  <label className="text-sm">
-                    <span className="label-text">Date</span>
-                    <input
-                      required
-                      type="date"
-                      className="field"
-                      value={depositForm.transaction_date}
-                      onChange={(event) =>
-                        setDepositForm((current) =>
-                          current
-                            ? { ...current, transaction_date: event.target.value }
-                            : current,
-                        )
-                      }
-                    />
-                  </label>
+                  <DateInputDMY
+                    label="Date"
+                    required
+                    value={depositForm.transaction_date || undefined}
+                    onChange={(iso) =>
+                      setDepositForm((current) =>
+                        current
+                          ? { ...current, transaction_date: iso ?? '' }
+                          : current,
+                      )
+                    }
+                  />
                   <label className="text-sm">
                     <span className="label-text">Amount</span>
                     <input
@@ -485,12 +600,12 @@ export function AlertsPage() {
                           <tr key={draft.row_number ?? index}>
                             <td>{draft.row_number ?? index + 1}</td>
                             <td>
-                              <input
-                                type="date"
-                                className="field field-compact"
-                                value={draft.transaction_date ?? ''}
-                                onChange={(event) =>
-                                  updateDraft(index, { transaction_date: event.target.value })
+                              <DateInputDMY
+                                className="block"
+                                inputClassName="field field-compact"
+                                value={draft.transaction_date ?? undefined}
+                                onChange={(iso) =>
+                                  updateDraft(index, { transaction_date: iso ?? null })
                                 }
                               />
                             </td>

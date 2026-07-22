@@ -265,7 +265,6 @@ def test_analyze_pdf_auto_matches_property_without_property_id(client, monkeypat
     assert body["drafts"][0]["property_id"] == str(PROPERTY_ROTHSCHILD_ID)
     assert body["drafts"][0]["property_name"] == "Rothschild 12"
     assert body["drafts"][0]["owner_name"] == "David Cohen"
-    assert body["preview_url"]
     assert body["match_confidence"] in {"high", "medium", "low"}
 
 

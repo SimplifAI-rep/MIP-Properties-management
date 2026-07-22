@@ -27,7 +27,7 @@ Deploy **frontend on Vercel** and **backend on Render**. The API cannot run on V
 
 6. Deploy and copy the service URL, e.g. `https://simplifai-api.onrender.com`
 
-On first startup the API auto-seeds owners, properties, deposits, and expenses if the database is empty.
+The API starts with an empty database (tables only). Load owners, properties, deposits, and expenses via **Data Import** in the web UI.
 
 > **Note:** Render free tier uses ephemeral disk — data may reset on redeploy. Fine for demos.
 

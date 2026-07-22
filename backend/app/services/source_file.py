@@ -37,35 +37,6 @@ def load_upload_filenames(db: Session, receipt_refs: list[str | None]) -> dict[s
     return {str(doc_id): filename for doc_id, filename in rows}
 
 
-def load_upload_locations(
-    db: Session, receipt_refs: list[str | None]
-) -> dict[str, tuple[str, str | None]]:
-    """Map receipt_ref -> (file_url, storage_uri)."""
-    from app.services.document_storage import storage_uri_for, upload_file_url
-
-    ids: list[UUID] = []
-    for ref in receipt_refs:
-        uid = _as_uuid(ref)
-        if uid is not None:
-            ids.append(uid)
-    if not ids:
-        return {}
-    rows = db.execute(
-        select(UploadedDocument.id, UploadedDocument.stored_path).where(
-            UploadedDocument.id.in_(ids)
-        )
-    ).all()
-    result: dict[str, tuple[str, str | None]] = {}
-    for doc_id, stored_path in rows:
-        uri: str | None = None
-        try:
-            uri = storage_uri_for(stored_path)
-        except (OSError, ValueError):
-            uri = None
-        result[str(doc_id)] = (upload_file_url(doc_id), uri)
-    return result
-
-
 def load_batch_filenames(db: Session, batch_ids: list[UUID | None]) -> dict[str, str]:
     ids = [batch_id for batch_id in batch_ids if batch_id is not None]
     if not ids:

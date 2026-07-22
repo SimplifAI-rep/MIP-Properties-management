@@ -5,8 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1.router import api_router
 from app.core.config import get_settings
-from app.core.database import SessionLocal, init_db
-from app.services.bootstrap import bootstrap_database
+from app.core.database import init_db
 
 logging.basicConfig(level=logging.INFO)
 
@@ -35,12 +34,8 @@ app.add_middleware(
 
 @app.on_event("startup")
 def on_startup() -> None:
+    """Create/migrate tables only — data is loaded via Data Import in the UI."""
     init_db()
-    db = SessionLocal()
-    try:
-        bootstrap_database(db)
-    finally:
-        db.close()
 
 
 app.include_router(api_router, prefix="/api/v1")

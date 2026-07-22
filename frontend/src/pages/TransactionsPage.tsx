@@ -16,6 +16,11 @@ import { DateInputDMY } from '../components/ui/DateInputDMY';
 import { Tooltip } from '../components/ui/Tooltip';
 import { TransactionUploadPanel } from '../components/TransactionUploadPanel';
 import { useFeedback } from '../context/FeedbackContext';
+import {
+  EXPENSE_SOURCES as SOURCES,
+  PAYMENT_METHODS as METHODS,
+  SECTION_SUGGESTIONS,
+} from '../constants/expenseOptions';
 import { todayISO } from '../utils/dateFormat';
 
 type TransactionKind = 'deposit' | 'expense';
@@ -44,8 +49,6 @@ interface UnifiedTransaction {
   source?: string | null;
   receipt_ref?: string | null;
   source_file?: string | null;
-  file_url?: string | null;
-  storage_uri?: string | null;
   balance_after?: string | null;
   paid_by_resident?: boolean;
   paid_by_company?: boolean;
@@ -84,36 +87,6 @@ const UPLOAD_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
 function isUploadReceiptRef(ref: string | null | undefined): ref is string {
   return Boolean(ref && UPLOAD_ID_RE.test(ref));
 }
-
-/** Common Method values — Excel uses free text; these cover manual entry. */
-const METHODS = [
-  'bank_direct_debit',
-  'credit_card',
-  'bank_transfer',
-  'owner_personal',
-  'company_account',
-  'cash',
-] as const;
-
-const SOURCES = [
-  'standing_order',
-  'credit_card',
-  'manual_owner',
-  'manual_company',
-  'management_ledger',
-  'bank_statement',
-] as const;
-
-/** Soft suggestions for Section (Excel free-text); users can type anything. */
-const SECTION_SUGGESTIONS = [
-  'Cleaning',
-  'Maintenance',
-  'Utilities',
-  'Insurance',
-  'Tax',
-  'Management fee',
-  'Other',
-] as const;
 
 const PAGE_SIZE = 50;
 const FETCH_SIZE = 2000;
@@ -166,8 +139,6 @@ function depositToUnified(deposit: Deposit): UnifiedTransaction {
     source: deposit.source,
     receipt_ref: deposit.receipt_ref ?? null,
     source_file: deposit.source_file ?? null,
-    file_url: deposit.file_url ?? null,
-    storage_uri: deposit.storage_uri ?? null,
     balance_after: deposit.balance_after ?? null,
     is_rental_income: Boolean(deposit.is_rental_income),
     from_bank_statement: deposit.source === 'bank_statement',
@@ -194,8 +165,6 @@ function expenseToUnified(expense: Expense): UnifiedTransaction {
     source: expense.source,
     receipt_ref: expense.receipt_ref ?? null,
     source_file: expense.source_file ?? null,
-    file_url: expense.file_url ?? null,
-    storage_uri: expense.storage_uri ?? null,
     balance_after: expense.balance_after ?? null,
     paid_by_resident: Boolean(expense.paid_by_resident),
     paid_by_company: Boolean(expense.paid_by_company),
@@ -256,7 +225,6 @@ function formatTransactionFeedback(row: UnifiedTransaction): string {
     lines.push(`Needs review: yes (${row.review_reasons || 'unspecified'})`);
   }
   if (row.source_file) lines.push(`Source file: ${row.source_file}`);
-  if (row.storage_uri) lines.push(`Storage path: ${row.storage_uri}`);
   lines.push('-------------------');
   return lines.join('\n');
 }
@@ -489,6 +457,26 @@ export function TransactionsPage() {
         description: payload.notes.trim() || null,
         is_rental_income: payload.is_rental_income,
       });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['expenses'] });
+      queryClient.invalidateQueries({ queryKey: ['deposits'] });
+      queryClient.invalidateQueries({ queryKey: ['expense-summary'] });
+      queryClient.invalidateQueries({ queryKey: ['deposit-summary'] });
+      queryClient.invalidateQueries({ queryKey: ['alerts'] });
+      queryClient.invalidateQueries({ queryKey: ['alert-summary'] });
+      setEditForm(null);
+      setEditError(null);
+    },
+    onError: (error: Error) => setEditError(error.message),
+  });
+
+  const deleteTransactionMutation = useMutation({
+    mutationFn: async (payload: { kind: TransactionKind; id: string }) => {
+      if (payload.kind === 'expense') {
+        return api.deleteExpense(payload.id);
+      }
+      return api.deleteDeposit(payload.id);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['expenses'] });
@@ -790,6 +778,16 @@ export function TransactionsPage() {
     updateTransactionMutation.mutate(editForm);
   }
 
+  function deleteEdit() {
+    if (!editForm) return;
+    const kindLabel = editForm.kind === 'deposit' ? 'deposit' : 'expense';
+    const confirmed = window.confirm(
+      `Delete this ${kindLabel}? This cannot be undone.`,
+    );
+    if (!confirmed) return;
+    deleteTransactionMutation.mutate({ kind: editForm.kind, id: editForm.id });
+  }
+
   function patchEdit(patch: Partial<TransactionEditForm>) {
     setEditForm((current) => (current ? { ...current, ...patch } : current));
   }
@@ -989,18 +987,14 @@ export function TransactionsPage() {
                 ))}
               </select>
             </label>
-            <label className="text-sm">
-              <span className="label-text">Date</span>
-              <input
-                required
-                type="date"
-                className="field"
-                value={form.transaction_date}
-                onChange={(event) =>
-                  setForm((current) => ({ ...current, transaction_date: event.target.value }))
-                }
-              />
-            </label>
+            <DateInputDMY
+              label="Date"
+              required
+              value={form.transaction_date || undefined}
+              onChange={(iso) =>
+                setForm((current) => ({ ...current, transaction_date: iso ?? '' }))
+              }
+            />
             <label className="text-sm">
               <span className="label-text">
                 <Tooltip content="Excel Amount column — money leaving the company float.">
@@ -1670,7 +1664,10 @@ export function TransactionsPage() {
                                 <button
                                   type="button"
                                   className="btn-primary"
-                                  disabled={updateTransactionMutation.isPending}
+                                  disabled={
+                                    updateTransactionMutation.isPending ||
+                                    deleteTransactionMutation.isPending
+                                  }
                                   onClick={saveEdit}
                                 >
                                   {updateTransactionMutation.isPending
@@ -1680,9 +1677,26 @@ export function TransactionsPage() {
                                 <button
                                   type="button"
                                   className="btn-secondary"
+                                  disabled={
+                                    updateTransactionMutation.isPending ||
+                                    deleteTransactionMutation.isPending
+                                  }
                                   onClick={cancelEdit}
                                 >
                                   Cancel
+                                </button>
+                                <button
+                                  type="button"
+                                  className="btn-danger ml-auto"
+                                  disabled={
+                                    updateTransactionMutation.isPending ||
+                                    deleteTransactionMutation.isPending
+                                  }
+                                  onClick={deleteEdit}
+                                >
+                                  {deleteTransactionMutation.isPending
+                                    ? 'Deleting…'
+                                    : 'Delete'}
                                 </button>
                               </div>
                             </div>

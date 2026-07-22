@@ -2,34 +2,13 @@ import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
 import type { Property, TransactionDraft, UploadAnalyzeResponse } from '../types';
+import {
+  EXPENSE_CATEGORIES as CATEGORIES,
+  EXPENSE_SOURCES as SOURCES,
+  PAYMENT_METHODS,
+} from '../constants/expenseOptions';
+import { DateInputDMY } from './ui/DateInputDMY';
 import { Tooltip } from './ui/Tooltip';
-
-const CATEGORIES = [
-  'maintenance',
-  'tax',
-  'insurance',
-  'utilities',
-  'management_fee',
-  'other',
-] as const;
-
-const PAYMENT_METHODS = [
-  'bank_direct_debit',
-  'credit_card',
-  'bank_transfer',
-  'owner_personal',
-  'company_account',
-  'cash',
-] as const;
-
-const SOURCES = [
-  'standing_order',
-  'credit_card',
-  'manual_owner',
-  'manual_company',
-  'management_ledger',
-  'bank_statement',
-] as const;
 
 type TransactionTypeOption = 'auto' | 'deposit' | 'expense';
 type Step = 'upload' | 'confirm';
@@ -451,17 +430,15 @@ export function TransactionUploadPanel({ properties, onClose }: TransactionUploa
                   <span className={statusClass(draft.status)}>{draft.status}</span>
                 </div>
                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                  <label className="text-sm min-w-0">
-                    <span className="label-text">Date</span>
-                    <input
-                      type="date"
-                      className="field field-compact"
-                      value={draft.transaction_date ?? ''}
-                      onChange={(event) =>
-                        updateDraft(index, { transaction_date: event.target.value })
-                      }
-                    />
-                  </label>
+                  <DateInputDMY
+                    label="Date"
+                    className="text-sm min-w-0"
+                    inputClassName="field field-compact"
+                    value={draft.transaction_date ?? undefined}
+                    onChange={(iso) =>
+                      updateDraft(index, { transaction_date: iso ?? null })
+                    }
+                  />
                   <label className="text-sm min-w-0">
                     <span className="label-text">Amount</span>
                     <input

@@ -7,6 +7,7 @@ interface DateInputDMYProps {
   onChange: (iso: string | undefined) => void;
   className?: string;
   inputClassName?: string;
+  required?: boolean;
 }
 
 /** Text date input that displays and accepts dd/mm/yyyy; stores ISO internally. */
@@ -16,6 +17,7 @@ export function DateInputDMY({
   onChange,
   className = 'text-sm',
   inputClassName = 'field',
+  required = false,
 }: DateInputDMYProps) {
   const [text, setText] = useState(() => isoToDmy(value));
   const [invalid, setInvalid] = useState(false);
@@ -49,6 +51,7 @@ export function DateInputDMY({
       <input
         type="text"
         inputMode="numeric"
+        required={required}
         className={`${inputClassName} ${invalid ? 'border-rose-500' : ''}`}
         placeholder="dd/mm/yyyy"
         value={text}

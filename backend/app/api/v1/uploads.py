@@ -87,7 +87,11 @@ async def analyze_upload(
 
 
 @router.get("/{upload_id}/file")
-def get_upload_file(upload_id: UUID, db: Session = Depends(get_db)) -> FileResponse:
+def get_upload_file(
+    upload_id: UUID,
+    download: bool = False,
+    db: Session = Depends(get_db),
+) -> FileResponse:
     document = db.get(UploadedDocument, upload_id)
     if not document:
         raise HTTPException(status_code=404, detail="Upload not found")
@@ -98,8 +102,9 @@ def get_upload_file(upload_id: UUID, db: Session = Depends(get_db)) -> FileRespo
 
     return FileResponse(
         path,
-        media_type=document.mime_type,
+        media_type=document.mime_type or "application/octet-stream",
         filename=document.filename,
+        content_disposition_type="attachment" if download else "inline",
     )
 
 

@@ -202,7 +202,10 @@ export const api = {
       body: form,
     });
   },
-  getUploadFileUrl: (uploadId: string) => `${API_BASE}/uploads/${uploadId}/file`,
+  getUploadFileUrl: (uploadId: string, options?: { download?: boolean }) => {
+    const base = `${API_BASE}/uploads/${uploadId}/file`;
+    return options?.download ? `${base}?download=1` : base;
+  },
   confirmUpload: (uploadId: string, drafts: TransactionDraft[]) =>
     request<UploadConfirmResponse>(`/uploads/${uploadId}/confirm`, {
       method: 'POST',

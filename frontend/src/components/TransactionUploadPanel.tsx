@@ -13,19 +13,22 @@ const CATEGORIES = [
   'other',
 ] as const;
 
-const SOURCES = [
-  'standing_order',
-  'credit_card',
-  'manual_owner',
-  'manual_company',
-] as const;
-
 const PAYMENT_METHODS = [
   'bank_direct_debit',
   'credit_card',
   'bank_transfer',
   'owner_personal',
   'company_account',
+  'cash',
+] as const;
+
+const SOURCES = [
+  'standing_order',
+  'credit_card',
+  'manual_owner',
+  'manual_company',
+  'management_ledger',
+  'bank_statement',
 ] as const;
 
 type TransactionTypeOption = 'auto' | 'deposit' | 'expense';
@@ -59,6 +62,31 @@ function isImageMime(mime: string | null | undefined) {
 
 function isPdf(filename: string, mime?: string | null) {
   return mime === 'application/pdf' || filename.toLowerCase().endsWith('.pdf');
+}
+
+function withExpenseDefaults(draft: TransactionDraft): TransactionDraft {
+  if (draft.transaction_type !== 'expense') return draft;
+  return {
+    ...draft,
+    category: draft.category == null ? 'other' : draft.category,
+    source:
+      draft.source == null || draft.source === '' ? 'manual_company' : draft.source,
+    payment_method:
+      draft.payment_method == null || draft.payment_method === ''
+        ? 'company_account'
+        : draft.payment_method,
+  };
+}
+
+function prepareDraftForConfirm(draft: TransactionDraft): TransactionDraft {
+  const next = withExpenseDefaults(draft);
+  if (next.transaction_type !== 'expense') return next;
+  return {
+    ...next,
+    category: (next.category ?? '').trim() || 'other',
+    source: (next.source ?? '').trim() || 'manual_company',
+    payment_method: (next.payment_method ?? '').trim() || 'company_account',
+  };
 }
 
 interface TransactionUploadPanelProps {
@@ -105,7 +133,7 @@ export function TransactionUploadPanel({ properties, onClose }: TransactionUploa
     onSuccess: (result) => {
       setUploadId(result.upload_id);
       setAnalyzeResult(result);
-      setDrafts(result.drafts);
+      setDrafts(result.drafts.map(withExpenseDefaults));
       setConfirmMessage(null);
       setError(null);
       setStep('confirm');
@@ -116,11 +144,12 @@ export function TransactionUploadPanel({ properties, onClose }: TransactionUploa
   const confirmMutation = useMutation({
     mutationFn: () => {
       if (!uploadId) throw new Error('Analyze a file before confirming.');
-      const missingProperty = drafts.some((draft) => !draft.property_id);
+      const prepared = drafts.map(prepareDraftForConfirm);
+      const missingProperty = prepared.some((draft) => !draft.property_id);
       if (missingProperty) {
         throw new Error('Select a client/property for every row before confirming.');
       }
-      return api.confirmUpload(uploadId, drafts);
+      return api.confirmUpload(uploadId, prepared);
     },
     onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: ['deposits'] });
@@ -148,6 +177,7 @@ export function TransactionUploadPanel({ properties, onClose }: TransactionUploa
         setAnalyzeResult(null);
         setFile(null);
         setStep('upload');
+        onClose();
       }
     },
     onError: (err: Error) => setError(err.message),
@@ -165,7 +195,11 @@ export function TransactionUploadPanel({ properties, onClose }: TransactionUploa
     setDrafts((current) =>
       current.map((draft, draftIndex) => {
         if (draftIndex !== index) return draft;
-        const next = { ...draft, ...patch, status: 'needs_review' as const };
+        const next = withExpenseDefaults({
+          ...draft,
+          ...patch,
+          status: 'needs_review' as const,
+        });
         if (patch.property_id) {
           const property = properties.find((item) => item.id === patch.property_id);
           if (property) {
@@ -325,6 +359,26 @@ export function TransactionUploadPanel({ properties, onClose }: TransactionUploa
                   Preview not available for this file type ({analyzeResult.filename}).
                 </p>
               )}
+              {previewUrl ? (
+                <a
+                  href={api.getUploadFileUrl(uploadId!, { download: true })}
+                  download={analyzeResult.filename}
+                  className="btn-icon"
+                  aria-label="Download file"
+                  title="Download"
+                >
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    viewBox="0 0 20 20"
+                    fill="currentColor"
+                    className="h-4 w-4"
+                    aria-hidden="true"
+                  >
+                    <path d="M10.75 2.75a.75.75 0 0 0-1.5 0v8.614L6.295 8.235a.75.75 0 1 0-1.09 1.03l4.25 4.5a.75.75 0 0 0 1.09 0l4.25-4.5a.75.75 0 0 0-1.09-1.03l-2.955 3.129V2.75Z" />
+                    <path d="M3.5 12.75a.75.75 0 0 0-1.5 0v2.5A2.75 2.75 0 0 0 4.75 18h10.5A2.75 2.75 0 0 0 18 15.25v-2.5a.75.75 0 0 0-1.5 0v2.5c0 .69-.56 1.25-1.25 1.25H4.75c-.69 0-1.25-.56-1.25-1.25v-2.5Z" />
+                  </svg>
+                </a>
+              ) : null}
             </div>
 
             <div className="space-y-3 rounded-lg border border-border p-3">
@@ -386,169 +440,174 @@ export function TransactionUploadPanel({ properties, onClose }: TransactionUploa
             </div>
           </div>
 
-          <div className="overflow-x-auto rounded-lg border border-border">
-            <table className="data-table min-w-full">
-              <thead>
-                <tr>
-                  <th>#</th>
-                  <th>Status</th>
-                  <th>Date</th>
-                  <th>Amount</th>
-                  {primaryDraft?.transaction_type === 'deposit' ? <th>Account</th> : null}
-                  {primaryDraft?.transaction_type === 'expense' ? (
-                    <>
-                      <th>Category</th>
-                      <th>Source</th>
-                      <th>Payment</th>
-                      <th>Vendor</th>
-                    </>
+          <div className="space-y-3">
+            {drafts.map((draft, index) => (
+              <div
+                key={draft.row_number ?? index}
+                className="rounded-lg border border-border p-3 space-y-3"
+              >
+                <div className="flex flex-wrap items-center gap-2 text-sm">
+                  <span className="font-medium">#{draft.row_number ?? index + 1}</span>
+                  <span className={statusClass(draft.status)}>{draft.status}</span>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                  <label className="text-sm min-w-0">
+                    <span className="label-text">Date</span>
+                    <input
+                      type="date"
+                      className="field field-compact"
+                      value={draft.transaction_date ?? ''}
+                      onChange={(event) =>
+                        updateDraft(index, { transaction_date: event.target.value })
+                      }
+                    />
+                  </label>
+                  <label className="text-sm min-w-0">
+                    <span className="label-text">Amount</span>
+                    <input
+                      type="number"
+                      min="0.01"
+                      step="0.01"
+                      className="field field-compact"
+                      value={draft.amount ?? ''}
+                      onChange={(event) => updateDraft(index, { amount: event.target.value })}
+                    />
+                  </label>
+                  {draft.transaction_type === 'deposit' ? (
+                    <label className="text-sm min-w-0">
+                      <span className="label-text">Account</span>
+                      <select
+                        className="field field-compact"
+                        value={draft.bank_account_id ?? ''}
+                        onChange={(event) => {
+                          const account = propertyDetailQuery.data?.bank_accounts.find(
+                            (item) => item.id === event.target.value,
+                          );
+                          updateDraft(index, {
+                            bank_account_id: event.target.value || null,
+                            account_number: account?.account_number ?? draft.account_number,
+                          });
+                        }}
+                      >
+                        <option value="">Select account</option>
+                        {(propertyDetailQuery.data?.bank_accounts ?? []).map((account) => (
+                          <option key={account.id} value={account.id}>
+                            {account.account_number}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
                   ) : null}
-                  <th>Description</th>
-                  <th>Alerts</th>
-                </tr>
-              </thead>
-              <tbody>
-                {drafts.map((draft, index) => (
-                  <tr key={draft.row_number ?? index}>
-                    <td>{draft.row_number ?? index + 1}</td>
-                    <td>
-                      <span className={statusClass(draft.status)}>{draft.status}</span>
-                    </td>
-                    <td>
-                      <input
-                        type="date"
-                        className="field field-compact"
-                        value={draft.transaction_date ?? ''}
-                        onChange={(event) =>
-                          updateDraft(index, { transaction_date: event.target.value })
-                        }
-                      />
-                    </td>
-                    <td>
-                      <input
-                        type="number"
-                        min="0.01"
-                        step="0.01"
-                        className="field field-compact"
-                        value={draft.amount ?? ''}
-                        onChange={(event) => updateDraft(index, { amount: event.target.value })}
-                      />
-                    </td>
-                    {draft.transaction_type === 'deposit' ? (
-                      <td>
+                  {draft.transaction_type === 'expense' ? (
+                    <>
+                      <label className="text-sm min-w-0">
+                        <span className="label-text">Category</span>
+                        <input
+                          list="upload-category-suggestions"
+                          type="text"
+                          className="field field-compact"
+                          value={draft.category ?? ''}
+                          placeholder="e.g. Cleaning"
+                          onChange={(event) =>
+                            updateDraft(index, { category: event.target.value })
+                          }
+                        />
+                      </label>
+                      <label className="text-sm min-w-0">
+                        <span className="label-text">Source</span>
                         <select
                           className="field field-compact"
-                          value={draft.bank_account_id ?? ''}
-                          onChange={(event) => {
-                            const account = propertyDetailQuery.data?.bank_accounts.find(
-                              (item) => item.id === event.target.value,
-                            );
-                            updateDraft(index, {
-                              bank_account_id: event.target.value || null,
-                              account_number: account?.account_number ?? draft.account_number,
-                            });
-                          }}
+                          value={draft.source ?? 'manual_company'}
+                          onChange={(event) =>
+                            updateDraft(index, { source: event.target.value })
+                          }
                         >
-                          <option value="">Select account</option>
-                          {(propertyDetailQuery.data?.bank_accounts ?? []).map((account) => (
-                            <option key={account.id} value={account.id}>
-                              {account.account_number}
+                          {draft.source &&
+                          !(SOURCES as readonly string[]).includes(draft.source) ? (
+                            <option value={draft.source}>{label(draft.source)}</option>
+                          ) : null}
+                          {SOURCES.map((item) => (
+                            <option key={item} value={item}>
+                              {label(item)}
                             </option>
                           ))}
                         </select>
-                      </td>
-                    ) : null}
-                    {draft.transaction_type === 'expense' ? (
-                      <>
-                        <td>
-                          <select
-                            className="field field-compact"
-                            value={draft.category ?? 'other'}
-                            onChange={(event) =>
-                              updateDraft(index, { category: event.target.value })
-                            }
-                          >
-                            {CATEGORIES.map((item) => (
-                              <option key={item} value={item}>
-                                {label(item)}
-                              </option>
-                            ))}
-                          </select>
-                        </td>
-                        <td>
-                          <select
-                            className="field field-compact"
-                            value={draft.source ?? 'manual_company'}
-                            onChange={(event) =>
-                              updateDraft(index, { source: event.target.value })
-                            }
-                          >
-                            {SOURCES.map((item) => (
-                              <option key={item} value={item}>
-                                {label(item)}
-                              </option>
-                            ))}
-                          </select>
-                        </td>
-                        <td>
-                          <select
-                            className="field field-compact"
-                            value={draft.payment_method ?? 'company_account'}
-                            onChange={(event) =>
-                              updateDraft(index, { payment_method: event.target.value })
-                            }
-                          >
-                            {PAYMENT_METHODS.map((item) => (
-                              <option key={item} value={item}>
-                                {label(item)}
-                              </option>
-                            ))}
-                          </select>
-                        </td>
-                        <td>
-                          <input
-                            type="text"
-                            className="field field-compact"
-                            value={draft.vendor_name ?? ''}
-                            onChange={(event) =>
-                              updateDraft(index, { vendor_name: event.target.value })
-                            }
-                          />
-                        </td>
-                      </>
-                    ) : null}
-                    <td>
-                      <input
-                        type="text"
-                        className="field field-compact"
-                        value={draft.description ?? ''}
-                        onChange={(event) =>
-                          updateDraft(index, { description: event.target.value })
-                        }
-                      />
-                    </td>
-                    <td className="min-w-48">
-                      {draft.warnings.length === 0 ? (
-                        <span className="text-muted text-xs">None</span>
-                      ) : (
-                        <ul className="space-y-1 text-xs">
-                          {draft.warnings.map((warning) => (
-                            <li
-                              key={`${warning.field}-${warning.message}`}
-                              className={
-                                warning.severity === 'error' ? 'text-negative' : 'text-caution'
-                              }
-                            >
-                              <strong>{warning.field}:</strong> {warning.message}
-                            </li>
+                      </label>
+                      <label className="text-sm min-w-0">
+                        <span className="label-text">Payment</span>
+                        <select
+                          className="field field-compact"
+                          value={draft.payment_method ?? 'company_account'}
+                          onChange={(event) =>
+                            updateDraft(index, { payment_method: event.target.value })
+                          }
+                        >
+                          {draft.payment_method &&
+                          !(PAYMENT_METHODS as readonly string[]).includes(
+                            draft.payment_method,
+                          ) ? (
+                            <option value={draft.payment_method}>
+                              {label(draft.payment_method)}
+                            </option>
+                          ) : null}
+                          {PAYMENT_METHODS.map((item) => (
+                            <option key={item} value={item}>
+                              {label(item)}
+                            </option>
                           ))}
-                        </ul>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                        </select>
+                      </label>
+                      <label className="text-sm min-w-0">
+                        <span className="label-text">Vendor</span>
+                        <input
+                          type="text"
+                          className="field field-compact"
+                          value={draft.vendor_name ?? ''}
+                          onChange={(event) =>
+                            updateDraft(index, { vendor_name: event.target.value })
+                          }
+                        />
+                      </label>
+                    </>
+                  ) : null}
+                  <label className="text-sm min-w-0 sm:col-span-2 lg:col-span-3">
+                    <span className="label-text">Description</span>
+                    <input
+                      type="text"
+                      className="field field-compact"
+                      value={draft.description ?? ''}
+                      onChange={(event) =>
+                        updateDraft(index, { description: event.target.value })
+                      }
+                    />
+                  </label>
+                </div>
+                <div>
+                  <p className="label-text">Alerts</p>
+                  {draft.warnings.length === 0 ? (
+                    <span className="text-muted text-xs">None</span>
+                  ) : (
+                    <ul className="mt-1 space-y-1 text-xs">
+                      {draft.warnings.map((warning) => (
+                        <li
+                          key={`${warning.field}-${warning.message}`}
+                          className={
+                            warning.severity === 'error' ? 'text-negative' : 'text-caution'
+                          }
+                        >
+                          <strong>{warning.field}:</strong> {warning.message}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              </div>
+            ))}
+            <datalist id="upload-category-suggestions">
+              {CATEGORIES.map((item) => (
+                <option key={item} value={label(item)} />
+              ))}
+            </datalist>
           </div>
 
           <div className="flex flex-wrap gap-2">

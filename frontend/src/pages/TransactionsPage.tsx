@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
@@ -44,6 +44,8 @@ interface UnifiedTransaction {
   source?: string | null;
   receipt_ref?: string | null;
   source_file?: string | null;
+  file_url?: string | null;
+  storage_uri?: string | null;
   balance_after?: string | null;
   paid_by_resident?: boolean;
   paid_by_company?: boolean;
@@ -98,6 +100,8 @@ const SOURCES = [
   'credit_card',
   'manual_owner',
   'manual_company',
+  'management_ledger',
+  'bank_statement',
 ] as const;
 
 /** Soft suggestions for Section (Excel free-text); users can type anything. */
@@ -162,6 +166,8 @@ function depositToUnified(deposit: Deposit): UnifiedTransaction {
     source: deposit.source,
     receipt_ref: deposit.receipt_ref ?? null,
     source_file: deposit.source_file ?? null,
+    file_url: deposit.file_url ?? null,
+    storage_uri: deposit.storage_uri ?? null,
     balance_after: deposit.balance_after ?? null,
     is_rental_income: Boolean(deposit.is_rental_income),
     from_bank_statement: deposit.source === 'bank_statement',
@@ -188,6 +194,8 @@ function expenseToUnified(expense: Expense): UnifiedTransaction {
     source: expense.source,
     receipt_ref: expense.receipt_ref ?? null,
     source_file: expense.source_file ?? null,
+    file_url: expense.file_url ?? null,
+    storage_uri: expense.storage_uri ?? null,
     balance_after: expense.balance_after ?? null,
     paid_by_resident: Boolean(expense.paid_by_resident),
     paid_by_company: Boolean(expense.paid_by_company),
@@ -248,6 +256,7 @@ function formatTransactionFeedback(row: UnifiedTransaction): string {
     lines.push(`Needs review: yes (${row.review_reasons || 'unspecified'})`);
   }
   if (row.source_file) lines.push(`Source file: ${row.source_file}`);
+  if (row.storage_uri) lines.push(`Storage path: ${row.storage_uri}`);
   lines.push('-------------------');
   return lines.join('\n');
 }
@@ -292,26 +301,10 @@ export function TransactionsPage() {
   const [alertFilters, setAlertFilters] = useState<AlertFilterKind[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [showUpload, setShowUpload] = useState(false);
-  const [receiptViewer, setReceiptViewer] = useState<{
-    url: string;
-    label: string;
-  } | null>(null);
   const [form, setForm] = useState<ExpenseCreate>(() => makeEmptyForm());
   const [formError, setFormError] = useState<string | null>(null);
   const [editForm, setEditForm] = useState<TransactionEditForm | null>(null);
   const [editError, setEditError] = useState<string | null>(null);
-  const tableScrollRef = useRef<HTMLDivElement>(null);
-  const [tableViewportWidth, setTableViewportWidth] = useState<number | undefined>();
-
-  useEffect(() => {
-    const el = tableScrollRef.current;
-    if (!el) return;
-    const sync = () => setTableViewportWidth(el.clientWidth);
-    sync();
-    const observer = new ResizeObserver(sync);
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, []);
 
   useEffect(() => {
     const state = location.state as {
@@ -951,7 +944,7 @@ export function TransactionsPage() {
         <section className="panel p-4">
           <h3 className="subheading">New expense</h3>
           <p className="mt-1 text-sm text-muted">
-            Fields use the same names as your Excel sheet (Section, Notes, Method, Company).
+            Fields use the same names as your Excel sheet (Section, Notes, Method, Source, Company).
           </p>
           <form
             className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3"
@@ -970,6 +963,7 @@ export function TransactionsPage() {
                   : section,
                 vendor_name: form.vendor_name?.trim() || undefined,
                 source: form.source || 'manual_company',
+                payment_method: form.payment_method || 'company_account',
               });
             }}
           >
@@ -1057,6 +1051,26 @@ export function TransactionsPage() {
                 }
               >
                 {METHODS.map((item) => (
+                  <option key={item} value={item}>
+                    {label(item)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="text-sm">
+              <span className="label-text">
+                <Tooltip content="How this expense was recorded (e.g. standing order).">
+                  Source
+                </Tooltip>
+              </span>
+              <select
+                className="field"
+                value={form.source}
+                onChange={(event) =>
+                  setForm((current) => ({ ...current, source: event.target.value }))
+                }
+              >
+                {SOURCES.map((item) => (
                   <option key={item} value={item}>
                     {label(item)}
                   </option>
@@ -1213,45 +1227,60 @@ export function TransactionsPage() {
       </section>
 
       <section className="panel overflow-hidden">
-        <div ref={tableScrollRef} className="overflow-x-auto">
+        <div className="w-full min-w-0">
           <table className="table-shell">
+            <colgroup>
+              <col className="w-[11%]" />
+              <col className="w-[6%]" />
+              <col className="w-[7%]" />
+              <col className="w-[8%]" />
+              <col className="w-[10%]" />
+              <col className="w-[8%]" />
+              <col className="w-[8%]" />
+              <col className="w-[8%]" />
+              <col className="w-[9%]" />
+              <col className="w-[8%]" />
+              <col className="w-[7%]" />
+              <col className="w-[5%]" />
+              <col className="w-[5%]" />
+            </colgroup>
             <thead className="table-head">
               <tr>
-                <th className="px-5 py-3 font-medium">
+                <th className="px-2 py-3 font-medium">
                   <Tooltip content="Deposit = Inflow · Expense = Amount (Excel money columns).">
                     Type
                   </Tooltip>
                 </th>
-                <th className="px-5 py-3 font-medium">
+                <th className="px-2 py-3 font-medium">
                   <Tooltip content="Excel Prop ID.">Prop ID</Tooltip>
                 </th>
-                <th className="px-5 py-3 font-medium">Date</th>
-                <th className="px-5 py-3 font-medium">
+                <th className="px-2 py-3 font-medium">Date</th>
+                <th className="px-2 py-3 font-medium">
                   <Tooltip content="Excel Section.">Section</Tooltip>
                 </th>
-                <th className="px-5 py-3 font-medium">
+                <th className="px-2 py-3 font-medium">
                   <Tooltip content="Excel Notes.">Notes</Tooltip>
                 </th>
-                <th className="px-5 py-3 font-medium">
+                <th className="px-2 py-3 font-medium">
                   <Tooltip content="Excel Amount (out) or Inflow (in).">Amount</Tooltip>
                 </th>
-                <th className="px-5 py-3 font-medium">
+                <th className="px-2 py-3 font-medium">
                   <Tooltip content="Running company-float balance after this row (like Excel Balance).">
                     Balance
                   </Tooltip>
                 </th>
-                <th className="px-5 py-3 font-medium">
+                <th className="px-2 py-3 font-medium">
                   <Tooltip content="Excel Company — vendor or payee.">Company</Tooltip>
                 </th>
-                <th className="px-5 py-3 font-medium">Property</th>
-                <th className="px-5 py-3 font-medium">Owner</th>
-                <th className="px-5 py-3 font-medium">
+                <th className="px-2 py-3 font-medium">Property</th>
+                <th className="px-2 py-3 font-medium">Owner</th>
+                <th className="px-2 py-3 font-medium">
                   <Tooltip content="File this row was imported from.">Source file</Tooltip>
                 </th>
-                <th className="px-5 py-3 font-medium">
+                <th className="px-2 py-3 font-medium">
                   <Tooltip content="Linked receipt (Excel Reciept), if uploaded.">Receipt</Tooltip>
                 </th>
-                <th className="px-5 py-3 font-medium">Actions</th>
+                <th className="px-2 py-3 font-medium">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -1281,8 +1310,8 @@ export function TransactionsPage() {
                                         : 'row-expense'
                       }${isEditing ? ' table-row-selected' : ''}`}
                     >
-                      <td className="px-5 py-3 whitespace-nowrap">
-                        <div className="flex flex-nowrap items-center gap-1.5">
+                      <td className="px-2 py-3">
+                        <div className="flex flex-wrap items-center gap-1">
                           {row.needs_review ? reviewBang(row) : null}
                           <span
                             className={row.kind === 'deposit' ? 'badge-deposit' : 'badge-expense'}
@@ -1331,23 +1360,26 @@ export function TransactionsPage() {
                           ) : null}
                         </div>
                       </td>
-                      <td className="px-5 py-3 font-mono text-xs font-medium">
+                      <td className="px-2 py-3 font-mono text-xs font-medium truncate" title={row.client_prop_id}>
                         {row.client_prop_id}
                       </td>
-                      <td className="px-5 py-3">
+                      <td className="px-2 py-3 truncate">
                         {row.transaction_date ? (
                           formatDate(row.transaction_date)
+                        ) : row.needs_review ? (
+                          reviewBang(row)
                         ) : (
-                          <span className="inline-flex items-center gap-1.5">
-                            {row.needs_review ? reviewBang(row) : null}
-                            <span className="muted-text">Missing date</span>
-                          </span>
+                          '—'
                         )}
                       </td>
-                      <td className="px-5 py-3">{row.section}</td>
-                      <td className="px-5 py-3 muted-text">{row.notes || '—'}</td>
+                      <td className="px-2 py-3 truncate" title={row.section || undefined}>
+                        {row.section}
+                      </td>
+                      <td className="px-2 py-3 muted-text truncate" title={row.notes || undefined}>
+                        {row.notes || '—'}
+                      </td>
                       <td
-                        className={`px-5 py-3 whitespace-nowrap tabular-nums ${
+                        className={`px-2 py-3 tabular-nums truncate ${
                           row.paid_by_resident
                             ? 'amount-resident-paid'
                             : row.paid_by_owner
@@ -1368,10 +1400,7 @@ export function TransactionsPage() {
                         }`}
                       >
                         {Number(row.amount) <= 0 && row.needs_review ? (
-                          <span className="inline-flex items-center gap-1.5">
-                            {reviewBang(row)}
-                            <span className="muted-text">Missing amount</span>
-                          </span>
+                          reviewBang(row)
                         ) : (
                           <>
                             {row.kind === 'deposit' ? '+' : '−'}
@@ -1380,7 +1409,7 @@ export function TransactionsPage() {
                         )}
                       </td>
                       <td
-                        className={`px-5 py-3 whitespace-nowrap tabular-nums font-medium ${
+                        className={`px-2 py-3 tabular-nums font-medium truncate ${
                           row.balance_after == null
                             ? 'muted-text'
                             : Number(row.balance_after) >= 0
@@ -1392,67 +1421,110 @@ export function TransactionsPage() {
                           ? '—'
                           : formatCurrency(row.balance_after, row.currency)}
                       </td>
-                      <td className="px-5 py-3 muted-text">{row.company || '—'}</td>
-                      <td className="px-5 py-3 font-medium">{row.property_name}</td>
-                      <td className="px-5 py-3">{row.owner_name}</td>
+                      <td className="px-2 py-3 muted-text truncate" title={row.company || undefined}>
+                        {row.company || '—'}
+                      </td>
+                      <td className="px-2 py-3 font-medium truncate" title={row.property_name}>
+                        {row.property_name}
+                      </td>
+                      <td className="px-2 py-3 truncate" title={row.owner_name}>
+                        {row.owner_name}
+                      </td>
                       <td
-                        className="px-5 py-3 text-xs muted-text max-w-[14rem] truncate"
+                        className="px-2 py-3 text-xs muted-text truncate"
                         title={row.source_file ?? undefined}
                       >
                         {row.source_file || '—'}
                       </td>
-                      <td className="px-5 py-3">
-                        {isUploadReceiptRef(row.receipt_ref) ? (
-                          <button
-                            type="button"
-                            className="btn-secondary text-xs"
-                            onClick={() =>
-                              setReceiptViewer({
-                                url: api.getUploadFileUrl(row.receipt_ref!),
-                                label: `${row.kind} · ${row.property_name} · ${
-                                  row.transaction_date
-                                    ? formatDate(row.transaction_date)
-                                    : 'no date'
-                                }`,
-                              })
-                            }
-                          >
-                            View
-                          </button>
-                        ) : (
-                          <span className="muted-text text-xs">—</span>
-                        )}
-                      </td>
-                      <td className="px-5 py-3 whitespace-nowrap">
-                        <div className="flex flex-col gap-1">
+                  <td className="px-2 py-3">
+                    {isUploadReceiptRef(row.receipt_ref) ? (
+                      <a
+                        href={api.getUploadFileUrl(row.receipt_ref!, { download: true })}
+                        download={row.source_file || undefined}
+                        className="btn-icon"
+                        aria-label="Download file"
+                        title="Download"
+                      >
+                        <svg
+                          xmlns="http://www.w3.org/2000/svg"
+                          viewBox="0 0 20 20"
+                          fill="currentColor"
+                          className="h-4 w-4"
+                          aria-hidden="true"
+                        >
+                          <path d="M10.75 2.75a.75.75 0 0 0-1.5 0v8.614L6.295 8.235a.75.75 0 1 0-1.09 1.03l4.25 4.5a.75.75 0 0 0 1.09 0l4.25-4.5a.75.75 0 0 0-1.09-1.03l-2.955 3.129V2.75Z" />
+                          <path d="M3.5 12.75a.75.75 0 0 0-1.5 0v2.5A2.75 2.75 0 0 0 4.75 18h10.5A2.75 2.75 0 0 0 18 15.25v-2.5a.75.75 0 0 0-1.5 0v2.5c0 .69-.56 1.25-1.25 1.25H4.75c-.69 0-1.25-.56-1.25-1.25v-2.5Z" />
+                        </svg>
+                      </a>
+                    ) : (
+                      <span className="muted-text text-xs">—</span>
+                    )}
+                  </td>
+                      <td className="px-2 py-3">
+                        <div className="flex items-center gap-1">
                           {isEditing ? (
-                            <button
-                              type="button"
-                              className="btn-secondary text-xs"
-                              onClick={cancelEdit}
-                            >
-                              Close
-                            </button>
+                            <Tooltip content="Close" hideHint>
+                              <button
+                                type="button"
+                                className="btn-icon"
+                                onClick={cancelEdit}
+                                aria-label="Close edit"
+                              >
+                                <svg
+                                  xmlns="http://www.w3.org/2000/svg"
+                                  viewBox="0 0 20 20"
+                                  fill="currentColor"
+                                  className="h-4 w-4"
+                                  aria-hidden="true"
+                                >
+                                  <path d="M6.28 5.22a.75.75 0 0 0-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 1 0 1.06 1.06L10 11.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L11.06 10l3.72-3.72a.75.75 0 0 0-1.06-1.06L10 8.94 6.28 5.22Z" />
+                                </svg>
+                              </button>
+                            </Tooltip>
                           ) : (
-                            <button
-                              type="button"
-                              className="btn-secondary text-xs"
-                              onClick={() => openEdit(row)}
-                            >
-                              Edit
-                            </button>
+                            <Tooltip content="Edit" hideHint>
+                              <button
+                                type="button"
+                                className="btn-icon"
+                                onClick={() => openEdit(row)}
+                                aria-label="Edit transaction"
+                              >
+                                <svg
+                                  xmlns="http://www.w3.org/2000/svg"
+                                  viewBox="0 0 20 20"
+                                  fill="currentColor"
+                                  className="h-4 w-4"
+                                  aria-hidden="true"
+                                >
+                                  <path d="m2.695 14.762-1.262 3.155a.5.5 0 0 0 .65.65l3.155-1.262a4 4 0 0 0 1.343-.886L17.5 5.501a2.121 2.121 0 0 0-3-3L3.58 13.419a4 4 0 0 0-.885 1.343Z" />
+                                </svg>
+                              </button>
+                            </Tooltip>
                           )}
-                          <Tooltip content="Send feedback about this row (details included in the email).">
+                          <Tooltip content="Feedback" hideHint>
                             <button
                               type="button"
-                              className="btn-secondary text-xs"
+                              className="btn-icon"
                               onClick={() =>
                                 openFeedback({
                                   initialMessage: formatTransactionFeedback(row),
                                 })
                               }
+                              aria-label="Send feedback"
                             >
-                              Feedback
+                              <svg
+                                xmlns="http://www.w3.org/2000/svg"
+                                viewBox="0 0 20 20"
+                                fill="currentColor"
+                                className="h-4 w-4"
+                                aria-hidden="true"
+                              >
+                                <path
+                                  fillRule="evenodd"
+                                  d="M10 2c-2.236 0-4.43.18-6.512.512C2.35 2.718 1.5 3.958 1.5 5.373v4.254c0 1.415.85 2.655 1.988 2.86 1.113.178 2.259.3 3.418.364V16.5a.75.75 0 0 0 1.28.53l2.754-2.753A32.978 32.978 0 0 0 10 14c2.236 0 4.43-.18 6.512-.512 1.138-.205 1.988-1.445 1.988-2.86V5.373c0-1.415-.85-2.655-1.988-2.86A33.001 33.001 0 0 0 10 2Zm0 5a1 1 0 1 0 0 2 1 1 0 0 0 0-2ZM7 8a1 1 0 1 1-2 0 1 1 0 0 1 2 0Zm6 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0Z"
+                                  clipRule="evenodd"
+                                />
+                              </svg>
                             </button>
                           </Tooltip>
                         </div>
@@ -1460,21 +1532,8 @@ export function TransactionsPage() {
                     </tr>
                     {isEditing ? (
                       <tr className="bg-slate-50/80 dark:bg-slate-900/40">
-                        <td
-                          colSpan={13}
-                          className="p-0"
-                          style={
-                            tableViewportWidth
-                              ? {
-                                  position: 'sticky',
-                                  left: 0,
-                                  width: tableViewportWidth,
-                                  maxWidth: tableViewportWidth,
-                                }
-                              : undefined
-                          }
-                        >
-                          <div className="box-border px-5 py-4" style={{ width: tableViewportWidth }}>
+                        <td colSpan={13} className="p-0">
+                          <div className="box-border max-w-full px-4 py-4">
                             <div className="grid max-w-full gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
                               <label className="text-sm min-w-0">
                                 <span className="label-text">Prop ID / Property</span>
@@ -1537,6 +1596,14 @@ export function TransactionsPage() {
                                           {label(item)}
                                         </option>
                                       ))}
+                                      {editForm.payment_method &&
+                                      !(METHODS as readonly string[]).includes(
+                                        editForm.payment_method,
+                                      ) ? (
+                                        <option value={editForm.payment_method}>
+                                          {label(editForm.payment_method)}
+                                        </option>
+                                      ) : null}
                                     </select>
                                   </label>
                                   <label className="text-sm min-w-0">
@@ -1564,6 +1631,12 @@ export function TransactionsPage() {
                                           {label(item)}
                                         </option>
                                       ))}
+                                      {editForm.source &&
+                                      !(SOURCES as readonly string[]).includes(editForm.source) ? (
+                                        <option value={editForm.source}>
+                                          {label(editForm.source)}
+                                        </option>
+                                      ) : null}
                                     </select>
                                   </label>
                                 </>
@@ -1628,51 +1701,6 @@ export function TransactionsPage() {
             ))}
           </datalist>
         </div>
-        {receiptViewer ? (
-          <div
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-            role="dialog"
-            aria-modal="true"
-            aria-label="Receipt viewer"
-            onClick={() => setReceiptViewer(null)}
-          >
-            <div
-              className="panel flex max-h-[90vh] w-full max-w-3xl flex-col gap-3 p-4"
-              onClick={(event) => event.stopPropagation()}
-            >
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <h3 className="subheading">Receipt</h3>
-                  <p className="page-desc">{receiptViewer.label}</p>
-                </div>
-                <div className="flex gap-2">
-                  <a
-                    href={receiptViewer.url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="btn-secondary text-xs"
-                  >
-                    Open in new tab
-                  </a>
-                  <button
-                    type="button"
-                    className="btn-secondary text-xs"
-                    onClick={() => setReceiptViewer(null)}
-                  >
-                    Close
-                  </button>
-                </div>
-              </div>
-              <div className="min-h-0 flex-1 overflow-auto rounded-md border border-border bg-black/5">
-                <iframe
-                  title="Receipt document"
-                  src={receiptViewer.url}
-                  className="h-[70vh] w-full"
-                />
-              </div>
-            </div>
-          </div>
-        ) : null}
         {items.length === 0 ? (
           <div className="p-5">
             <EmptyState message="No transactions match the current filters." />

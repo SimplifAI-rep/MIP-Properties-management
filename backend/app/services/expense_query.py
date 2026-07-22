@@ -11,7 +11,7 @@ from app.models.owner import Owner
 from app.models.property import Property
 from app.schemas import ExpenseCategoryTotal, ExpenseCreate, ExpenseRead, ExpenseUpdate
 from app.services.running_balance import compute_running_balances
-from app.services.source_file import load_upload_filenames, resolve_source_file
+from app.services.source_file import load_upload_filenames, load_upload_locations, resolve_source_file
 
 
 def expense_to_read(
@@ -21,11 +21,18 @@ def expense_to_read(
     client_prop_id: str,
     *,
     upload_names: dict[str, str] | None = None,
+    upload_locations: dict[str, tuple[str, str | None]] | None = None,
     balances: dict[tuple[str, str], Decimal] | None = None,
 ) -> ExpenseRead:
     balance = None
     if balances is not None:
         balance = balances.get(("expense", str(expense.id)))
+    file_url = None
+    storage_uri = None
+    if expense.receipt_ref and upload_locations:
+        loc = upload_locations.get(str(expense.receipt_ref))
+        if loc:
+            file_url, storage_uri = loc
     return ExpenseRead(
         id=expense.id,
         property_id=expense.property_id,
@@ -57,6 +64,8 @@ def expense_to_read(
         ledger_column=expense.ledger_column,
         needs_review=bool(getattr(expense, "needs_review", False)),
         review_reasons=getattr(expense, "review_reasons", None),
+        file_url=file_url,
+        storage_uri=storage_uri,
     )
 
 
@@ -137,6 +146,7 @@ def list_expenses(
     rows = db.execute(stmt.offset((page - 1) * page_size).limit(page_size)).all()
     expenses = [row[0] for row in rows]
     upload_names = load_upload_filenames(db, [e.receipt_ref for e in expenses])
+    upload_locations = load_upload_locations(db, [e.receipt_ref for e in expenses])
     balances = compute_running_balances(db, [e.property_id for e in expenses])
     items = [
         expense_to_read(
@@ -145,6 +155,7 @@ def list_expenses(
             owner_name,
             client_prop_id_val,
             upload_names=upload_names,
+            upload_locations=upload_locations,
             balances=balances,
         )
         for expense, property_name, owner_name, client_prop_id_val in rows

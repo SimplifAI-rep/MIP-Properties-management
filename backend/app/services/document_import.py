@@ -182,6 +182,7 @@ class DocumentImportService:
             needs_review_count=review_count,
             error_count=error_count,
             preview_url=f"/api/v1/uploads/{document.id}/file",
+            storage_uri=_storage_uri_safe(document.stored_path),
         )
 
     def confirm(
@@ -1308,3 +1309,12 @@ class DocumentImportService:
         if not path.exists():
             raise HTTPException(status_code=404, detail="Stored file not found")
         return path.read_bytes()
+
+
+def _storage_uri_safe(stored_path: str) -> str | None:
+    try:
+        from app.services.document_storage import storage_uri_for
+
+        return storage_uri_for(stored_path)
+    except (OSError, ValueError):
+        return None

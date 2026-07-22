@@ -17,6 +17,7 @@ from app.services.running_balance import compute_running_balances
 from app.services.source_file import (
     load_batch_filenames,
     load_upload_filenames,
+    load_upload_locations,
     resolve_source_file,
 )
 
@@ -29,12 +30,19 @@ def deposit_to_read(
     client_prop_id: str,
     *,
     upload_names: dict[str, str] | None = None,
+    upload_locations: dict[str, tuple[str, str | None]] | None = None,
     batch_names: dict[str, str] | None = None,
     balances: dict[tuple[str, str], Decimal] | None = None,
 ) -> DepositRead:
     balance = None
     if balances is not None:
         balance = balances.get(("deposit", str(deposit.id)))
+    file_url = None
+    storage_uri = None
+    if deposit.receipt_ref and upload_locations:
+        loc = upload_locations.get(str(deposit.receipt_ref))
+        if loc:
+            file_url, storage_uri = loc
     return DepositRead(
         id=deposit.id,
         property_id=deposit.property_id,
@@ -62,6 +70,8 @@ def deposit_to_read(
         balance_after=balance,
         needs_review=bool(getattr(deposit, "needs_review", False)),
         review_reasons=getattr(deposit, "review_reasons", None),
+        file_url=file_url,
+        storage_uri=storage_uri,
     )
 
 
@@ -119,6 +129,7 @@ def list_deposits(
 
     deposits = [row[0] for row in rows]
     upload_names = load_upload_filenames(db, [d.receipt_ref for d in deposits])
+    upload_locations = load_upload_locations(db, [d.receipt_ref for d in deposits])
     batch_names = load_batch_filenames(db, [d.import_batch_id for d in deposits])
     balances = compute_running_balances(db, [d.property_id for d in deposits])
 
@@ -130,6 +141,7 @@ def list_deposits(
             account_number,
             client_prop_id_val,
             upload_names=upload_names,
+            upload_locations=upload_locations,
             batch_names=batch_names,
             balances=balances,
         )

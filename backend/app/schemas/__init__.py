@@ -75,6 +75,9 @@ class DepositRead(BaseModel):
     balance_after: Decimal | None = None
     needs_review: bool = False
     review_reasons: str | None = None
+    # When linked to an upload: browser URL + disk/cloud location
+    file_url: str | None = None
+    storage_uri: str | None = None
 
 
 class PropertyRead(BaseModel):
@@ -280,6 +283,9 @@ class ExpenseRead(BaseModel):
     ledger_column: str | None = None
     needs_review: bool = False
     review_reasons: str | None = None
+    # When linked to an upload: browser URL + disk/cloud location
+    file_url: str | None = None
+    storage_uri: str | None = None
 
 
 class ExpenseCreate(BaseModel):
@@ -377,6 +383,8 @@ class UploadAnalyzeResponse(BaseModel):
     needs_review_count: int = 0
     error_count: int = 0
     preview_url: str | None = None
+    # Absolute disk path today; later a cloud URI (S3/HTTPS). Safe to show/copy.
+    storage_uri: str | None = None
 
 
 class UploadConfirmRequest(BaseModel):

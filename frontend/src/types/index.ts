@@ -59,6 +59,10 @@ export interface Deposit {
   balance_after?: string | null;
   needs_review?: boolean;
   review_reasons?: string | null;
+  /** App URL to open/download the linked upload in the browser. */
+  file_url?: string | null;
+  /** Absolute disk path today; later a cloud URI. */
+  storage_uri?: string | null;
 }
 
 export interface Property {
@@ -169,6 +173,10 @@ export interface Expense {
   ledger_column?: string | null;
   needs_review?: boolean;
   review_reasons?: string | null;
+  /** App URL to open/download the linked upload in the browser. */
+  file_url?: string | null;
+  /** Absolute disk path today; later a cloud URI. */
+  storage_uri?: string | null;
 }
 
 export interface ExpenseListResponse {
@@ -290,6 +298,8 @@ export interface UploadAnalyzeResponse {
   needs_review_count: number;
   error_count: number;
   preview_url?: string | null;
+  /** Absolute disk path today; later a cloud URI. */
+  storage_uri?: string | null;
 }
 
 export interface UploadConfirmResponse {

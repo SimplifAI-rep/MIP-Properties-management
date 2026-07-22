@@ -37,6 +37,29 @@ def get_storage_root() -> Path:
     return root
 
 
+def resolve_stored_path(stored_path: str) -> Path:
+    """Resolve a relative stored_path to an absolute Path under the storage root."""
+    relative = stored_path.replace("\\", "/").lstrip("/")
+    path = (get_storage_root() / relative).resolve()
+    root = get_storage_root().resolve()
+    if root not in path.parents and path != root:
+        raise ValueError("Stored path escapes storage root")
+    return path
+
+
+def storage_uri_for(stored_path: str) -> str:
+    """Location URI for the stored file.
+
+    Local disk today (absolute path). Swap to cloud URLs later without changing callers.
+    """
+    return str(resolve_stored_path(stored_path))
+
+
+def upload_file_url(upload_id: uuid.UUID) -> str:
+    """App-served URL to open/download the file in the browser."""
+    return f"/api/v1/uploads/{upload_id}/file"
+
+
 def validate_upload(filename: str, content: bytes, mime_type: str | None) -> str:
     settings = get_settings()
     if len(content) > settings.upload_max_bytes:

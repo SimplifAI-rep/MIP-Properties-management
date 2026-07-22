@@ -6,8 +6,13 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db
-from app.schemas import ExpenseCreate, ExpenseListResponse, ExpenseRead, ExpenseSummary
-from app.services.expense_query import create_expense, get_expense_summary, list_expenses
+from app.schemas import ExpenseCreate, ExpenseListResponse, ExpenseRead, ExpenseSummary, ExpenseUpdate
+from app.services.expense_query import (
+    create_expense,
+    get_expense_summary,
+    list_expenses,
+    update_expense,
+)
 
 router = APIRouter(prefix="/expenses", tags=["expenses"])
 
@@ -86,3 +91,12 @@ def expense_summary(
         include_all=include_all,
     )
     return ExpenseSummary(**data)
+
+
+@router.patch("/{expense_id}", response_model=ExpenseRead)
+def patch_expense(
+    expense_id: UUID,
+    payload: ExpenseUpdate,
+    db: Session = Depends(get_db),
+) -> ExpenseRead:
+    return update_expense(db, expense_id, payload)

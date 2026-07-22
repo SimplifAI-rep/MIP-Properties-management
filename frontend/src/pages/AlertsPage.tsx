@@ -6,9 +6,12 @@ import {
   Card,
   EmptyState,
   ErrorState,
+  formatCurrency,
+  formatDate,
   LoadingState,
 } from '../components/ui/States';
 import { Tooltip } from '../components/ui/Tooltip';
+import { DateInputDMY } from '../components/ui/DateInputDMY';
 
 const CATEGORIES = [
   'maintenance',
@@ -32,6 +35,7 @@ function severityBadge(severity: AlertItem['severity']) {
 function typeLabel(alertType: AlertItem['alert_type']) {
   if (alertType === 'missing_deposit') return 'Missing deposit';
   if (alertType === 'duplicate_deposit') return 'Possible duplicate';
+  if (alertType === 'incomplete_import') return 'Incomplete import';
   return 'Upload review';
 }
 
@@ -66,6 +70,8 @@ export function AlertsPage() {
   const [depositForm, setDepositForm] = useState<DepositCreate | null>(null);
   const [drafts, setDrafts] = useState<TransactionDraft[]>([]);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [fixDate, setFixDate] = useState<string | undefined>();
+  const [fixAmount, setFixAmount] = useState('');
 
   const alertsQuery = useQuery({
     queryKey: ['alerts'],
@@ -116,15 +122,41 @@ export function AlertsPage() {
     onError: (error: Error) => setActionError(error.message),
   });
 
+  const fixIncompleteMutation = useMutation({
+    mutationFn: api.fixIncompleteTransaction,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['alerts'] });
+      queryClient.invalidateQueries({ queryKey: ['alert-summary'] });
+      queryClient.invalidateQueries({ queryKey: ['deposits'] });
+      queryClient.invalidateQueries({ queryKey: ['expenses'] });
+      queryClient.invalidateQueries({ queryKey: ['deposit-summary'] });
+      queryClient.invalidateQueries({ queryKey: ['expense-summary'] });
+      setSelectedId(null);
+      setActionError(null);
+    },
+    onError: (error: Error) => setActionError(error.message),
+  });
+
   const selectAlert = (alert: AlertItem) => {
     setSelectedId(alert.id);
     setActionError(null);
     if (alert.alert_type === 'missing_deposit') {
       setDepositForm(buildDepositForm(alert));
       setDrafts([]);
+      setFixDate(undefined);
+      setFixAmount('');
+    } else if (alert.alert_type === 'incomplete_import') {
+      setDepositForm(null);
+      setDrafts([]);
+      setFixDate(alert.transaction_date ?? undefined);
+      setFixAmount(
+        alert.amount && Number(alert.amount) > 0 ? String(alert.amount) : '',
+      );
     } else {
       setDepositForm(null);
       setDrafts(alert.drafts);
+      setFixDate(undefined);
+      setFixAmount('');
     }
   };
 
@@ -152,7 +184,7 @@ export function AlertsPage() {
       <div>
         <h2 className="page-heading">Alerts</h2>
         <p className="page-desc">
-          Review missing deposits and uploaded files that need attention. Click an alert to fix it.
+          Review missing deposits, incomplete imports, and uploaded files that need attention.
         </p>
       </div>
 
@@ -191,7 +223,7 @@ export function AlertsPage() {
                       </Tooltip>
                     </th>
                     <th className="px-5 py-3 font-medium">
-                      <Tooltip content="Missing deposit, possible duplicate, or upload review.">
+                      <Tooltip content="Missing deposit, incomplete import, duplicate, or upload review.">
                         Type
                       </Tooltip>
                     </th>
@@ -237,6 +269,98 @@ export function AlertsPage() {
                 <h3 className="subheading">{selectedAlert.title}</h3>
                 <p className="mt-1 text-sm text-muted">{selectedAlert.message}</p>
               </div>
+
+              {selectedAlert.alert_type === 'incomplete_import' ? (
+                <form
+                  className="grid gap-3"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    const txId =
+                      selectedAlert.transaction_type === 'expense'
+                        ? selectedAlert.expense_id
+                        : selectedAlert.deposit_id;
+                    if (!txId || !selectedAlert.transaction_type) {
+                      setActionError('Alert is missing transaction id.');
+                      return;
+                    }
+                    if (!fixDate || !fixAmount || Number(fixAmount) <= 0) {
+                      setActionError('Date (dd/mm/yyyy) and amount greater than 0 are required.');
+                      return;
+                    }
+                    fixIncompleteMutation.mutate({
+                      transaction_type: selectedAlert.transaction_type,
+                      id: txId,
+                      transaction_date: fixDate,
+                      amount: fixAmount,
+                    });
+                  }}
+                >
+                  <dl className="grid gap-2 text-sm">
+                    <div>
+                      <dt className="label-text">Prop ID / Property</dt>
+                      <dd>{selectedAlert.property_name ?? '—'}</dd>
+                    </div>
+                    <div>
+                      <dt className="label-text">Type</dt>
+                      <dd className="capitalize">{selectedAlert.transaction_type ?? '—'}</dd>
+                    </div>
+                    <div>
+                      <dt className="label-text">Section</dt>
+                      <dd>{selectedAlert.section || '—'}</dd>
+                    </div>
+                    <div>
+                      <dt className="label-text">Notes</dt>
+                      <dd>{selectedAlert.notes || '—'}</dd>
+                    </div>
+                    <div>
+                      <dt className="label-text">Current date</dt>
+                      <dd>
+                        {selectedAlert.transaction_date
+                          ? formatDate(selectedAlert.transaction_date)
+                          : 'Missing date'}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="label-text">Current amount</dt>
+                      <dd>
+                        {selectedAlert.amount && Number(selectedAlert.amount) > 0
+                          ? formatCurrency(selectedAlert.amount)
+                          : '—'}
+                      </dd>
+                    </div>
+                  </dl>
+                  <DateInputDMY label="Date" value={fixDate} onChange={setFixDate} />
+                  <label className="text-sm">
+                    <span className="label-text">Amount</span>
+                    <input
+                      required
+                      type="number"
+                      min="0.01"
+                      step="0.01"
+                      className="field"
+                      value={fixAmount}
+                      onChange={(event) => setFixAmount(event.target.value)}
+                    />
+                  </label>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="submit"
+                      disabled={fixIncompleteMutation.isPending}
+                      className="btn-primary"
+                    >
+                      {fixIncompleteMutation.isPending ? 'Saving...' : 'Save & clear alert'}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-secondary"
+                      disabled={dismissMutation.isPending}
+                      onClick={() => dismissMutation.mutate(selectedAlert.id)}
+                    >
+                      Dismiss
+                    </button>
+                  </div>
+                </form>
+              ) : null}
 
               {selectedAlert.alert_type === 'missing_deposit' && depositForm ? (
                 <form
@@ -335,7 +459,8 @@ export function AlertsPage() {
                 </form>
               ) : null}
 
-              {selectedAlert.alert_type !== 'missing_deposit' ? (
+              {selectedAlert.alert_type === 'upload_pending' ||
+              selectedAlert.alert_type === 'duplicate_deposit' ? (
                 <div className="space-y-3">
                   <div className="overflow-x-auto rounded-lg border border-border">
                     <table className="data-table min-w-full">
@@ -392,7 +517,8 @@ export function AlertsPage() {
                                     );
                                     updateDraft(index, {
                                       bank_account_id: event.target.value || null,
-                                      account_number: account?.account_number ?? draft.account_number,
+                                      account_number:
+                                        account?.account_number ?? draft.account_number,
                                     });
                                   }}
                                 >
@@ -500,7 +626,8 @@ export function AlertsPage() {
                     </button>
                   </div>
                 </div>
-              ) : (
+              ) : selectedAlert.alert_type !== 'incomplete_import' &&
+                selectedAlert.alert_type !== 'missing_deposit' ? (
                 <button
                   type="button"
                   className="btn-secondary"
@@ -509,7 +636,7 @@ export function AlertsPage() {
                 >
                   Dismiss alert
                 </button>
-              )}
+              ) : null}
 
               {actionError ? <p className="text-negative text-sm">{actionError}</p> : null}
             </div>

@@ -12,7 +12,7 @@ from app.models.deposit import Deposit
 from app.models.expected_deposit import ExpectedDeposit
 from app.models.owner import Owner
 from app.models.property import Property
-from app.schemas import DepositCreate, DepositGap, DepositRead
+from app.schemas import DepositCreate, DepositGap, DepositRead, DepositUpdate
 from app.services.running_balance import compute_running_balances
 from app.services.source_file import (
     load_batch_filenames,
@@ -60,6 +60,8 @@ def deposit_to_read(
             batch_names=batch_names,
         ),
         balance_after=balance,
+        needs_review=bool(getattr(deposit, "needs_review", False)),
+        review_reasons=getattr(deposit, "review_reasons", None),
     )
 
 
@@ -315,6 +317,68 @@ def create_deposit(db: Session, payload: DepositCreate) -> DepositRead:
         source="manual_entry",
     )
     db.add(deposit)
+    db.commit()
+    db.refresh(deposit)
+    return deposit_to_read(
+        deposit,
+        property_row.name,
+        owner.name,
+        account_number,
+        property_row.client_prop_id,
+    )
+
+
+def update_deposit(db: Session, deposit_id: UUID, payload: DepositUpdate) -> DepositRead:
+    deposit = db.get(Deposit, deposit_id)
+    if not deposit:
+        raise HTTPException(status_code=404, detail="Deposit not found")
+
+    data = payload.model_dump(exclude_unset=True)
+    property_id = data.get("property_id", deposit.property_id)
+    property_row = db.get(Property, property_id)
+    if not property_row:
+        raise HTTPException(status_code=404, detail="Property not found")
+
+    owner = db.get(Owner, property_row.owner_id)
+    if not owner:
+        raise HTTPException(status_code=404, detail="Owner not found")
+
+    account_number = None
+    if "bank_account_id" in data:
+        bank_account_id = data["bank_account_id"]
+        if bank_account_id is None:
+            deposit.bank_account_id = None
+        else:
+            bank_account = db.get(BankAccount, bank_account_id)
+            if not bank_account:
+                raise HTTPException(status_code=404, detail="Bank account not found")
+            if (
+                bank_account.property_id is not None
+                and bank_account.property_id != property_id
+            ):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Bank account does not belong to the selected property",
+                )
+            deposit.bank_account_id = bank_account.id
+            account_number = bank_account.account_number
+            data.pop("bank_account_id", None)
+    elif deposit.bank_account_id:
+        bank_account = db.get(BankAccount, deposit.bank_account_id)
+        account_number = bank_account.account_number if bank_account else None
+
+    for key, value in data.items():
+        setattr(deposit, key, value)
+
+    if (
+        getattr(deposit, "needs_review", False)
+        and deposit.transaction_date is not None
+        and deposit.amount is not None
+        and deposit.amount > 0
+    ):
+        deposit.needs_review = False
+        deposit.review_reasons = None
+
     db.commit()
     db.refresh(deposit)
     return deposit_to_read(

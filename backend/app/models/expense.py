@@ -51,7 +51,7 @@ PAYMENT_METHODS = (
 class Expense(Base, TimestampMixin):
     __tablename__ = "expenses"
     __table_args__ = (
-        CheckConstraint("amount > 0", name="ck_expenses_amount_positive"),
+        CheckConstraint("amount >= 0", name="ck_expenses_amount_non_negative"),
         UniqueConstraint("import_key", name="uq_expenses_import_key"),
     )
 
@@ -59,7 +59,9 @@ class Expense(Base, TimestampMixin):
     property_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("properties.id"), nullable=False
     )
-    transaction_date: Mapped[date] = mapped_column(Date, nullable=False)
+    # Nullable when imported incomplete (missing Excel date) — needs_review=True
+    transaction_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    # 0 allowed for incomplete rows missing Amount
     amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     currency: Mapped[str] = mapped_column(String(3), nullable=False, default="ILS")
     # Free-text allowed (client Section values); preferred enums above for UI filters
@@ -83,5 +85,8 @@ class Expense(Base, TimestampMixin):
     import_key: Mapped[str | None] = mapped_column(String(255))
     # Original upload/import filename (Excel workbook, PDF receipt, etc.)
     source_file: Mapped[str | None] = mapped_column(String(255))
+    # Incomplete Excel import (missing date and/or money) awaiting user fix
+    needs_review: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    review_reasons: Mapped[str | None] = mapped_column(String(255))
 
     property: Mapped["Property"] = relationship(back_populates="expenses")

@@ -7,6 +7,8 @@ import type {
   ExpenseFilters,
   ExpenseListResponse,
   ExpenseSummary,
+  ExpenseUpdate,
+  DepositUpdate,
   OwnerDetail,
   OwnerSummary,
   Property,
@@ -19,6 +21,8 @@ import type {
   AlertResolveRequest,
   AlertItem,
   DepositCreate,
+  FixIncompletePayload,
+  FixIncompleteResponse,
   ClientDataStatusResponse,
   ClientDataImportJobAccepted,
   ClientDataImportJobStatus,
@@ -166,6 +170,18 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     }),
+  updateExpense: (id: string, payload: ExpenseUpdate) =>
+    request<import('../types').Expense>(`/expenses/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }),
+  updateDeposit: (id: string, payload: DepositUpdate) =>
+    request<import('../types').Deposit>(`/deposits/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }),
   analyzeUpload: (
     file: File,
     options?: {
@@ -201,6 +217,12 @@ export const api = {
     }),
   resolveAlert: (alertId: string, payload: AlertResolveRequest) =>
     request<AlertItem>(`/alerts/${encodeURIComponent(alertId)}/resolve`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }),
+  fixIncompleteTransaction: (payload: FixIncompletePayload) =>
+    request<FixIncompleteResponse>('/alerts/fix-incomplete', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),

@@ -9,9 +9,11 @@ from app.schemas import (
     AlertRead,
     AlertResolveRequest,
     AlertSummary,
+    FixIncompletePayload,
 )
 from app.services.alert_service import (
     dismiss_alert,
+    fix_incomplete_transaction,
     get_alert_summary,
     list_alerts,
     resolve_alert,
@@ -28,6 +30,15 @@ def get_alerts(db: Session = Depends(get_db)) -> AlertListResponse:
 @router.get("/summary", response_model=AlertSummary)
 def alerts_summary(db: Session = Depends(get_db)) -> AlertSummary:
     return get_alert_summary(db)
+
+
+@router.post("/fix-incomplete")
+def post_fix_incomplete(
+    payload: FixIncompletePayload,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Fix date/amount on an incomplete import expense or deposit (Transactions + Alerts)."""
+    return fix_incomplete_transaction(db, payload)
 
 
 @router.post("/{alert_id}/dismiss", response_model=AlertRead)

@@ -401,6 +401,208 @@ class ClientDataImportService:
             )
         )
 
+    def _import_incomplete_ledger_row(
+        self,
+        *,
+        prop: Property,
+        sheet_label: str,
+        row_number: int,
+        tx_date: date | None,
+        amount: Decimal | None,
+        inflow: Decimal | None,
+        rental_income_amount: Decimal | None,
+        section: str | None,
+        notes: str | None,
+        vendor: str | None,
+        receipt: str | None,
+        method: Any,
+        reasons: list[str],
+        counts: dict[str, int],
+        resident_paid_amount: Decimal | None = None,
+        owner_paid_amount: Decimal | None = None,
+        mip_paid_amount: Decimal | None = None,
+        nearly_cc_amount: Decimal | None = None,
+        cash_amount: Decimal | None = None,
+        other_amount: Decimal | None = None,
+    ) -> None:
+        """Import a row missing date and/or money as a needs_review transaction."""
+        sheet_slug = re.sub(r"[^A-Za-z0-9]+", "", sheet_label).lower() or "sheet"
+        reason_key = ",".join(reasons)
+        date_key = tx_date.isoformat() if tx_date else "nodate"
+        as_deposit = inflow is not None or rental_income_amount is not None
+        source, payment_method, method_ref = _map_payment(method)
+        desc_parts = [p for p in (section, notes) if p]
+        description = " | ".join(desc_parts) if desc_parts else (section or "Incomplete import")
+        category = (section or "incomplete_import")[:255]
+
+        if as_deposit:
+            store_amount = inflow if inflow is not None else (
+                rental_income_amount if rental_income_amount is not None else Decimal("0")
+            )
+            is_rental = rental_income_amount is not None and inflow is None
+            kind = "rental" if is_rental else "inflow"
+            import_key = (
+                f"mgmt:{sheet_slug}:r{row_number}:incomplete:{kind}:"
+                f"{date_key}:{store_amount}:{reason_key}"
+            )
+            if import_key in self.existing_deposit_keys:
+                self.stats.deposits_skipped += 1
+                self._record_skip(
+                    source_file=MANAGEMENT_FILE,
+                    sheet=sheet_label,
+                    row_number=row_number,
+                    reason="duplicate_deposit",
+                    prop_id=prop.client_prop_id,
+                    transaction_date=tx_date,
+                    amount=store_amount,
+                    inflow=inflow,
+                    section=section,
+                    notes=notes,
+                    details="Duplicate incomplete deposit",
+                    import_key=import_key,
+                )
+                counts["skipped"] = counts.get("skipped", 0) + 1
+                return
+
+            self.db.add(
+                Deposit(
+                    bank_account_id=None,
+                    property_id=prop.id,
+                    transaction_date=tx_date,
+                    amount=store_amount,
+                    currency=self.settings.default_currency,
+                    reference=receipt or method_ref,
+                    description=description if desc_parts else (
+                        "Rental income" if is_rental else "Owner inflow / prepaid"
+                    ),
+                    source="rental_income" if is_rental else "management_ledger",
+                    is_rental_income=is_rental,
+                    import_key=import_key,
+                    source_file=MANAGEMENT_FILE,
+                    needs_review=True,
+                    review_reasons=reason_key,
+                )
+            )
+            self.existing_deposit_keys.add(import_key)
+            self.stats.deposits_created += 1
+            counts["deposits"] = counts.get("deposits", 0) + 1
+            counts["needs_review"] = counts.get("needs_review", 0) + 1
+            if is_rental:
+                counts["rental_income"] = counts.get("rental_income", 0) + 1
+        else:
+            store_amount = next(
+                (
+                    v
+                    for v in (
+                        amount,
+                        resident_paid_amount,
+                        owner_paid_amount,
+                        mip_paid_amount,
+                        nearly_cc_amount,
+                        cash_amount,
+                        other_amount,
+                    )
+                    if v is not None
+                ),
+                Decimal("0"),
+            )
+            paid_by_resident = (
+                resident_paid_amount is not None
+                and amount is None
+                and store_amount == resident_paid_amount
+            )
+            paid_by_owner = (
+                owner_paid_amount is not None
+                and amount is None
+                and store_amount == owner_paid_amount
+            )
+            paid_by_company = (
+                mip_paid_amount is not None
+                and amount is None
+                and store_amount == mip_paid_amount
+            )
+            ledger_column = None
+            if amount is None and store_amount == nearly_cc_amount and nearly_cc_amount is not None:
+                ledger_column = "nearly_cc"
+                source, payment_method = "credit_card", "credit_card"
+            elif amount is None and store_amount == cash_amount and cash_amount is not None:
+                ledger_column = "cash"
+                source, payment_method = "management_ledger", "cash"
+            elif amount is None and store_amount == other_amount and other_amount is not None:
+                ledger_column = "other"
+                source, payment_method = "management_ledger", "company_account"
+            if paid_by_resident or paid_by_owner:
+                source, payment_method = "manual_owner", "owner_personal"
+            elif paid_by_company:
+                source, payment_method = "manual_company", "company_account"
+
+            import_key = (
+                f"mgmt:{sheet_slug}:r{row_number}:incomplete:expense:"
+                f"{date_key}:{store_amount}:{reason_key}"
+            )
+            if import_key in self.existing_expense_keys:
+                self.stats.expenses_skipped += 1
+                self._record_skip(
+                    source_file=MANAGEMENT_FILE,
+                    sheet=sheet_label,
+                    row_number=row_number,
+                    reason="duplicate_expense",
+                    prop_id=prop.client_prop_id,
+                    transaction_date=tx_date,
+                    amount=store_amount,
+                    section=section,
+                    notes=notes,
+                    details="Duplicate incomplete expense",
+                    import_key=import_key,
+                )
+                counts["skipped"] = counts.get("skipped", 0) + 1
+                return
+
+            self.db.add(
+                Expense(
+                    property_id=prop.id,
+                    transaction_date=tx_date,
+                    amount=store_amount,
+                    currency=self.settings.default_currency,
+                    category=category,
+                    source=source,
+                    payment_method=payment_method,
+                    vendor_name=vendor,
+                    reference=method_ref or receipt,
+                    description=description,
+                    notes=notes,
+                    receipt_ref=receipt,
+                    reconciled=False,
+                    paid_by_resident=paid_by_resident,
+                    paid_by_company=paid_by_company,
+                    paid_by_owner=paid_by_owner,
+                    ledger_column=ledger_column,
+                    import_key=import_key,
+                    source_file=MANAGEMENT_FILE,
+                    needs_review=True,
+                    review_reasons=reason_key,
+                )
+            )
+            self.existing_expense_keys.add(import_key)
+            self.stats.expenses_created += 1
+            counts["expenses"] = counts.get("expenses", 0) + 1
+            counts["needs_review"] = counts.get("needs_review", 0) + 1
+
+        self._record_skip(
+            source_file=MANAGEMENT_FILE,
+            sheet=sheet_label,
+            row_number=row_number,
+            reason="imported_needs_review",
+            prop_id=prop.client_prop_id,
+            transaction_date=tx_date,
+            amount=store_amount if not as_deposit else None,
+            inflow=store_amount if as_deposit else inflow,
+            section=section,
+            notes=notes,
+            details=f"Imported incomplete ({reason_key})",
+            import_key=import_key,
+        )
+
     def _ensure_company_owner_and_buffer(self) -> None:
         owner = self.db.scalars(
             select(Owner).where(Owner.name == COMPANY_OWNER_NAME)
@@ -757,27 +959,62 @@ class ClientDataImportService:
             reconciled = _is_truthy_reconciled(col("reconciled"))
 
             if tx_date is None:
-                # Starting balance / header-like rows
-                reason = (
-                    "starting_balance"
-                    if section and "starting" in section.lower()
-                    else "missing_date"
+                # Starting balance / header-like rows stay skipped
+                if section and "starting" in section.lower():
+                    counts["skipped"] += 1
+                    self._record_skip(
+                        source_file=MANAGEMENT_FILE,
+                        sheet=sheet_label,
+                        row_number=row_number,
+                        reason="starting_balance",
+                        prop_id=prop.client_prop_id,
+                        transaction_date=col("date"),
+                        amount=amount,
+                        inflow=inflow,
+                        section=section,
+                        notes=notes,
+                        details="Starting-balance / opening row (intentionally skipped)",
+                    )
+                    continue
+
+                reasons = ["missing_date"]
+                has_money = any(
+                    v is not None
+                    for v in (
+                        amount,
+                        inflow,
+                        resident_paid_amount,
+                        owner_paid_amount,
+                        mip_paid_amount,
+                        nearly_cc_amount,
+                        cash_amount,
+                        other_amount,
+                        rental_income_amount,
+                    )
                 )
-                counts["skipped"] += 1
-                if reason == "missing_date":
-                    self.stats.rows_skipped_empty += 1
-                self._record_skip(
-                    source_file=MANAGEMENT_FILE,
-                    sheet=sheet_label,
+                if not has_money:
+                    reasons.append("no_money_columns")
+                self._import_incomplete_ledger_row(
+                    prop=prop,
+                    sheet_label=sheet_label,
                     row_number=row_number,
-                    reason=reason,
-                    prop_id=prop.client_prop_id,
-                    transaction_date=col("date"),
+                    tx_date=None,
                     amount=amount,
                     inflow=inflow,
+                    rental_income_amount=rental_income_amount,
+                    resident_paid_amount=resident_paid_amount,
+                    owner_paid_amount=owner_paid_amount,
+                    mip_paid_amount=mip_paid_amount,
+                    nearly_cc_amount=nearly_cc_amount,
+                    cash_amount=cash_amount,
+                    other_amount=other_amount,
                     section=section,
                     notes=notes,
-                    details="Row has no usable transaction date",
+                    vendor=vendor,
+                    receipt=receipt,
+                    method=method,
+                    reasons=reasons,
+                    counts=counts,
                 )
                 continue
 
@@ -793,18 +1030,21 @@ class ClientDataImportService:
                 and other_amount is None
                 and rental_income_amount is None
             ):
-                counts["skipped"] += 1
-                self.stats.rows_skipped_empty += 1
-                self._record_skip(
-                    source_file=MANAGEMENT_FILE,
-                    sheet=sheet_label,
+                self._import_incomplete_ledger_row(
+                    prop=prop,
+                    sheet_label=sheet_label,
                     row_number=row_number,
-                    reason="no_money_columns",
-                    prop_id=prop.client_prop_id,
-                    transaction_date=tx_date,
+                    tx_date=tx_date,
+                    amount=None,
+                    inflow=None,
+                    rental_income_amount=None,
                     section=section,
                     notes=notes,
-                    details="Date present but Amount/Inflow/paid columns are empty",
+                    vendor=vendor,
+                    receipt=receipt,
+                    method=method,
+                    reasons=["no_money_columns"],
+                    counts=counts,
                 )
                 continue
 
@@ -825,9 +1065,10 @@ class ClientDataImportService:
                 ledger_column: str | None = None,
                 count_key: str | None = None,
             ) -> None:
+                date_key = tx_date.isoformat() if tx_date else "nodate"
                 import_key = (
                     f"mgmt:{sheet_slug}:r{row_number}:{key_kind}:"
-                    f"{tx_date.isoformat()}:{exp_amount}"
+                    f"{date_key}:{exp_amount}"
                 )
                 if import_key in self.existing_expense_keys:
                     self.stats.expenses_skipped += 1

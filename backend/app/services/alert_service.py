@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from decimal import Decimal
 from uuid import UUID
 
 from fastapi import HTTPException
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.models.alert_action import AlertAction
+from app.models.deposit import Deposit
+from app.models.expense import Expense
 from app.models.owner import Owner
 from app.models.property import Property
 from app.models.uploaded_document import UploadedDocument
@@ -17,6 +20,7 @@ from app.schemas import (
     AlertResolveRequest,
     AlertSummary,
     DepositCreate,
+    FixIncompletePayload,
     TransactionDraft,
 )
 from app.services.deposit_query import create_deposit, find_deposit_gaps
@@ -34,6 +38,26 @@ def _gap_alert_key(property_id: UUID, period_start: date) -> str:
 
 def _upload_alert_key(upload_id: UUID) -> str:
     return f"upload_pending:{upload_id}"
+
+
+def _incomplete_expense_key(expense_id: UUID) -> str:
+    return f"incomplete_import:expense:{expense_id}"
+
+
+def _incomplete_deposit_key(deposit_id: UUID) -> str:
+    return f"incomplete_import:deposit:{deposit_id}"
+
+
+def _missing_fields_message(reasons: str | None, tx_date: date | None, amount: Decimal) -> str:
+    parts: list[str] = []
+    reason_set = {r.strip() for r in (reasons or "").split(",") if r.strip()}
+    if "missing_date" in reason_set or tx_date is None:
+        parts.append("missing date")
+    if "no_money_columns" in reason_set or amount <= 0:
+        parts.append("missing amount")
+    if not parts:
+        parts.append("needs review")
+    return "Incomplete import: " + " and ".join(parts)
 
 
 def list_alerts(db: Session) -> AlertListResponse:
@@ -126,6 +150,76 @@ def list_alerts(db: Session) -> AlertListResponse:
             )
         )
 
+    incomplete_expenses = db.scalars(
+        select(Expense)
+        .options(joinedload(Expense.property).joinedload(Property.owner))
+        .where(Expense.needs_review.is_(True))
+        .order_by(Expense.created_at.desc())
+    ).unique().all()
+
+    for expense in incomplete_expenses:
+        alert_id = _incomplete_expense_key(expense.id)
+        if alert_id in closed_keys:
+            continue
+        prop = expense.property
+        alerts.append(
+            AlertRead(
+                id=alert_id,
+                alert_type="incomplete_import",
+                severity="warning",
+                title=f"Incomplete expense — {prop.client_prop_id if prop else 'Unknown'}",
+                message=_missing_fields_message(
+                    expense.review_reasons, expense.transaction_date, expense.amount
+                ),
+                property_id=expense.property_id,
+                property_name=prop.name if prop else None,
+                owner_name=prop.owner.name if prop and prop.owner else None,
+                transaction_type="expense",
+                expense_id=expense.id,
+                transaction_date=expense.transaction_date,
+                amount=expense.amount,
+                section=expense.category,
+                notes=expense.notes,
+                review_reasons=expense.review_reasons,
+                created_at=expense.created_at,
+            )
+        )
+
+    incomplete_deposits = db.scalars(
+        select(Deposit)
+        .options(joinedload(Deposit.property).joinedload(Property.owner))
+        .where(Deposit.needs_review.is_(True))
+        .order_by(Deposit.created_at.desc())
+    ).unique().all()
+
+    for deposit in incomplete_deposits:
+        alert_id = _incomplete_deposit_key(deposit.id)
+        if alert_id in closed_keys:
+            continue
+        prop = deposit.property
+        alerts.append(
+            AlertRead(
+                id=alert_id,
+                alert_type="incomplete_import",
+                severity="warning",
+                title=f"Incomplete deposit — {prop.client_prop_id if prop else 'Unknown'}",
+                message=_missing_fields_message(
+                    deposit.review_reasons, deposit.transaction_date, deposit.amount
+                ),
+                property_id=deposit.property_id,
+                property_name=prop.name if prop else None,
+                owner_name=prop.owner.name if prop and prop.owner else None,
+                transaction_type="deposit",
+                deposit_id=deposit.id,
+                transaction_date=deposit.transaction_date,
+                amount=deposit.amount,
+                section=deposit.description,
+                notes=None,
+                review_reasons=deposit.review_reasons,
+                created_at=deposit.created_at,
+            )
+        )
+
     alerts.sort(
         key=lambda alert: (
             0 if alert.severity == "error" else 1 if alert.severity == "warning" else 2,
@@ -173,6 +267,60 @@ def dismiss_alert(db: Session, alert_id: str) -> AlertRead:
     return alert
 
 
+def fix_incomplete_transaction(db: Session, payload: FixIncompletePayload) -> dict:
+    """Set date/amount on an incomplete import row; clear needs_review when complete."""
+    if payload.transaction_type == "expense":
+        row = db.get(Expense, payload.id)
+        if row is None:
+            raise HTTPException(status_code=404, detail="Expense not found")
+        if not row.needs_review:
+            raise HTTPException(status_code=400, detail="Expense does not need review")
+
+        if payload.transaction_date is not None:
+            row.transaction_date = payload.transaction_date
+        if payload.amount is not None:
+            row.amount = payload.amount
+
+        if row.transaction_date is not None and row.amount > 0:
+            row.needs_review = False
+            row.review_reasons = None
+
+        db.commit()
+        db.refresh(row)
+        return {
+            "transaction_type": "expense",
+            "id": str(row.id),
+            "needs_review": row.needs_review,
+            "transaction_date": row.transaction_date.isoformat() if row.transaction_date else None,
+            "amount": str(row.amount),
+        }
+
+    row = db.get(Deposit, payload.id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Deposit not found")
+    if not row.needs_review:
+        raise HTTPException(status_code=400, detail="Deposit does not need review")
+
+    if payload.transaction_date is not None:
+        row.transaction_date = payload.transaction_date
+    if payload.amount is not None:
+        row.amount = payload.amount
+
+    if row.transaction_date is not None and row.amount > 0:
+        row.needs_review = False
+        row.review_reasons = None
+
+    db.commit()
+    db.refresh(row)
+    return {
+        "transaction_type": "deposit",
+        "id": str(row.id),
+        "needs_review": row.needs_review,
+        "transaction_date": row.transaction_date.isoformat() if row.transaction_date else None,
+        "amount": str(row.amount),
+    }
+
+
 def resolve_alert(db: Session, alert_id: str, payload: AlertResolveRequest) -> AlertRead:
     alerts = list_alerts(db)
     alert = next((item for item in alerts.items if item.id == alert_id), None)
@@ -204,6 +352,28 @@ def resolve_alert(db: Session, alert_id: str, payload: AlertResolveRequest) -> A
             alert.upload_id,
             UploadConfirmRequest(drafts=payload.drafts),
         )
+    elif alert.alert_type == "incomplete_import":
+        if payload.action != "fix_incomplete" or payload.fix_incomplete is None:
+            raise HTTPException(
+                status_code=400,
+                detail="Incomplete import alerts require action=fix_incomplete with fix payload",
+            )
+        fix = payload.fix_incomplete
+        if alert.transaction_type == "expense":
+            if fix.transaction_type != "expense" or alert.expense_id != fix.id:
+                raise HTTPException(status_code=400, detail="Fix payload does not match alert")
+        elif alert.transaction_type == "deposit":
+            if fix.transaction_type != "deposit" or alert.deposit_id != fix.id:
+                raise HTTPException(status_code=400, detail="Fix payload does not match alert")
+        else:
+            raise HTTPException(status_code=400, detail="Incomplete alert missing transaction type")
+
+        result = fix_incomplete_transaction(db, fix)
+        # Alert disappears when needs_review clears; only close permanently if still incomplete
+        if result.get("needs_review"):
+            return alert
+        # Re-fetch: if fixed, alert may already be gone — return prior snapshot
+        return alert
     else:
         raise HTTPException(status_code=400, detail="Unsupported alert type")
 

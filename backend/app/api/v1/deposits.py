@@ -6,12 +6,20 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db
-from app.schemas import DepositCreate, DepositGap, DepositListResponse, DepositRead, DepositSummary
+from app.schemas import (
+    DepositCreate,
+    DepositGap,
+    DepositListResponse,
+    DepositRead,
+    DepositSummary,
+    DepositUpdate,
+)
 from app.services.deposit_query import (
     create_deposit,
     find_deposit_gaps,
     get_deposit_summary,
     list_deposits,
+    update_deposit,
 )
 
 router = APIRouter(prefix="/deposits", tags=["deposits"])
@@ -96,3 +104,12 @@ def deposit_gaps(
         date_from=date_from,
         date_to=date_to,
     )
+
+
+@router.patch("/{deposit_id}", response_model=DepositRead)
+def patch_deposit(
+    deposit_id: UUID,
+    payload: DepositUpdate,
+    db: Session = Depends(get_db),
+) -> DepositRead:
+    return update_deposit(db, deposit_id, payload)

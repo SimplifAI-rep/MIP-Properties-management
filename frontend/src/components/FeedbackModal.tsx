@@ -5,9 +5,11 @@ import { api } from '../api/client';
 type FeedbackModalProps = {
   open: boolean;
   onClose: () => void;
+  /** Prefills the message when the modal opens. */
+  initialMessage?: string;
 };
 
-export function FeedbackModal({ open, onClose }: FeedbackModalProps) {
+export function FeedbackModal({ open, onClose, initialMessage }: FeedbackModalProps) {
   const titleId = useId();
   const [message, setMessage] = useState('');
   const [name, setName] = useState('');
@@ -25,11 +27,14 @@ export function FeedbackModal({ open, onClose }: FeedbackModalProps) {
   useEffect(() => {
     if (open) {
       setSent(false);
-      setMessage('');
+      setMessage(initialMessage ?? '');
       setName('');
       setEmail('');
+      mutation.reset();
     }
-  }, [open]);
+    // Only reset when the modal opens (or prefill changes while opening)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- avoid resetting mid-edit on mutation identity
+  }, [open, initialMessage]);
 
   if (!open) return null;
 
@@ -62,7 +67,9 @@ export function FeedbackModal({ open, onClose }: FeedbackModalProps) {
               Send feedback
             </h3>
             <p className="page-desc mt-1">
-              Report a problem or suggest an improvement. We will review it by email.
+              {initialMessage
+                ? 'Transaction details are included below. Add your note and send.'
+                : 'Report a problem or suggest an improvement. We will review it by email.'}
             </p>
           </div>
           <button type="button" className="btn-secondary text-xs" onClick={onClose}>
@@ -84,7 +91,7 @@ export function FeedbackModal({ open, onClose }: FeedbackModalProps) {
               <textarea
                 required
                 minLength={3}
-                rows={5}
+                rows={initialMessage ? 10 : 5}
                 value={message}
                 onChange={(event) => setMessage(event.target.value)}
                 placeholder="What should we know or improve?"

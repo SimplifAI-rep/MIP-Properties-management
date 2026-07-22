@@ -15,6 +15,7 @@ import { SearchableMultiSelect } from '../components/ui/SearchableMultiSelect';
 import { DateInputDMY } from '../components/ui/DateInputDMY';
 import { Tooltip } from '../components/ui/Tooltip';
 import { TransactionUploadPanel } from '../components/TransactionUploadPanel';
+import { useFeedback } from '../context/FeedbackContext';
 import { todayISO } from '../utils/dateFormat';
 
 type TransactionKind = 'deposit' | 'expense';
@@ -214,6 +215,43 @@ function rowToEditForm(row: UnifiedTransaction): TransactionEditForm {
   };
 }
 
+function formatTransactionFeedback(row: UnifiedTransaction): string {
+  const lines = [
+    'Feedback about this transaction:',
+    '',
+    '',
+    '',
+    '--- Transaction ---',
+    `Type: ${row.kind === 'deposit' ? 'Deposit' : 'Expense'}`,
+    `ID: ${row.id}`,
+    `Prop ID: ${row.client_prop_id}`,
+    `Property: ${row.property_name}`,
+    `Owner: ${row.owner_name}`,
+    `Date: ${row.transaction_date ?? 'Missing date'}`,
+    `Section: ${row.section}`,
+    `Notes: ${row.notes || '—'}`,
+    `Amount: ${row.amount} ${row.currency}`,
+    `Company: ${row.company || '—'}`,
+  ];
+  if (row.kind === 'expense') {
+    if (row.payment_method) lines.push(`Method: ${row.payment_method}`);
+    if (row.source) lines.push(`Source: ${row.source}`);
+    if (row.paid_by_resident) lines.push('Flag: He/She paid');
+    if (row.paid_by_owner) lines.push('Flag: Owner paid');
+    if (row.paid_by_company) lines.push('Flag: MIP paid');
+    if (row.ledger_column) lines.push(`Ledger column: ${row.ledger_column}`);
+  } else {
+    if (row.is_rental_income) lines.push('Flag: Rental income');
+    if (row.source) lines.push(`Source: ${row.source}`);
+  }
+  if (row.needs_review) {
+    lines.push(`Needs review: yes (${row.review_reasons || 'unspecified'})`);
+  }
+  if (row.source_file) lines.push(`Source file: ${row.source_file}`);
+  lines.push('-------------------');
+  return lines.join('\n');
+}
+
 
 function downloadCsv(rows: Record<string, string | number | null>[], filename: string) {
   if (rows.length === 0) return;
@@ -241,6 +279,7 @@ function downloadCsv(rows: Record<string, string | number | null>[], filename: s
 export function TransactionsPage() {
   const location = useLocation();
   const queryClient = useQueryClient();
+  const { openFeedback } = useFeedback();
   const [kinds, setKinds] = useState<TypeFilterKind[]>(['deposit', 'expense']);
   const [page, setPage] = useState(1);
   const [propertyIds, setPropertyIds] = useState<string[]>([]);
@@ -1212,7 +1251,7 @@ export function TransactionsPage() {
                 <th className="px-5 py-3 font-medium">
                   <Tooltip content="Linked receipt (Excel Reciept), if uploaded.">Receipt</Tooltip>
                 </th>
-                <th className="px-5 py-3 font-medium">Edit</th>
+                <th className="px-5 py-3 font-medium">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -1385,23 +1424,38 @@ export function TransactionsPage() {
                         )}
                       </td>
                       <td className="px-5 py-3 whitespace-nowrap">
-                        {isEditing ? (
-                          <button
-                            type="button"
-                            className="btn-secondary text-xs"
-                            onClick={cancelEdit}
-                          >
-                            Close
-                          </button>
-                        ) : (
-                          <button
-                            type="button"
-                            className="btn-secondary text-xs"
-                            onClick={() => openEdit(row)}
-                          >
-                            Edit
-                          </button>
-                        )}
+                        <div className="flex flex-col gap-1">
+                          {isEditing ? (
+                            <button
+                              type="button"
+                              className="btn-secondary text-xs"
+                              onClick={cancelEdit}
+                            >
+                              Close
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              className="btn-secondary text-xs"
+                              onClick={() => openEdit(row)}
+                            >
+                              Edit
+                            </button>
+                          )}
+                          <Tooltip content="Send feedback about this row (details included in the email).">
+                            <button
+                              type="button"
+                              className="btn-secondary text-xs"
+                              onClick={() =>
+                                openFeedback({
+                                  initialMessage: formatTransactionFeedback(row),
+                                })
+                              }
+                            >
+                              Feedback
+                            </button>
+                          </Tooltip>
+                        </div>
                       </td>
                     </tr>
                     {isEditing ? (

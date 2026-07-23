@@ -214,3 +214,48 @@ def test_rule_parser_detects_expense_domain(db):
     assert intent.search_text == "electric"
     assert intent.category is None
     assert intent.query_type == "list"
+
+
+def test_rule_parser_source_file_and_review_filters(db):
+    service = AIQueryService(db)
+    intent = service._parse_with_rules(
+        "Show expenses from source file Bank Account example.xlsx"
+    )
+    assert intent.domain == "expenses"
+    assert intent.source_file == "Bank Account example.xlsx"
+
+    mixed = service._parse_with_rules(
+        "Show transactions from source file Bank Account example.xlsx"
+    )
+    assert mixed.domain == "transactions"
+    assert mixed.source_file == "Bank Account example.xlsx"
+
+    review = service._parse_with_rules("List incomplete imports that need review")
+    assert review.domain == "transactions"
+    assert review.needs_review is True
+
+    rental = service._parse_with_rules("Show rental income deposits this year")
+    assert rental.domain == "deposits"
+    assert rental.is_rental_income is True
+
+    he_she = service._parse_with_rules("List He/She paid expenses in 2026")
+    assert he_she.domain == "expenses"
+    assert he_she.paid_by_resident is True
+
+    prop_id = service._parse_with_rules("Expenses for Prop ID BUFFER")
+    assert prop_id.domain == "expenses"
+    assert prop_id.client_prop_id == "BUFFER"
+
+
+def test_transactions_domain_list(client, db):
+    response = client.post(
+        "/api/v1/ai/query",
+        json={"question": "Show transactions from source file Bank Account example.xlsx"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["query_used"]["domain"] == "transactions"
+    assert body["query_used"]["query_type"] == "list"
+    assert "transaction" in body["answer"].lower()
+    for row in body["data"]:
+        assert row["kind"] in {"deposit", "expense"}

@@ -6,6 +6,7 @@ import {
   Card,
   EmptyState,
   ErrorState,
+  InlineError,
   formatCurrency,
   formatDate,
   LoadingState,
@@ -13,6 +14,7 @@ import {
 import { Tooltip } from '../components/ui/Tooltip';
 import { DateInputDMY } from '../components/ui/DateInputDMY';
 import { EXPENSE_CATEGORIES as CATEGORIES } from '../constants/expenseOptions';
+import { validationError } from '../utils/errors';
 
 function label(value: string) {
   return value.replace(/_/g, ' ');
@@ -63,7 +65,7 @@ export function AlertsPage() {
   const [checkedIds, setCheckedIds] = useState<string[]>([]);
   const [depositForm, setDepositForm] = useState<DepositCreate | null>(null);
   const [drafts, setDrafts] = useState<TransactionDraft[]>([]);
-  const [actionError, setActionError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<unknown>(null);
   const [fixDate, setFixDate] = useState<string | undefined>();
   const [fixAmount, setFixAmount] = useState('');
 
@@ -100,7 +102,7 @@ export function AlertsPage() {
       setSelectedId(null);
       setActionError(null);
     },
-    onError: (error: Error) => setActionError(error.message),
+    onError: (error: Error) => setActionError(error),
   });
 
   const dismissManyMutation = useMutation({
@@ -110,7 +112,9 @@ export function AlertsPage() {
       );
       const failed = results.filter((result) => result.status === 'rejected').length;
       if (failed > 0 && failed === results.length) {
-        throw new Error(`Could not dismiss ${failed} alert(s).`);
+        throw validationError(
+          `We couldn't dismiss ${failed} alert(s). Please try again.`,
+        );
       }
       return { total: alertIds.length, failed };
     },
@@ -121,11 +125,13 @@ export function AlertsPage() {
       setSelectedId(null);
       setActionError(
         result.failed > 0
-          ? `Dismissed ${result.total - result.failed} of ${result.total}; ${result.failed} failed.`
+          ? validationError(
+              `Dismissed ${result.total - result.failed} of ${result.total}; ${result.failed} could not be dismissed.`,
+            )
           : null,
       );
     },
-    onError: (error: Error) => setActionError(error.message),
+    onError: (error: Error) => setActionError(error),
   });
 
   const resolveMutation = useMutation({
@@ -138,12 +144,15 @@ export function AlertsPage() {
       queryClient.invalidateQueries({ queryKey: ['expenses'] });
       queryClient.invalidateQueries({ queryKey: ['deposit-summary'] });
       queryClient.invalidateQueries({ queryKey: ['expense-summary'] });
+      queryClient.invalidateQueries({ queryKey: ['deposit-summary-rental'] });
+      queryClient.invalidateQueries({ queryKey: ['expense-summary-heshe'] });
+      queryClient.invalidateQueries({ queryKey: ['expense-summary-owner'] });
       setSelectedId(null);
       setDepositForm(null);
       setDrafts([]);
       setActionError(null);
     },
-    onError: (error: Error) => setActionError(error.message),
+    onError: (error: Error) => setActionError(error),
   });
 
   const fixIncompleteMutation = useMutation({
@@ -155,10 +164,13 @@ export function AlertsPage() {
       queryClient.invalidateQueries({ queryKey: ['expenses'] });
       queryClient.invalidateQueries({ queryKey: ['deposit-summary'] });
       queryClient.invalidateQueries({ queryKey: ['expense-summary'] });
+      queryClient.invalidateQueries({ queryKey: ['deposit-summary-rental'] });
+      queryClient.invalidateQueries({ queryKey: ['expense-summary-heshe'] });
+      queryClient.invalidateQueries({ queryKey: ['expense-summary-owner'] });
       setSelectedId(null);
       setActionError(null);
     },
-    onError: (error: Error) => setActionError(error.message),
+    onError: (error: Error) => setActionError(error),
   });
 
   const selectAlert = (alert: AlertItem) => {
@@ -232,7 +244,12 @@ export function AlertsPage() {
 
   if (alertsQuery.isLoading) return <LoadingState />;
   if (alertsQuery.isError) {
-    return <ErrorState message="Could not load alerts from the API." />;
+    return (
+      <ErrorState
+        message="We couldn't load alerts. Please try again in a moment."
+        error={alertsQuery.error}
+      />
+    );
   }
 
   const bulkBusy = dismissManyMutation.isPending;
@@ -286,9 +303,7 @@ export function AlertsPage() {
         />
       </div>
 
-      {actionError && !selectedAlert ? (
-        <p className="shrink-0 text-negative text-sm">{actionError}</p>
-      ) : null}
+      {actionError && !selectedAlert ? <InlineError error={actionError} /> : null}
 
       <div className="grid min-h-0 flex-1 gap-4 xl:grid-cols-[1.4fr_1fr]">
         <section className="panel flex min-h-0 flex-col overflow-hidden">
@@ -399,11 +414,13 @@ export function AlertsPage() {
                         ? selectedAlert.expense_id
                         : selectedAlert.deposit_id;
                     if (!txId || !selectedAlert.transaction_type) {
-                      setActionError('Alert is missing transaction id.');
+                      setActionError(validationError('This alert is missing a transaction link.'));
                       return;
                     }
                     if (!fixDate || !fixAmount || Number(fixAmount) <= 0) {
-                      setActionError('Date (dd/mm/yyyy) and amount greater than 0 are required.');
+                      setActionError(
+                        validationError('Please enter a date (dd/mm/yyyy) and an amount greater than 0.'),
+                      );
                       return;
                     }
                     fixIncompleteMutation.mutate({
@@ -487,7 +504,7 @@ export function AlertsPage() {
                   onSubmit={(event) => {
                     event.preventDefault();
                     if (!depositForm.bank_account_id) {
-                      setActionError('Select a bank account.');
+                      setActionError(validationError('Please select a bank account.'));
                       return;
                     }
                     resolveMutation.mutate({
@@ -753,7 +770,7 @@ export function AlertsPage() {
                 </button>
               ) : null}
 
-              {actionError ? <p className="text-negative text-sm">{actionError}</p> : null}
+              {actionError ? <InlineError error={actionError} /> : null}
             </div>
           )}
         </section>

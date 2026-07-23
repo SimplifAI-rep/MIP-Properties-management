@@ -224,6 +224,7 @@ class DepositQueryIntent(BaseModel):
     domain: str = "deposits"
     property_id: UUID | None = None
     property_name: str | None = None
+    client_prop_id: str | None = None
     owner_id: UUID | None = None
     owner_name: str | None = None
     date_from: date | None = None
@@ -239,6 +240,13 @@ class DepositQueryIntent(BaseModel):
     source: str | None = None
     payment_method: str | None = None
     search_text: str | None = None
+    source_file: str | None = None
+    needs_review: bool | None = None
+    is_rental_income: bool | None = None
+    paid_by_resident: bool | None = None
+    paid_by_owner: bool | None = None
+    paid_by_company: bool | None = None
+    ledger_column: str | None = None
 
 
 class AIQueryRequest(BaseModel):

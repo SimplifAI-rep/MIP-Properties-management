@@ -11,13 +11,46 @@ import {
   LoadingState,
 } from '../components/ui/States';
 import { Tooltip } from '../components/ui/Tooltip';
+import { useFeedback } from '../context/FeedbackContext';
+import type { Property } from '../types';
 import {
   ownerTransactionsState,
   propertyTransactionsState,
 } from '../utils/transactionsNav';
 
+function formatPropertyFeedback(property: Property): string {
+  return [
+    'Feedback about this property:',
+    `Property: ${property.name}`,
+    `Prop ID: ${property.client_prop_id}`,
+    `Property UUID: ${property.id}`,
+    `Owner: ${property.owner_name}`,
+    `Status: ${property.status}`,
+    `Incoming: ${property.total_incoming ?? '0'}`,
+    `Outgoing: ${property.total_outgoing ?? '0'}`,
+    `Net: ${property.net_balance ?? '0'}`,
+  ].join('\n');
+}
+
+const feedbackIcon = (
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    viewBox="0 0 20 20"
+    fill="currentColor"
+    className="h-4 w-4"
+    aria-hidden="true"
+  >
+    <path
+      fillRule="evenodd"
+      d="M10 2c-2.236 0-4.43.18-6.512.512C2.35 2.718 1.5 3.958 1.5 5.373v4.254c0 1.415.85 2.655 1.988 2.86 1.113.178 2.259.3 3.418.364V16.5a.75.75 0 0 0 1.28.53l2.754-2.753A32.978 32.978 0 0 0 10 14c2.236 0 4.43-.18 6.512-.512 1.138-.205 1.988-1.445 1.988-2.86V5.373c0-1.415-.85-2.655-1.988-2.86A33.001 33.001 0 0 0 10 2Zm0 5a1 1 0 1 0 0 2 1 1 0 0 0 0-2ZM7 8a1 1 0 1 1-2 0 1 1 0 0 1 2 0Zm6 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0Z"
+      clipRule="evenodd"
+    />
+  </svg>
+);
+
 export function PropertiesPage() {
   const navigate = useNavigate();
+  const { openFeedback } = useFeedback();
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
   const propertiesQuery = useQuery({
@@ -33,7 +66,12 @@ export function PropertiesPage() {
 
   if (propertiesQuery.isLoading) return <LoadingState />;
   if (propertiesQuery.isError) {
-    return <ErrorState message="Could not load properties from the API." />;
+    return (
+      <ErrorState
+        message="We couldn't load properties. Please try again in a moment."
+        error={propertiesQuery.error}
+      />
+    );
   }
 
   const properties = propertiesQuery.data ?? [];
@@ -130,16 +168,33 @@ export function PropertiesPage() {
                     </td>
                     <td className="px-5 py-3 capitalize">{property.status}</td>
                     <td className="px-5 py-3">
-                      <button
-                        type="button"
-                        className="btn-secondary text-xs"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          setSelectedId(property.id);
-                        }}
-                      >
-                        Details
-                      </button>
+                      <div className="flex flex-wrap items-center gap-1">
+                        <button
+                          type="button"
+                          className="btn-secondary text-xs"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setSelectedId(property.id);
+                          }}
+                        >
+                          Details
+                        </button>
+                        <Tooltip content="Feedback" hideHint>
+                          <button
+                            type="button"
+                            className="btn-icon"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              openFeedback({
+                                initialMessage: formatPropertyFeedback(property),
+                              });
+                            }}
+                            aria-label="Send feedback"
+                          >
+                            {feedbackIcon}
+                          </button>
+                        </Tooltip>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -161,7 +216,11 @@ export function PropertiesPage() {
           ) : detailQuery.isLoading ? (
             <LoadingState label="Loading property..." />
           ) : detailQuery.isError || !detailQuery.data ? (
-            <ErrorState message="Could not load property details." />
+            <ErrorState
+              message="We couldn't load this property's details. Please try again."
+              error={detailQuery.error}
+              report={detailQuery.isError}
+            />
           ) : (
             <div className="space-y-4">
               <div>
@@ -171,16 +230,32 @@ export function PropertiesPage() {
                   Prop ID: {detailQuery.data.client_prop_id}
                 </p>
               </div>
-              <Link
-                to="/transactions"
-                state={propertyTransactionsState(
-                  detailQuery.data.id,
-                  detailQuery.data.client_prop_id,
-                )}
-                className="btn-primary inline-flex"
-              >
-                View transactions
-              </Link>
+              <div className="flex flex-wrap gap-2">
+                <Link
+                  to="/transactions"
+                  state={propertyTransactionsState(
+                    detailQuery.data.id,
+                    detailQuery.data.client_prop_id,
+                  )}
+                  className="btn-primary inline-flex"
+                >
+                  View transactions
+                </Link>
+                <Tooltip content="Feedback" hideHint>
+                  <button
+                    type="button"
+                    className="btn-icon"
+                    onClick={() =>
+                      openFeedback({
+                        initialMessage: formatPropertyFeedback(detailQuery.data),
+                      })
+                    }
+                    aria-label="Send feedback"
+                  >
+                    {feedbackIcon}
+                  </button>
+                </Tooltip>
+              </div>
               <Link
                 to="/transactions"
                 state={ownerTransactionsState(detailQuery.data.owner_id)}

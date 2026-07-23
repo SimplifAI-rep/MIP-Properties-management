@@ -8,8 +8,9 @@ import {
   PAYMENT_METHODS,
 } from '../constants/expenseOptions';
 import { DateInputDMY } from './ui/DateInputDMY';
-import { formatCurrency, formatDate } from './ui/States';
+import { formatCurrency, formatDate, InlineError } from './ui/States';
 import { Tooltip } from './ui/Tooltip';
+import { validationError } from '../utils/errors';
 
 type TransactionTypeOption = 'auto' | 'deposit' | 'expense';
 type UploadKindOption = 'receipt' | 'bank_statement' | 'credit_card';
@@ -109,7 +110,7 @@ export function TransactionUploadPanel({ properties, onClose }: TransactionUploa
   const [uploadId, setUploadId] = useState<string | null>(null);
   const [analyzeResult, setAnalyzeResult] = useState<UploadAnalyzeResponse | null>(null);
   const [drafts, setDrafts] = useState<TransactionDraft[]>([]);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   const [confirmMessage, setConfirmMessage] = useState<string | null>(null);
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
 
@@ -132,10 +133,10 @@ export function TransactionUploadPanel({ properties, onClose }: TransactionUploa
 
   const analyzeMutation = useMutation({
     mutationFn: () => {
-      if (!file) throw new Error('Select a file first.');
+      if (!file) throw validationError('Please choose a file first.');
       if (statementMode) {
         if (!spreadsheet) {
-          throw new Error('Bank and credit-card uploads require an Excel file.');
+          throw validationError('Bank and credit-card uploads need an Excel file.');
         }
         return api.analyzeUpload(file, {
           uploadKind,
@@ -143,9 +144,11 @@ export function TransactionUploadPanel({ properties, onClose }: TransactionUploa
         });
       }
       if (spreadsheet) {
-        if (!propertyId) throw new Error('Select a property for Excel/CSV uploads.');
+        if (!propertyId) {
+          throw validationError('Please choose a property for Excel/CSV uploads.');
+        }
         if (transactionType === 'auto') {
-          throw new Error('Choose Expense or Deposit for Excel/CSV uploads.');
+          throw validationError('Please choose Expense or Deposit for Excel/CSV uploads.');
         }
       }
       return api.analyzeUpload(file, {
@@ -164,17 +167,17 @@ export function TransactionUploadPanel({ properties, onClose }: TransactionUploa
       setStep('confirm');
       queryClient.invalidateQueries({ queryKey: ['properties'] });
     },
-    onError: (err: Error) => setError(err.message),
+    onError: (err: Error) => setError(err),
   });
 
   const confirmMutation = useMutation({
     mutationFn: () => {
-      if (!uploadId) throw new Error('Analyze a file before confirming.');
+      if (!uploadId) throw validationError('Please analyze a file before confirming.');
       const prepared = drafts.map(prepareDraftForConfirm);
       const toSave = prepared.filter((draft) => draft.user_action !== 'ignore');
       const missingProperty = toSave.some((draft) => !draft.property_id);
       if (missingProperty) {
-        throw new Error('Select a client/property for every row you are adding.');
+        throw validationError('Please choose a client/property for every row you are adding.');
       }
       return api.confirmUpload(uploadId, prepared);
     },
@@ -183,6 +186,9 @@ export function TransactionUploadPanel({ properties, onClose }: TransactionUploa
       queryClient.invalidateQueries({ queryKey: ['expenses'] });
       queryClient.invalidateQueries({ queryKey: ['deposit-summary'] });
       queryClient.invalidateQueries({ queryKey: ['expense-summary'] });
+      queryClient.invalidateQueries({ queryKey: ['deposit-summary-rental'] });
+      queryClient.invalidateQueries({ queryKey: ['expense-summary-heshe'] });
+      queryClient.invalidateQueries({ queryKey: ['expense-summary-owner'] });
       queryClient.invalidateQueries({ queryKey: ['alerts'] });
       queryClient.invalidateQueries({ queryKey: ['alert-summary'] });
       const parts = [
@@ -196,7 +202,12 @@ export function TransactionUploadPanel({ properties, onClose }: TransactionUploa
       ].filter(Boolean);
       setConfirmMessage(parts.join(', ') || 'Nothing imported.');
       if (result.errors.length) {
-        setError(result.errors.join('; '));
+        setError(
+          validationError(
+            result.errors.join('; ') ||
+              'Some rows could not be imported. Check the messages and try again.',
+          ),
+        );
       } else {
         setError(null);
         setDrafts([]);
@@ -207,7 +218,7 @@ export function TransactionUploadPanel({ properties, onClose }: TransactionUploa
         onClose();
       }
     },
-    onError: (err: Error) => setError(err.message),
+    onError: (err: Error) => setError(err),
   });
 
   const reviewStats = useMemo(() => {
@@ -1008,7 +1019,7 @@ export function TransactionUploadPanel({ properties, onClose }: TransactionUploa
       ) : null}
 
       {confirmMessage ? <p className="text-positive text-sm">{confirmMessage}</p> : null}
-      {error ? <p className="text-negative text-sm">{error}</p> : null}
+      {error ? <InlineError error={error} /> : null}
     </section>
   );
 }

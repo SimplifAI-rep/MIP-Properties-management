@@ -34,16 +34,17 @@ def send_feedback_email(
 ) -> None:
     if not feedback_email_configured(settings):
         raise FeedbackEmailError(
-            "Feedback email is not configured. Set FEEDBACK_TO_EMAIL and SMTP_* env vars."
+            "Feedback email is not configured. Please contact your administrator."
         )
 
-    subject_bits = ["SimplifAI feedback"]
-    if name:
+    is_auto_error = (name or "").strip().lower().startswith("simplifai automatic error")
+    subject_bits = ["SimplifAI error report" if is_auto_error else "SimplifAI feedback"]
+    if name and not is_auto_error:
         subject_bits.append(f"from {name}")
     subject = " ".join(subject_bits)
 
     body_lines = [
-        "New feedback from SimplifAI:",
+        "Automatic error report from SimplifAI:" if is_auto_error else "New feedback from SimplifAI:",
         "",
         message.strip(),
         "",
@@ -72,4 +73,6 @@ def send_feedback_email(
             smtp.send_message(msg)
     except Exception as exc:  # noqa: BLE001 — surface as API error
         logger.exception("Failed to send feedback email")
-        raise FeedbackEmailError("Could not send feedback email. Try again later.") from exc
+        raise FeedbackEmailError(
+            "We could not send the email right now. Please try again later."
+        ) from exc

@@ -35,6 +35,9 @@ def get_deposits(
     date_to: date | None = None,
     min_amount: Decimal | None = None,
     max_amount: Decimal | None = None,
+    source_file: str | None = None,
+    needs_review: bool | None = None,
+    is_rental_income: bool | None = None,
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=2000),
     db: Session = Depends(get_db),
@@ -48,6 +51,9 @@ def get_deposits(
         date_to=date_to,
         min_amount=min_amount,
         max_amount=max_amount,
+        source_file=source_file,
+        needs_review=needs_review,
+        is_rental_income=is_rental_income,
         page=page,
         page_size=page_size,
     )
@@ -73,6 +79,9 @@ def deposit_summary(
     date_to: date | None = None,
     min_amount: Decimal | None = None,
     max_amount: Decimal | None = None,
+    source_file: str | None = None,
+    needs_review: bool | None = None,
+    is_rental_income: bool | None = None,
     include_all: bool = False,
     db: Session = Depends(get_db),
 ) -> DepositSummary:
@@ -85,6 +94,9 @@ def deposit_summary(
         date_to=date_to,
         min_amount=min_amount,
         max_amount=max_amount,
+        source_file=source_file,
+        needs_review=needs_review,
+        is_rental_income=is_rental_income,
         include_all=include_all,
     )
     return DepositSummary(**data)

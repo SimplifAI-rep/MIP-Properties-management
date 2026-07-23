@@ -442,8 +442,8 @@ class ClientDataImportService:
             is_rental = rental_income_amount is not None and inflow is None
             kind = "rental" if is_rental else "inflow"
             import_key = (
-                f"mgmt:{sheet_slug}:r{row_number}:incomplete:{kind}:"
-                f"{date_key}:{store_amount}:{reason_key}"
+                f"mgmt:{sheet_slug}:incomplete:{kind}:"
+                f"{date_key}:{store_amount}:{reason_key}:{prop.client_prop_id}"
             )
             if import_key in self.existing_deposit_keys:
                 self.stats.deposits_skipped += 1
@@ -537,8 +537,8 @@ class ClientDataImportService:
                 source, payment_method = "manual_company", "company_account"
 
             import_key = (
-                f"mgmt:{sheet_slug}:r{row_number}:incomplete:expense:"
-                f"{date_key}:{store_amount}:{reason_key}"
+                f"mgmt:{sheet_slug}:incomplete:expense:"
+                f"{date_key}:{store_amount}:{reason_key}:{prop.client_prop_id}:{section[:40]}"
             )
             if import_key in self.existing_expense_keys:
                 self.stats.expenses_skipped += 1
@@ -1067,8 +1067,8 @@ class ClientDataImportService:
             ) -> None:
                 date_key = tx_date.isoformat() if tx_date else "nodate"
                 import_key = (
-                    f"mgmt:{sheet_slug}:r{row_number}:{key_kind}:"
-                    f"{date_key}:{exp_amount}"
+                    f"mgmt:{sheet_slug}:{key_kind}:"
+                    f"{date_key}:{exp_amount}:{prop.client_prop_id}:{section[:40]}"
                 )
                 if import_key in self.existing_expense_keys:
                     self.stats.expenses_skipped += 1
@@ -1189,7 +1189,10 @@ class ClientDataImportService:
                 )
 
             if inflow is not None:
-                import_key = f"mgmt:{sheet_slug}:r{row_number}:inflow:{tx_date.isoformat()}:{inflow}"
+                import_key = (
+                    f"mgmt:{sheet_slug}:inflow:{tx_date.isoformat()}:{inflow}:"
+                    f"{prop.client_prop_id}:{section[:40]}"
+                )
                 if import_key not in self.existing_deposit_keys:
                     self.db.add(
                         Deposit(
@@ -1228,8 +1231,8 @@ class ClientDataImportService:
             # Rental income — shown in UI, excluded from company float totals
             if rental_income_amount is not None:
                 import_key = (
-                    f"mgmt:{sheet_slug}:r{row_number}:rental:"
-                    f"{tx_date.isoformat()}:{rental_income_amount}"
+                    f"mgmt:{sheet_slug}:rental:{tx_date.isoformat()}:{rental_income_amount}:"
+                    f"{prop.client_prop_id}"
                 )
                 if import_key not in self.existing_deposit_keys:
                     self.db.add(
@@ -1390,7 +1393,7 @@ class ClientDataImportService:
                 prop = self._guess_property_from_text(full_desc) or buffer
 
                 if credit is not None:
-                    import_key = f"bank:{COMPANY_ACCOUNT_NUMBER}:r{row_number}:credit:{tx_date}:{credit}:{ref or ''}"
+                    import_key = f"bank:{COMPANY_ACCOUNT_NUMBER}:credit:{tx_date}:{credit}:{ref or ''}"
                     if import_key not in self.existing_deposit_keys:
                         self.db.add(
                             Deposit(
@@ -1424,7 +1427,7 @@ class ClientDataImportService:
                         )
 
                 if debit is not None:
-                    import_key = f"bank:{COMPANY_ACCOUNT_NUMBER}:r{row_number}:debit:{tx_date}:{debit}:{ref or ''}"
+                    import_key = f"bank:{COMPANY_ACCOUNT_NUMBER}:debit:{tx_date}:{debit}:{ref or ''}"
                     if import_key not in self.existing_expense_keys:
                         self.db.add(
                             Expense(
@@ -1570,7 +1573,7 @@ class ClientDataImportService:
                     if charge_dec < 0:
                         # Card credit / fee waiver
                         amount = abs(charge_dec).quantize(Decimal("0.01"))
-                        import_key = f"cc:{card_last4}:r{row_number}:credit:{tx_date}:{amount}"
+                        import_key = f"cc:{card_last4}:credit:{tx_date}:{amount}:{merchant}"
                         if import_key not in self.existing_deposit_keys:
                             self.db.add(
                                 Deposit(
@@ -1606,7 +1609,7 @@ class ClientDataImportService:
                     amount = charge_dec.quantize(Decimal("0.01"))
                     if amount <= 0:
                         continue
-                    import_key = f"cc:{card_last4}:r{row_number}:expense:{tx_date}:{amount}:{merchant}"
+                    import_key = f"cc:{card_last4}:expense:{tx_date}:{amount}:{merchant}"
                     if import_key not in self.existing_expense_keys:
                         self.db.add(
                             Expense(

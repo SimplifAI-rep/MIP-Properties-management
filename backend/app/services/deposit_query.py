@@ -75,6 +75,9 @@ def list_deposits(
     date_to: date | None = None,
     min_amount: Decimal | None = None,
     max_amount: Decimal | None = None,
+    source_file: str | None = None,
+    needs_review: bool | None = None,
+    is_rental_income: bool | None = None,
     page: int = 1,
     page_size: int = 50,
 ) -> tuple[list[DepositRead], int]:
@@ -109,6 +112,12 @@ def list_deposits(
         stmt = stmt.where(Deposit.amount >= min_amount)
     if max_amount is not None:
         stmt = stmt.where(Deposit.amount <= max_amount)
+    if source_file:
+        stmt = stmt.where(Deposit.source_file == source_file.strip())
+    if needs_review is not None:
+        stmt = stmt.where(Deposit.needs_review.is_(needs_review))
+    if is_rental_income is not None:
+        stmt = stmt.where(Deposit.is_rental_income.is_(is_rental_income))
 
     count_stmt = select(func.count()).select_from(stmt.subquery())
     total = db.scalar(count_stmt) or 0
@@ -148,11 +157,17 @@ def get_deposit_summary(
     date_to: date | None = None,
     min_amount: Decimal | None = None,
     max_amount: Decimal | None = None,
+    source_file: str | None = None,
+    needs_review: bool | None = None,
+    is_rental_income: bool | None = None,
     include_all: bool = False,
 ) -> dict:
     # Default: rental-income rows are informational only — exclude from company float totals
+    # Explicit is_rental_income overrides include_all default.
     filters = []
-    if not include_all:
+    if is_rental_income is not None:
+        filters.append(Deposit.is_rental_income.is_(is_rental_income))
+    elif not include_all:
         filters.append(Deposit.is_rental_income.is_(False))
 
     needs_property_join = bool(client_prop_id or owner_id)
@@ -166,6 +181,10 @@ def get_deposit_summary(
         filters.append(Deposit.amount >= min_amount)
     if max_amount is not None:
         filters.append(Deposit.amount <= max_amount)
+    if source_file:
+        filters.append(Deposit.source_file == source_file.strip())
+    if needs_review is not None:
+        filters.append(Deposit.needs_review.is_(needs_review))
 
     amount_stmt = select(func.coalesce(func.sum(Deposit.amount), 0))
     count_stmt = select(func.count()).select_from(Deposit)
@@ -215,6 +234,9 @@ def find_deposit_gaps(
     month: int | None = None,
     date_from: date | None = None,
     date_to: date | None = None,
+    property_id: UUID | None = None,
+    client_prop_id: str | None = None,
+    owner_id: UUID | None = None,
 ) -> list[DepositGap]:
     settings = get_settings()
     tolerance = Decimal(str(settings.import_amount_tolerance))
@@ -241,12 +263,22 @@ def find_deposit_gaps(
             next_month = date(today.year, today.month + 1, 1)
             period_end = next_month - timedelta(days=1)
 
-    expected_rows = db.execute(
+    expected_stmt = (
         select(ExpectedDeposit, Property, Owner)
         .join(Property, ExpectedDeposit.property_id == Property.id)
         .join(Owner, Property.owner_id == Owner.id)
         .where(ExpectedDeposit.active.is_(True))
-    ).all()
+    )
+    if property_id:
+        expected_stmt = expected_stmt.where(Property.id == property_id)
+    if client_prop_id:
+        expected_stmt = expected_stmt.where(
+            func.upper(Property.client_prop_id) == client_prop_id.strip().upper()
+        )
+    if owner_id:
+        expected_stmt = expected_stmt.where(Property.owner_id == owner_id)
+
+    expected_rows = db.execute(expected_stmt).all()
 
     gaps: list[DepositGap] = []
     for expected, prop, owner in expected_rows:

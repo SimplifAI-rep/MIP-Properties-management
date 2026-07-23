@@ -90,7 +90,9 @@ def list_alerts(db: Session) -> AlertListResponse:
         select(UploadedDocument, Property.name, Owner.name)
         .outerjoin(Property, UploadedDocument.property_id == Property.id)
         .outerjoin(Owner, UploadedDocument.owner_id == Owner.id)
-        .where(UploadedDocument.status == "pending_review")
+        .where(
+            UploadedDocument.status.in_(("pending_review", "partially_confirmed"))
+        )
         .order_by(UploadedDocument.created_at.desc())
     ).all()
 

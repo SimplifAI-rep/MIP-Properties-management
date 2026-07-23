@@ -26,7 +26,6 @@ import {
 } from '../utils/dashboardPeriod';
 
 const RECENT_LIMIT = 10;
-const FETCH_SIZE = 200;
 
 interface RecentItem {
   id: string;
@@ -186,21 +185,17 @@ export function DashboardPage() {
   const periodDepositsQuery = useQuery({
     queryKey: ['dashboard-period-deposits', period.dateFrom, period.dateTo],
     queryFn: () =>
-      api.getDeposits({
+      api.getAllDeposits({
         date_from: period.dateFrom,
         date_to: period.dateTo,
-        page: 1,
-        page_size: FETCH_SIZE,
       }),
   });
   const periodExpensesQuery = useQuery({
     queryKey: ['dashboard-period-expenses', period.dateFrom, period.dateTo],
     queryFn: () =>
-      api.getExpenses({
+      api.getAllExpenses({
         date_from: period.dateFrom,
         date_to: period.dateTo,
-        page: 1,
-        page_size: FETCH_SIZE,
       }),
   });
 
@@ -218,8 +213,13 @@ export function DashboardPage() {
 
   const propertyHealth = useMemo(() => {
     const properties = propertiesQuery.data ?? [];
-    const deposits = periodDepositsQuery.data?.items ?? [];
-    const expenses = periodExpensesQuery.data?.items ?? [];
+    // Match Excel/dashboard summary cards: exclude rental and He/She/Owner-paid.
+    const deposits = (periodDepositsQuery.data?.items ?? []).filter(
+      (deposit) => !deposit.is_rental_income,
+    );
+    const expenses = (periodExpensesQuery.data?.items ?? []).filter(
+      (expense) => !expense.paid_by_resident && !expense.paid_by_owner,
+    );
     const gaps = gapsQuery.data ?? [];
 
     const gapCountByProperty = new Map<string, number>();
@@ -273,8 +273,12 @@ export function DashboardPage() {
   ]);
 
   const ownerPeriodRows = useMemo(() => {
-    const deposits = periodDepositsQuery.data?.items ?? [];
-    const expenses = periodExpensesQuery.data?.items ?? [];
+    const deposits = (periodDepositsQuery.data?.items ?? []).filter(
+      (deposit) => !deposit.is_rental_income,
+    );
+    const expenses = (periodExpensesQuery.data?.items ?? []).filter(
+      (expense) => !expense.paid_by_resident && !expense.paid_by_owner,
+    );
     const properties = propertiesQuery.data ?? [];
     const byOwner = new Map<string, OwnerPeriodRow>();
 
@@ -345,7 +349,10 @@ export function DashboardPage() {
 
   if (depositSummaryQuery.isError || expenseSummaryQuery.isError) {
     return (
-      <ErrorState message="Could not load dashboard. Make sure the API server is running on port 8000." />
+      <ErrorState
+        message="We couldn't load the dashboard. Please check your connection and try again."
+        error={depositSummaryQuery.error ?? expenseSummaryQuery.error}
+      />
     );
   }
 
@@ -838,7 +845,14 @@ export function DashboardPage() {
             <h3 className="section-title">Recent activity — {period.label}</h3>
             <p className="section-subtitle">Latest deposits and expenses in the selected period.</p>
           </div>
-          <Link to="/transactions" className="btn-secondary text-sm">
+          <Link
+            to="/transactions"
+            state={{
+              dateFrom: period.dateFrom,
+              dateTo: period.dateTo,
+            }}
+            className="btn-secondary text-sm"
+          >
             View all
           </Link>
         </div>

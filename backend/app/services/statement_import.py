@@ -320,8 +320,6 @@ class StatementImportService:
                     continue
                 values = list(row)
                 tx_date = _parse_date(get(values, "תאריך"))
-                if tx_date is None:
-                    continue
 
                 debit = _parse_amount(get(values, "בחובה"))
                 credit = _parse_amount(get(values, "בזכות"))
@@ -344,12 +342,53 @@ class StatementImportService:
                 extended = _optional_str(get(values, "תאור מורחב"))
                 full_desc = " | ".join(p for p in (desc, extended) if p)
 
+                # Skip totally blank rows.
+                if (
+                    tx_date is None
+                    and debit is None
+                    and credit is None
+                    and not full_desc
+                    and not ref
+                ):
+                    continue
+
                 guessed = self._guess_property_from_text(full_desc)
                 prop = guessed or buffer
                 meta = self._property_meta(prop)
                 on_buffer = prop.client_prop_id == BUFFER_PROP_ID
 
+                if credit is None and debit is None:
+                    drafts.append(
+                        self._make_draft(
+                            row_number=row_number,
+                            transaction_type="expense",
+                            meta=meta,
+                            tx_date=tx_date,
+                            amount=None,
+                            description=full_desc,
+                            reference=ref,
+                            source="bank_statement",
+                            payment_method="bank_transfer",
+                            category=desc or "bank_transfer",
+                            vendor_name=None,
+                            bank_account_id=account.id,
+                            account_number=account.account_number,
+                            on_buffer=on_buffer,
+                            match_confidence="low",
+                            import_key=(
+                                f"bank:{COMPANY_ACCOUNT_NUMBER}:incomplete:"
+                                f"{tx_date or 'nodate'}:{ref or ''}:{full_desc[:80]}"
+                            ),
+                            incomplete_reasons=(
+                                (["missing_date"] if tx_date is None else [])
+                                + ["missing_amount"]
+                            ),
+                        )
+                    )
+                    continue
+
                 if credit is not None:
+                    incomplete = ["missing_date"] if tx_date is None else []
                     drafts.append(
                         self._make_draft(
                             row_number=row_number,
@@ -366,14 +405,19 @@ class StatementImportService:
                             bank_account_id=account.id,
                             account_number=account.account_number,
                             on_buffer=on_buffer,
-                            match_confidence="medium" if guessed else "low",
-                            import_key=(
-                                f"bank:{COMPANY_ACCOUNT_NUMBER}:r{row_number}:"
-                                f"credit:{tx_date}:{credit}:{ref or ''}"
+                            match_confidence=(
+                                "medium" if guessed and not incomplete else "low"
                             ),
+                            import_key=(
+                                f"bank:{COMPANY_ACCOUNT_NUMBER}:credit:"
+                                f"{tx_date or 'nodate'}:{credit}:{ref or ''}:"
+                                f"{full_desc[:60]}"
+                            ),
+                            incomplete_reasons=incomplete or None,
                         )
                     )
                 if debit is not None:
+                    incomplete = ["missing_date"] if tx_date is None else []
                     drafts.append(
                         self._make_draft(
                             row_number=row_number,
@@ -390,11 +434,15 @@ class StatementImportService:
                             bank_account_id=None,
                             account_number=None,
                             on_buffer=on_buffer,
-                            match_confidence="medium" if guessed else "low",
-                            import_key=(
-                                f"bank:{COMPANY_ACCOUNT_NUMBER}:r{row_number}:"
-                                f"debit:{tx_date}:{debit}:{ref or ''}"
+                            match_confidence=(
+                                "medium" if guessed and not incomplete else "low"
                             ),
+                            import_key=(
+                                f"bank:{COMPANY_ACCOUNT_NUMBER}:debit:"
+                                f"{tx_date or 'nodate'}:{debit}:{ref or ''}:"
+                                f"{full_desc[:60]}"
+                            ),
+                            incomplete_reasons=incomplete or None,
                         )
                     )
         finally:
@@ -454,13 +502,47 @@ class StatementImportService:
                 tx_date = _parse_date(get(values, "תאריך העסקה"))
                 merchant = _optional_str(get(values, "שם בית העסק"))
                 charge = _signed_amount(get(values, "סכום חיוב"))
-                if charge is None or tx_date is None or merchant is None:
+                if charge is None and tx_date is None and merchant is None:
                     continue
 
-                guessed = self._guess_property_from_text(merchant)
+                guessed = self._guess_property_from_text(merchant or "")
                 prop = guessed or buffer
                 meta = self._property_meta(prop)
                 on_buffer = prop.client_prop_id == BUFFER_PROP_ID
+                incomplete: list[str] = []
+                if tx_date is None:
+                    incomplete.append("missing_date")
+                if charge is None:
+                    incomplete.append("missing_amount")
+                if merchant is None:
+                    incomplete.append("missing_merchant")
+
+                if charge is None or incomplete:
+                    drafts.append(
+                        self._make_draft(
+                            row_number=row_number,
+                            transaction_type="expense",
+                            meta=meta,
+                            tx_date=tx_date,
+                            amount=abs(charge) if charge is not None else None,
+                            description=merchant,
+                            reference=None,
+                            source="credit_card",
+                            payment_method="credit_card",
+                            category=(merchant[:255] if merchant else "credit_card"),
+                            vendor_name=merchant,
+                            bank_account_id=None,
+                            account_number=None,
+                            on_buffer=on_buffer,
+                            match_confidence="low",
+                            import_key=(
+                                f"cc:{card_last4}:incomplete:"
+                                f"{tx_date or 'nodate'}:{charge}:{merchant or ''}"
+                            ),
+                            incomplete_reasons=incomplete or ["missing_amount"],
+                        )
+                    )
+                    continue
 
                 if charge < 0:
                     amount = abs(charge)
@@ -481,7 +563,9 @@ class StatementImportService:
                             account_number=account.account_number,
                             on_buffer=True if not guessed else on_buffer,
                             match_confidence="medium" if guessed else "low",
-                            import_key=f"cc:{card_last4}:r{row_number}:credit:{tx_date}:{amount}",
+                            import_key=(
+                                f"cc:{card_last4}:credit:{tx_date}:{amount}:{merchant}"
+                            ),
                         )
                     )
                     continue
@@ -505,7 +589,7 @@ class StatementImportService:
                         on_buffer=on_buffer,
                         match_confidence="medium" if guessed else "low",
                         import_key=(
-                            f"cc:{card_last4}:r{row_number}:expense:{tx_date}:{amount}:{merchant}"
+                            f"cc:{card_last4}:expense:{tx_date}:{amount}:{merchant}"
                         ),
                     )
                 )
@@ -519,8 +603,8 @@ class StatementImportService:
         row_number: int,
         transaction_type: Literal["deposit", "expense"],
         meta: dict[str, Any],
-        tx_date: date,
-        amount: Decimal,
+        tx_date: date | None,
+        amount: Decimal | None,
         description: str | None,
         reference: str | None,
         source: str,
@@ -532,8 +616,10 @@ class StatementImportService:
         on_buffer: bool,
         match_confidence: Literal["high", "medium", "low", "none"],
         import_key: str,
+        incomplete_reasons: list[str] | None = None,
     ) -> TransactionDraft:
         warnings: list[FieldWarning] = []
+        reasons = list(incomplete_reasons or [])
         if on_buffer:
             warnings.append(
                 FieldWarning(
@@ -542,6 +628,31 @@ class StatementImportService:
                     severity="warning",
                 )
             )
+        if "missing_date" in reasons:
+            warnings.append(
+                FieldWarning(
+                    field="transaction_date",
+                    message="Missing or unreadable date — fill it in before adding.",
+                    severity="error",
+                )
+            )
+        if "missing_amount" in reasons:
+            warnings.append(
+                FieldWarning(
+                    field="amount",
+                    message="Missing or unreadable amount — fill it in before adding.",
+                    severity="error",
+                )
+            )
+        if "missing_merchant" in reasons:
+            warnings.append(
+                FieldWarning(
+                    field="vendor_name",
+                    message="Missing merchant/description — fill it in before adding.",
+                    severity="warning",
+                )
+            )
+        incomplete = bool(reasons)
         return TransactionDraft(
             row_number=row_number,
             transaction_type=transaction_type,
@@ -562,14 +673,12 @@ class StatementImportService:
             reference=reference,
             description=description,
             match_confidence=match_confidence,
-            status="needs_review",
+            status="error" if incomplete else "needs_review",
             warnings=warnings,
-            user_action="add",
+            user_action="ignore" if incomplete else "add",
             is_duplicate=False,
-            # Draft status needs_review = confirm in UI. DB needs_review is only for
-            # truly incomplete rows (missing date/amount) — set on confirm if needed.
-            needs_review=False,
-            review_reasons=None,
+            needs_review=incomplete,
+            review_reasons=",".join(reasons) if reasons else None,
             import_key=import_key,
         )
 

@@ -251,7 +251,8 @@ class DocumentImportService:
                 document.owner_id = property_row.owner_id
             document.transaction_type = first_confirmed.transaction_type
 
-        document.status = "confirmed"
+        # Partial success keeps the upload open for remaining failed rows.
+        document.status = "partially_confirmed" if errors else "confirmed"
         self.db.commit()
 
         return UploadConfirmResponse(

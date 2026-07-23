@@ -111,17 +111,27 @@ export interface DepositGap {
 export interface DepositQueryIntent {
   query_type: string;
   domain?: string;
-  property_id: string | null;
-  property_name: string | null;
-  owner_id: string | null;
-  owner_name: string | null;
-  date_from: string | null;
-  date_to: string | null;
-  group_by: string | null;
-  year: number | null;
-  month: number | null;
+  property_id?: string | null;
+  property_name?: string | null;
+  client_prop_id?: string | null;
+  owner_id?: string | null;
+  owner_name?: string | null;
+  date_from?: string | null;
+  date_to?: string | null;
+  group_by?: string | null;
+  year?: number | null;
+  month?: number | null;
   category?: string | null;
   source?: string | null;
+  payment_method?: string | null;
+  search_text?: string | null;
+  source_file?: string | null;
+  needs_review?: boolean | null;
+  is_rental_income?: boolean | null;
+  paid_by_resident?: boolean | null;
+  paid_by_owner?: boolean | null;
+  paid_by_company?: boolean | null;
+  ledger_column?: string | null;
 }
 
 export interface AIQueryResponse {
@@ -139,6 +149,9 @@ export interface DepositFilters {
   date_to?: string;
   min_amount?: string;
   max_amount?: string;
+  source_file?: string;
+  needs_review?: boolean;
+  is_rental_income?: boolean;
   page?: number;
   page_size?: number;
 }
@@ -200,6 +213,13 @@ export interface ExpenseFilters {
   payment_method?: string;
   date_from?: string;
   date_to?: string;
+  min_amount?: string;
+  max_amount?: string;
+  source_file?: string;
+  needs_review?: boolean;
+  paid_by_resident?: boolean;
+  paid_by_owner?: boolean;
+  paid_by_company?: boolean;
   page?: number;
   page_size?: number;
 }

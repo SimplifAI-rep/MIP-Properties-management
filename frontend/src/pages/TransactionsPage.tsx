@@ -7,6 +7,7 @@ import {
   Card,
   EmptyState,
   ErrorState,
+  InlineError,
   formatCurrency,
   formatDate,
   LoadingState,
@@ -22,10 +23,18 @@ import {
   SECTION_SUGGESTIONS,
 } from '../constants/expenseOptions';
 import { todayISO } from '../utils/dateFormat';
+import { validationError } from '../utils/errors';
 
 type TransactionKind = 'deposit' | 'expense';
 /** Filters that match Excel money lanes + Deposit/Expense. */
-type TypeFilterKind = 'deposit' | 'expense' | 'rental_income' | 'he_she_paid';
+type TypeFilterKind =
+  | 'deposit'
+  | 'expense'
+  | 'rental_income'
+  | 'he_she_paid'
+  | 'owner_paid'
+  | 'bank_statement'
+  | 'nearly_cc';
 type AlertFilterKind = 'incomplete_import';
 type TypeFilter = 'all' | TransactionKind;
 
@@ -76,10 +85,19 @@ interface TransactionEditForm {
 
 
 function rowTypeTags(row: UnifiedTransaction): TypeFilterKind[] {
+  const tags: TypeFilterKind[] = [];
   if (row.kind === 'deposit') {
-    return row.is_rental_income ? ['rental_income'] : ['deposit'];
+    tags.push(row.is_rental_income ? 'rental_income' : 'deposit');
+  } else if (row.paid_by_resident) {
+    tags.push('he_she_paid');
+  } else if (row.paid_by_owner) {
+    tags.push('owner_paid');
+  } else {
+    tags.push('expense');
   }
-  return row.paid_by_resident ? ['he_she_paid'] : ['expense'];
+  if (row.from_bank_statement) tags.push('bank_statement');
+  if (row.ledger_column === 'nearly_cc') tags.push('nearly_cc');
+  return tags;
 }
 
 const UPLOAD_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -89,7 +107,18 @@ function isUploadReceiptRef(ref: string | null | undefined): ref is string {
 }
 
 const PAGE_SIZE = 50;
-const FETCH_SIZE = 2000;
+
+function invalidateTransactionSummaries(queryClient: ReturnType<typeof useQueryClient>) {
+  queryClient.invalidateQueries({ queryKey: ['expenses'] });
+  queryClient.invalidateQueries({ queryKey: ['deposits'] });
+  queryClient.invalidateQueries({ queryKey: ['expense-summary'] });
+  queryClient.invalidateQueries({ queryKey: ['deposit-summary'] });
+  queryClient.invalidateQueries({ queryKey: ['expense-summary-heshe'] });
+  queryClient.invalidateQueries({ queryKey: ['expense-summary-owner'] });
+  queryClient.invalidateQueries({ queryKey: ['deposit-summary-rental'] });
+  queryClient.invalidateQueries({ queryKey: ['alerts'] });
+  queryClient.invalidateQueries({ queryKey: ['alert-summary'] });
+}
 
 function label(value: string) {
   return value.replace(/_/g, ' ');
@@ -271,9 +300,9 @@ export function TransactionsPage() {
   const [showForm, setShowForm] = useState(false);
   const [showUpload, setShowUpload] = useState(false);
   const [form, setForm] = useState<ExpenseCreate>(() => makeEmptyForm());
-  const [formError, setFormError] = useState<string | null>(null);
+  const [formError, setFormError] = useState<unknown>(null);
   const [editForm, setEditForm] = useState<TransactionEditForm | null>(null);
-  const [editError, setEditError] = useState<string | null>(null);
+  const [editError, setEditError] = useState<unknown>(null);
 
   useEffect(() => {
     const state = location.state as {
@@ -285,39 +314,68 @@ export function TransactionsPage() {
       dateFrom?: string;
       dateTo?: string;
       typeFilter?: TypeFilter;
+      kinds?: TypeFilterKind[];
+      sections?: string[];
+      sources?: string[];
+      sourceFiles?: string[];
+      alertFilters?: AlertFilterKind[];
     } | null;
-    if (state?.showUpload) {
+    if (!state) return;
+
+    if (state.showUpload) {
       setShowUpload(true);
       setShowForm(false);
     }
-    if (state?.showForm) {
+    if (state.showForm) {
       setShowForm(true);
       setShowUpload(false);
     }
-    if (state?.propertyId || state?.clientPropId) {
+    if (state.propertyId || state.clientPropId) {
       setPropertyIds(state.propertyId ? [state.propertyId] : []);
       setClientPropIds(state.clientPropId ? [state.clientPropId] : []);
-      setOwnerIds([]);
-      setPage(1);
-    } else if (state?.ownerId) {
-      setOwnerIds([state.ownerId]);
-      setPropertyIds([]);
-      setClientPropIds([]);
+      if (!state.ownerId) setOwnerIds([]);
       setPage(1);
     }
-    if (state?.dateFrom != null || state?.dateTo != null) {
+    if (state.ownerId) {
+      setOwnerIds([state.ownerId]);
+      if (!state.propertyId && !state.clientPropId) {
+        setPropertyIds([]);
+        setClientPropIds([]);
+      }
+      setPage(1);
+    }
+    if (state.dateFrom != null || state.dateTo != null) {
       setDateFrom(state.dateFrom);
       setDateTo(state.dateTo);
       setPage(1);
     }
-    if (state?.typeFilter === 'deposit') {
+    if (state.kinds && state.kinds.length > 0) {
+      setKinds(state.kinds);
+      setPage(1);
+    } else if (state.typeFilter === 'deposit') {
       setKinds(['deposit']);
       setPage(1);
-    } else if (state?.typeFilter === 'expense') {
+    } else if (state.typeFilter === 'expense') {
       setKinds(['expense']);
       setPage(1);
-    } else if (state?.propertyId || state?.clientPropId || state?.ownerId) {
+    } else if (state.propertyId || state.clientPropId || state.ownerId) {
       setKinds(['deposit', 'expense']);
+    }
+    if (state.sections) {
+      setSections(state.sections);
+      setPage(1);
+    }
+    if (state.sources) {
+      setSources(state.sources);
+      setPage(1);
+    }
+    if (state.sourceFiles) {
+      setSourceFiles(state.sourceFiles);
+      setPage(1);
+    }
+    if (state.alertFilters) {
+      setAlertFilters(state.alertFilters);
+      setPage(1);
     }
   }, [location.state]);
 
@@ -339,12 +397,45 @@ export function TransactionsPage() {
     kinds.length === 0 ||
     kinds.includes('deposit') ||
     kinds.includes('rental_income') ||
+    kinds.includes('bank_statement') ||
     alertFilters.includes('incomplete_import');
   const includeExpenses =
     kinds.length === 0 ||
     kinds.includes('expense') ||
     kinds.includes('he_she_paid') ||
+    kinds.includes('owner_paid') ||
+    kinds.includes('bank_statement') ||
+    kinds.includes('nearly_cc') ||
     alertFilters.includes('incomplete_import');
+
+  const singleSourceFile = sourceFiles.length === 1 ? sourceFiles[0] : undefined;
+  const needsReviewOnly = alertFilters.includes('incomplete_import') ? true : undefined;
+
+  // Narrow list fetches when a single Type lane is selected.
+  const depositTypeFilter =
+    kinds.length === 1 && kinds[0] === 'deposit'
+      ? false
+      : kinds.length === 1 && kinds[0] === 'rental_income'
+        ? true
+        : undefined;
+  const expenseResidentFilter =
+    kinds.length === 1 && kinds[0] === 'he_she_paid'
+      ? true
+      : kinds.length === 1 && kinds[0] === 'expense'
+        ? false
+        : undefined;
+  const expenseOwnerFilter =
+    kinds.length === 1 && kinds[0] === 'owner_paid'
+      ? true
+      : kinds.length === 1 && kinds[0] === 'expense'
+        ? false
+        : undefined;
+
+  const listFilters = {
+    ...sharedFilters,
+    source_file: singleSourceFile,
+    needs_review: needsReviewOnly,
+  };
 
   const propertiesQuery = useQuery({
     queryKey: ['properties'],
@@ -355,67 +446,88 @@ export function TransactionsPage() {
     queryFn: api.getOwners,
   });
   const expenseSummaryQuery = useQuery({
-    queryKey: ['expense-summary', sharedFilters, apiSection, apiSource],
+    queryKey: ['expense-summary', sharedFilters, apiSection, apiSource, singleSourceFile],
     queryFn: () =>
       api.getExpenseSummary({
         ...sharedFilters,
         category: apiSection,
         source: apiSource,
+        source_file: singleSourceFile,
         include_all: false,
       }),
     enabled: includeExpenses,
   });
   const depositSummaryQuery = useQuery({
-    queryKey: ['deposit-summary', sharedFilters],
+    queryKey: ['deposit-summary', sharedFilters, singleSourceFile],
     queryFn: () =>
       api.getDepositSummary({
         ...sharedFilters,
+        source_file: singleSourceFile,
         include_all: false,
       }),
     enabled: includeDeposits,
   });
-  // Full deposit total including rental — used when Rental income is selected in Type
-  const depositAllSummaryQuery = useQuery({
-    queryKey: ['deposit-summary-all', sharedFilters],
+  const depositRentalSummaryQuery = useQuery({
+    queryKey: ['deposit-summary-rental', sharedFilters, singleSourceFile],
     queryFn: () =>
       api.getDepositSummary({
         ...sharedFilters,
-        include_all: true,
+        source_file: singleSourceFile,
+        is_rental_income: true,
       }),
-    enabled: kinds.includes('rental_income'),
+    enabled: includeDeposits && (kinds.length === 0 || kinds.includes('rental_income')),
   });
-  const expenseAllSummaryQuery = useQuery({
-    queryKey: ['expense-summary-all', sharedFilters, apiSection, apiSource],
+  const expenseHeSheSummaryQuery = useQuery({
+    queryKey: ['expense-summary-heshe', sharedFilters, apiSection, apiSource, singleSourceFile],
     queryFn: () =>
       api.getExpenseSummary({
         ...sharedFilters,
         category: apiSection,
         source: apiSource,
-        include_all: true,
+        source_file: singleSourceFile,
+        paid_by_resident: true,
       }),
-    enabled: kinds.includes('he_she_paid'),
+    enabled: includeExpenses && (kinds.length === 0 || kinds.includes('he_she_paid')),
+  });
+  const expenseOwnerPaidSummaryQuery = useQuery({
+    queryKey: ['expense-summary-owner', sharedFilters, apiSection, apiSource, singleSourceFile],
+    queryFn: () =>
+      api.getExpenseSummary({
+        ...sharedFilters,
+        category: apiSection,
+        source: apiSource,
+        source_file: singleSourceFile,
+        paid_by_owner: true,
+      }),
+    enabled: includeExpenses && (kinds.length === 0 || kinds.includes('owner_paid')),
   });
 
   const depositsQuery = useQuery({
-    queryKey: ['deposits', sharedFilters],
+    queryKey: ['deposits', listFilters, depositTypeFilter],
     queryFn: () =>
-      api.getDeposits({
-        ...sharedFilters,
-        page: 1,
-        page_size: FETCH_SIZE,
+      api.getAllDeposits({
+        ...listFilters,
+        is_rental_income: depositTypeFilter,
       }),
     enabled: includeDeposits,
   });
 
   const expensesQuery = useQuery({
-    queryKey: ['expenses', sharedFilters, apiSection, apiSource],
+    queryKey: [
+      'expenses',
+      listFilters,
+      apiSection,
+      apiSource,
+      expenseResidentFilter,
+      expenseOwnerFilter,
+    ],
     queryFn: () =>
-      api.getExpenses({
-        ...sharedFilters,
+      api.getAllExpenses({
+        ...listFilters,
         category: apiSection,
         source: apiSource,
-        page: 1,
-        page_size: FETCH_SIZE,
+        paid_by_resident: expenseResidentFilter,
+        paid_by_owner: expenseOwnerFilter,
       }),
     enabled: includeExpenses,
   });
@@ -423,14 +535,13 @@ export function TransactionsPage() {
   const createMutation = useMutation({
     mutationFn: api.createExpense,
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['expenses'] });
-      queryClient.invalidateQueries({ queryKey: ['expense-summary'] });
+      invalidateTransactionSummaries(queryClient);
       setForm(makeEmptyForm());
       setShowForm(false);
       setFormError(null);
     },
     onError: (error: Error) => {
-      setFormError(error.message);
+      setFormError(error);
     },
   });
 
@@ -460,16 +571,11 @@ export function TransactionsPage() {
       });
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['expenses'] });
-      queryClient.invalidateQueries({ queryKey: ['deposits'] });
-      queryClient.invalidateQueries({ queryKey: ['expense-summary'] });
-      queryClient.invalidateQueries({ queryKey: ['deposit-summary'] });
-      queryClient.invalidateQueries({ queryKey: ['alerts'] });
-      queryClient.invalidateQueries({ queryKey: ['alert-summary'] });
+      invalidateTransactionSummaries(queryClient);
       setEditForm(null);
       setEditError(null);
     },
-    onError: (error: Error) => setEditError(error.message),
+    onError: (error: Error) => setEditError(error),
   });
 
   const deleteTransactionMutation = useMutation({
@@ -480,16 +586,11 @@ export function TransactionsPage() {
       return api.deleteDeposit(payload.id);
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['expenses'] });
-      queryClient.invalidateQueries({ queryKey: ['deposits'] });
-      queryClient.invalidateQueries({ queryKey: ['expense-summary'] });
-      queryClient.invalidateQueries({ queryKey: ['deposit-summary'] });
-      queryClient.invalidateQueries({ queryKey: ['alerts'] });
-      queryClient.invalidateQueries({ queryKey: ['alert-summary'] });
+      invalidateTransactionSummaries(queryClient);
       setEditForm(null);
       setEditError(null);
     },
-    onError: (error: Error) => setEditError(error.message),
+    onError: (error: Error) => setEditError(error),
   });
 
   const typeOptions = useMemo(
@@ -498,6 +599,9 @@ export function TransactionsPage() {
       { value: 'expense', label: 'Expense (Amount)' },
       { value: 'rental_income', label: 'Rental income' },
       { value: 'he_she_paid', label: 'He/She paid' },
+      { value: 'owner_paid', label: 'Owner paid' },
+      { value: 'bank_statement', label: 'Bank statement' },
+      { value: 'nearly_cc', label: 'Nearly CC' },
     ],
     [],
   );
@@ -568,8 +672,21 @@ export function TransactionsPage() {
       .map((value) => ({ value, label: value }));
   }, [depositsQuery.data, expensesQuery.data]);
 
-  const { items, total, totalPages, depositTotal, expenseTotal, depositCount, expenseTotalCount, netTotal, cardSubtitle } =
-    useMemo(() => {
+  const {
+    items,
+    total,
+    totalPages,
+    depositTotal,
+    expenseTotal,
+    depositCount,
+    expenseTotalCount,
+    netTotal,
+    inflowSubtitle,
+    expenseSubtitle,
+    outsideSelectedCount,
+    moneyRowCount,
+    listedRowCount,
+  } = useMemo(() => {
       const deposits = includeDeposits
         ? (depositsQuery.data?.items ?? []).map(depositToUnified)
         : [];
@@ -577,9 +694,13 @@ export function TransactionsPage() {
         ? (expensesQuery.data?.items ?? []).map(expenseToUnified)
         : [];
       let merged = [...deposits, ...expenses].sort((a, b) => {
+        // Newest date first. Missing date goes to the end.
+        // Missing amount keeps its date position (or end if date is also missing).
+        const aHasDate = Boolean(a.transaction_date);
+        const bHasDate = Boolean(b.transaction_date);
+        if (aHasDate !== bHasDate) return aHasDate ? -1 : 1;
         const aTime = a.transaction_date ? new Date(a.transaction_date).getTime() : 0;
         const bTime = b.transaction_date ? new Date(b.transaction_date).getTime() : 0;
-        if (a.needs_review !== b.needs_review) return a.needs_review ? -1 : 1;
         return bTime - aTime;
       });
 
@@ -630,94 +751,132 @@ export function TransactionsPage() {
         merged = merged.filter((row) => Boolean(row.source_file && fileSet.has(row.source_file)));
       }
 
-      // Card totals: match Excel Dashboard (Inflow=non-rental deposits, Expenses=non-He/She).
-      // Prefer API summaries so we are not capped by the 2000-row fetch window.
+      // Card money totals: Excel Dashboard (Inflow=non-rental, Expenses=non-He/She/Owner-paid).
+      // Matching = same Inflow/Expense rows + selected outside-total Type lanes.
       const wantsInflow = kinds.length === 0 || kinds.includes('deposit');
       const wantsExpense = kinds.length === 0 || kinds.includes('expense');
-      const wantsRental = kinds.includes('rental_income');
-      const wantsHeShe = kinds.includes('he_she_paid');
+      const wantsRental = kinds.length === 0 || kinds.includes('rental_income');
+      const wantsHeShe = kinds.length === 0 || kinds.includes('he_she_paid');
+      const wantsOwnerPaid = kinds.length === 0 || kinds.includes('owner_paid');
+      const laneOnly =
+        kinds.length > 0 &&
+        !wantsInflow &&
+        !wantsExpense &&
+        !wantsRental &&
+        !wantsHeShe &&
+        !wantsOwnerPaid &&
+        (kinds.includes('bank_statement') || kinds.includes('nearly_cc'));
 
       const apiInflow = Number(depositSummaryQuery.data?.total_amount ?? 0);
       const apiExpenses = Number(expenseSummaryQuery.data?.total_amount ?? 0);
       const apiInflowCount = depositSummaryQuery.data?.deposit_count ?? 0;
       const apiExpenseCount = expenseSummaryQuery.data?.expense_count ?? 0;
-      const apiAllDeposits = Number(depositAllSummaryQuery.data?.total_amount ?? 0);
-      const apiAllDepositCount = depositAllSummaryQuery.data?.deposit_count ?? 0;
-      const apiAllExpenses = Number(expenseAllSummaryQuery.data?.total_amount ?? 0);
-      const apiAllExpenseCount = expenseAllSummaryQuery.data?.expense_count ?? 0;
-
-      const rentalTotal = Math.max(0, apiAllDeposits - apiInflow);
-      const rentalCount = Math.max(0, apiAllDepositCount - apiInflowCount);
-      const heSheTotal = Math.max(0, apiAllExpenses - apiExpenses);
-      const heSheCount = Math.max(0, apiAllExpenseCount - apiExpenseCount);
+      const rentalCount = depositRentalSummaryQuery.data?.deposit_count ?? 0;
+      const heSheCount = expenseHeSheSummaryQuery.data?.expense_count ?? 0;
+      const ownerPaidCount = expenseOwnerPaidSummaryQuery.data?.expense_count ?? 0;
 
       let cardInflow = 0;
       let cardExpenses = 0;
       let cardInflowCount = 0;
       let cardExpenseCount = 0;
-      const parts: string[] = [];
+      let inflowSubtitle = 'Inflow (Excel)';
+      let expenseSubtitle = 'Amount (Excel)';
 
       if (wantsInflow) {
         cardInflow += apiInflow;
         cardInflowCount += apiInflowCount;
-        parts.push('Inflow (Excel)');
-      }
-      if (wantsRental) {
-        cardInflow += rentalTotal;
-        cardInflowCount += rentalCount;
-        parts.push('Rental income');
       }
       if (wantsExpense) {
         cardExpenses += apiExpenses;
         cardExpenseCount += apiExpenseCount;
-        parts.push('Amount (Excel)');
-      }
-      if (wantsHeShe) {
-        cardExpenses += heSheTotal;
-        cardExpenseCount += heSheCount;
-        parts.push('He/She paid');
       }
 
-      // Multi-select entity filters (2+) are applied client-side only — fall back to page sum
+      // Multi-select entity filters (2+) / multi source-file are client-side on the full loaded set.
       const multiEntity =
         propertyIds.length > 1 ||
         clientPropIds.length > 1 ||
         ownerIds.length > 1 ||
         sections.length > 1;
-      if (multiEntity || sources.length > 0 || sourceFiles.length > 0) {
-        const depItems = merged.filter((row) => row.kind === 'deposit');
-        const expItems = merged.filter((row) => row.kind === 'expense');
+      const clientSideFiltered =
+        multiEntity || sources.length > 0 || sourceFiles.length > 1;
+      if (clientSideFiltered) {
+        const depItems = merged.filter(
+          (row) => row.kind === 'deposit' && !row.is_rental_income,
+        );
+        const expItems = merged.filter(
+          (row) =>
+            row.kind === 'expense' && !row.paid_by_resident && !row.paid_by_owner,
+        );
         cardInflow = depItems.reduce((sum, row) => sum + Number(row.amount), 0);
         cardExpenses = expItems.reduce((sum, row) => sum + Number(row.amount), 0);
         cardInflowCount = depItems.length;
         cardExpenseCount = expItems.length;
-        parts.length = 0;
-        parts.push('filtered rows');
+        inflowSubtitle = 'filtered rows';
+        expenseSubtitle = 'filtered rows';
+      } else if (laneOnly) {
+        const depItems = merged.filter(
+          (row) => row.kind === 'deposit' && !row.is_rental_income,
+        );
+        const expItems = merged.filter(
+          (row) =>
+            row.kind === 'expense' && !row.paid_by_resident && !row.paid_by_owner,
+        );
+        cardInflow = depItems.reduce((sum, row) => sum + Number(row.amount), 0);
+        cardExpenses = expItems.reduce((sum, row) => sum + Number(row.amount), 0);
+        cardInflowCount = depItems.length;
+        cardExpenseCount = expItems.length;
+        inflowSubtitle = kinds.includes('bank_statement') ? 'Bank statement' : 'filtered rows';
+        expenseSubtitle = kinds.includes('nearly_cc')
+          ? 'Nearly CC'
+          : kinds.includes('bank_statement')
+            ? 'Bank statement'
+            : 'filtered rows';
       }
 
-      const totalCount = merged.length;
-      const totalPagesCount = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
+      let matchingCount = cardInflowCount + cardExpenseCount;
+      let outsideSelectedCount = 0;
+      if (clientSideFiltered || laneOnly || alertFilters.includes('incomplete_import')) {
+        const outsideItems = merged.filter(
+          (row) =>
+            (row.kind === 'deposit' && row.is_rental_income) ||
+            (row.kind === 'expense' && (row.paid_by_resident || row.paid_by_owner)),
+        );
+        outsideSelectedCount = outsideItems.length;
+        matchingCount = merged.length;
+      } else {
+        if (wantsRental) outsideSelectedCount += rentalCount;
+        if (wantsHeShe) outsideSelectedCount += heSheCount;
+        if (wantsOwnerPaid) outsideSelectedCount += ownerPaidCount;
+        matchingCount = cardInflowCount + cardExpenseCount + outsideSelectedCount;
+      }
+
+      const totalPagesCount = Math.max(1, Math.ceil(merged.length / PAGE_SIZE));
       const start = (page - 1) * PAGE_SIZE;
       const pageItems = merged.slice(start, start + PAGE_SIZE);
 
       return {
         items: pageItems,
-        total: totalCount,
+        total: matchingCount,
         totalPages: totalPagesCount,
         depositTotal: cardInflow,
         expenseTotal: cardExpenses,
         depositCount: cardInflowCount,
         expenseTotalCount: cardExpenseCount,
         netTotal: cardInflow - cardExpenses,
-        cardSubtitle: parts.join(' + ') || 'current filters',
+        inflowSubtitle,
+        expenseSubtitle,
+        outsideSelectedCount,
+        moneyRowCount: cardInflowCount + cardExpenseCount,
+        listedRowCount: merged.length,
       };
     }, [
       alertFilters,
       clientPropIds,
-      depositAllSummaryQuery.data,
+      depositRentalSummaryQuery.data,
       depositSummaryQuery.data,
       depositsQuery.data,
-      expenseAllSummaryQuery.data,
+      expenseHeSheSummaryQuery.data,
+      expenseOwnerPaidSummaryQuery.data,
       expenseSummaryQuery.data,
       expensesQuery.data,
       includeDeposits,
@@ -792,11 +951,11 @@ export function TransactionsPage() {
   function saveEdit() {
     if (!editForm) return;
     if (!editForm.property_id) {
-      setEditError('Prop ID / Property is required.');
+      setEditError(validationError('Please choose a property (Prop ID).'));
       return;
     }
     if (!editForm.transaction_date || !editForm.amount || Number(editForm.amount) <= 0) {
-      setEditError('Date and amount greater than 0 are required.');
+      setEditError(validationError('Please enter a date and an amount greater than 0.'));
       return;
     }
     updateTransactionMutation.mutate(editForm);
@@ -855,7 +1014,17 @@ export function TransactionsPage() {
 
   if (isLoading) return <LoadingState />;
   if (isError) {
-    return <ErrorState message="Could not load transactions from the API." />;
+    return (
+      <ErrorState
+        message="We couldn't load transactions. Please try again in a moment."
+        error={
+          propertiesQuery.error ??
+          ownersQuery.error ??
+          depositsQuery.error ??
+          expensesQuery.error
+        }
+      />
+    );
   }
 
   return (
@@ -865,8 +1034,9 @@ export function TransactionsPage() {
           <h2 className="page-heading">Transactions</h2>
           <p className="page-desc">
             Same ledger as your Excel: Prop ID, Date, Section, Notes, Amount, and Balance — plus
-            Property and Owner for easier browsing. Deposits (Inflow) in green, expenses (Amount) in
-            red. He/She paid and rental income are marked like in the spreadsheet.
+            Property and Owner for easier browsing. Newest dates first; rows without a date appear
+            at the end. Incomplete imports (missing date/amount) stay in Alerts until fixed or
+            dismissed. He/She paid and rental income are marked like in the spreadsheet.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -932,26 +1102,30 @@ export function TransactionsPage() {
         <Card
           title="Inflow"
           value={formatCurrency(depositTotal)}
-          subtitle={`${depositCount} row(s) · ${cardSubtitle}`}
-          tooltip="Matches Excel Dashboard Inflow (sum of Inflow column). Rental income is separate unless selected in Type."
+          subtitle={`${depositCount} row(s) · ${inflowSubtitle}`}
+          tooltip="Matches Excel Dashboard Inflow (sum of Inflow column). Rental income can be filtered in the list but is never included in this total."
         />
         <Card
           title="Expenses"
           value={formatCurrency(expenseTotal)}
-          subtitle={`${expenseTotalCount} row(s) · ${cardSubtitle}`}
-          tooltip="Matches Excel Dashboard Expenses (sum of Amount column). He/She paid is separate unless selected in Type. Credit-card imports are included in the app but not on the Excel Dashboard."
+          subtitle={`${expenseTotalCount} row(s) · ${expenseSubtitle}`}
+          tooltip="Matches Excel Dashboard Expenses (sum of Amount column). He/She paid can be filtered in the list but is never included in this total. Credit-card imports are included in the app but not on the Excel Dashboard."
         />
         <Card
           title="Balance"
           value={formatCurrency(netTotal)}
-          subtitle="Inflow minus Expenses (current Type filters)"
-          tooltip="Same as Excel Dashboard Balance: Inflow − Expenses."
+          subtitle="Inflow minus Expenses (excludes Rental / He-She)"
+          tooltip="Same as Excel Dashboard Balance: Inflow − Expenses. Rental income and He/She paid are excluded even when filtered."
         />
         <Card
-          title="Showing"
-          value={items.length}
-          subtitle={`${total} matching transaction(s)`}
-          tooltip="Rows on this page after filters."
+          title="Matching"
+          value={total}
+          subtitle={
+            outsideSelectedCount > 0
+              ? `${moneyRowCount} in Inflow/Expenses + ${outsideSelectedCount} outside totals`
+              : `${moneyRowCount} = Inflow + Expenses rows`
+          }
+          tooltip="Matching is Inflow rows + Expenses rows, plus Rental / He-She / Owner-paid when those Type filters are selected. Money totals still exclude those labels."
         />
       </section>
 
@@ -973,7 +1147,9 @@ export function TransactionsPage() {
             onSubmit={(event) => {
               event.preventDefault();
               if (!form.property_id || !form.transaction_date || !form.amount) {
-                setFormError('Prop ID / Property, Date, and Amount are required.');
+                setFormError(
+                  validationError('Please choose a property, date, and amount.'),
+                );
                 return;
               }
               const section = form.category.trim() || 'other';
@@ -1124,7 +1300,9 @@ export function TransactionsPage() {
               />
             </label>
             {formError ? (
-              <p className="text-negative text-sm md:col-span-2 xl:col-span-3">{formError}</p>
+              <div className="md:col-span-2 xl:col-span-3">
+                <InlineError error={formError} />
+              </div>
             ) : null}
             <div className="md:col-span-2 xl:col-span-3">
               <button type="submit" disabled={createMutation.isPending} className="btn-primary">
@@ -1150,7 +1328,7 @@ export function TransactionsPage() {
       <section className="filter-panel md:grid-cols-2 xl:grid-cols-4">
         <SearchableMultiSelect
           label="Type"
-          tip="Deposit/Expense match Excel Inflow/Amount. Rental income and He/She paid are separate Excel columns — not in Dashboard totals."
+          tip="Deposit/Expense match Excel Inflow/Amount. Rental, He/She, Owner paid, Bank statement, and Nearly CC are separate lanes you can filter."
           options={typeOptions}
           selected={kinds}
           onChange={(next) => {
@@ -1162,7 +1340,7 @@ export function TransactionsPage() {
         />
         <SearchableMultiSelect
           label="Alerts"
-          tip="Show only rows with open incomplete-import alerts (missing date and/or amount)."
+          tip="Filter to incomplete import rows (missing date and/or amount). Those also appear under Alerts until dismissed or fixed."
           options={alertOptions}
           selected={alertFilters}
           onChange={(next) => {
@@ -1692,9 +1870,9 @@ export function TransactionsPage() {
                                 />
                               </label>
                               {editError ? (
-                                <p className="text-negative text-sm sm:col-span-2 lg:col-span-3 xl:col-span-4">
-                                  {editError}
-                                </p>
+                                <div className="sm:col-span-2 lg:col-span-3 xl:col-span-4">
+                                  <InlineError error={editError} />
+                                </div>
                               ) : null}
                               <div className="flex flex-wrap gap-2 sm:col-span-2 lg:col-span-3 xl:col-span-4">
                                 <button
@@ -1758,7 +1936,8 @@ export function TransactionsPage() {
         ) : null}
         <div className="table-footer">
           <span>
-            Showing {items.length} of {total} transactions
+            Showing {items.length} of {listedRowCount} loaded
+            {total !== listedRowCount ? ` · ${total} match filters` : ''}
           </span>
           <div className="flex gap-2">
             <button

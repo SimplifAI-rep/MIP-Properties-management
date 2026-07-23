@@ -89,6 +89,12 @@ def list_expenses(
     date_to: date | None = None,
     min_amount: Decimal | None = None,
     max_amount: Decimal | None = None,
+    source_file: str | None = None,
+    needs_review: bool | None = None,
+    paid_by_resident: bool | None = None,
+    paid_by_owner: bool | None = None,
+    paid_by_company: bool | None = None,
+    ledger_column: str | None = None,
     page: int = 1,
     page_size: int = 50,
 ) -> tuple[list[ExpenseRead], int]:
@@ -130,6 +136,18 @@ def list_expenses(
         stmt = stmt.where(Expense.amount >= min_amount)
     if max_amount is not None:
         stmt = stmt.where(Expense.amount <= max_amount)
+    if source_file:
+        stmt = stmt.where(Expense.source_file == source_file.strip())
+    if needs_review is not None:
+        stmt = stmt.where(Expense.needs_review.is_(needs_review))
+    if paid_by_resident is not None:
+        stmt = stmt.where(Expense.paid_by_resident.is_(paid_by_resident))
+    if paid_by_owner is not None:
+        stmt = stmt.where(Expense.paid_by_owner.is_(paid_by_owner))
+    if paid_by_company is not None:
+        stmt = stmt.where(Expense.paid_by_company.is_(paid_by_company))
+    if ledger_column:
+        stmt = stmt.where(Expense.ledger_column == ledger_column)
 
     count_stmt = select(func.count()).select_from(stmt.subquery())
     total = db.scalar(count_stmt) or 0
@@ -259,11 +277,29 @@ def get_expense_summary(
     date_to: date | None = None,
     min_amount: Decimal | None = None,
     max_amount: Decimal | None = None,
+    source_file: str | None = None,
+    needs_review: bool | None = None,
+    paid_by_resident: bool | None = None,
+    paid_by_owner: bool | None = None,
+    paid_by_company: bool | None = None,
     include_all: bool = False,
 ) -> dict:
-    # Default: resident/owner-paid rows are informational only — exclude from company totals
+    # Default: resident/owner-paid rows are informational only — exclude from company totals.
+    # Explicit paid_by_* flags override that default.
     filters = []
-    if not include_all:
+    explicit_payer = (
+        paid_by_resident is not None
+        or paid_by_owner is not None
+        or paid_by_company is not None
+    )
+    if explicit_payer:
+        if paid_by_resident is not None:
+            filters.append(Expense.paid_by_resident.is_(paid_by_resident))
+        if paid_by_owner is not None:
+            filters.append(Expense.paid_by_owner.is_(paid_by_owner))
+        if paid_by_company is not None:
+            filters.append(Expense.paid_by_company.is_(paid_by_company))
+    elif not include_all:
         filters.extend(
             [
                 Expense.paid_by_resident.is_(False),
@@ -288,6 +324,10 @@ def get_expense_summary(
         filters.append(Expense.amount >= min_amount)
     if max_amount is not None:
         filters.append(Expense.amount <= max_amount)
+    if source_file:
+        filters.append(Expense.source_file == source_file.strip())
+    if needs_review is not None:
+        filters.append(Expense.needs_review.is_(needs_review))
 
     amount_stmt = select(func.coalesce(func.sum(Expense.amount), 0))
     count_stmt = select(func.count()).select_from(Expense)

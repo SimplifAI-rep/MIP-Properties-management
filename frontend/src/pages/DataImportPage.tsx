@@ -2,8 +2,9 @@ import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
 import type { ClientDataImportResponse } from '../types';
-import { ErrorState, LoadingState } from '../components/ui/States';
+import { ErrorState, InlineError, LoadingState } from '../components/ui/States';
 import { Tooltip } from '../components/ui/Tooltip';
+import { validationError, AppError } from '../utils/errors';
 
 type FileRole =
   | 'client_list'
@@ -65,7 +66,7 @@ export function DataImportPage() {
   const [reset, setReset] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
   const [result, setResult] = useState<ClientDataImportResponse | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   const [progressMessage, setProgressMessage] = useState<string | null>(null);
 
   const statusQuery = useQuery({
@@ -76,10 +77,10 @@ export function DataImportPage() {
   const importMutation = useMutation({
     mutationFn: async () => {
       if (!files.client_list || !files.management) {
-        throw new Error('Client list and management ledger are required.');
+        throw validationError('Please choose both the client list and management ledger files.');
       }
       if (reset && !confirmReset) {
-        throw new Error('Confirm the database reset before importing.');
+        throw validationError('Please confirm the database reset before importing.');
       }
       setProgressMessage('Uploading files…');
       const accepted = await api.importClientData({
@@ -99,16 +100,22 @@ export function DataImportPage() {
         setProgressMessage(job.message || job.status);
         if (job.status === 'succeeded') {
           if (!job.result) {
-            throw new Error('Import finished but returned no result.');
+            throw validationError('Import finished but no result came back. Please try again.');
           }
           return job.result;
         }
         if (job.status === 'failed') {
-          throw new Error(job.error || job.message || 'Import failed.');
+          throw new AppError({
+            userMessage:
+              'The import could not be completed. Please check your files and try again.',
+            technicalDetail: job.error || job.message || 'Import failed.',
+          });
         }
         await new Promise((resolve) => setTimeout(resolve, POLL_MS));
       }
-      throw new Error('Import timed out. Check Render logs — the job may still be running.');
+      throw validationError(
+        'The import is taking longer than expected. Please wait a bit and refresh, or try again later.',
+      );
     },
     onSuccess: (response) => {
       setResult(response);
@@ -118,7 +125,7 @@ export function DataImportPage() {
       statusQuery.refetch();
     },
     onError: (err: Error) => {
-      setError(err.message);
+      setError(err);
       setResult(null);
       setProgressMessage(null);
     },
@@ -140,7 +147,12 @@ export function DataImportPage() {
 
   if (statusQuery.isLoading) return <LoadingState />;
   if (statusQuery.isError) {
-    return <ErrorState message="Could not load database status from the API." />;
+    return (
+      <ErrorState
+        message="We couldn't load database status. Please try again in a moment."
+        error={statusQuery.error}
+      />
+    );
   }
 
   return (
@@ -251,7 +263,7 @@ export function DataImportPage() {
             <p className="text-sm text-muted">{progressMessage}</p>
           ) : null}
 
-          {error ? <p className="text-negative text-sm whitespace-pre-wrap">{error}</p> : null}
+          {error ? <InlineError error={error} /> : null}
         </div>
       </section>
 

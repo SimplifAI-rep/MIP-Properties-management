@@ -1,6 +1,7 @@
 import { useEffect, useId, useState, type FormEvent } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { api } from '../api/client';
+import { getUserErrorMessage } from '../utils/errors';
 
 type FeedbackModalProps = {
   open: boolean;
@@ -68,7 +69,7 @@ export function FeedbackModal({ open, onClose, initialMessage }: FeedbackModalPr
             </h3>
             <p className="page-desc mt-1">
               {initialMessage
-                ? 'Transaction details are included below. Add your note and send.'
+                ? 'Details are included below. Add your note and send.'
                 : 'Report a problem or suggest an improvement. We will review it by email.'}
             </p>
           </div>
@@ -120,9 +121,10 @@ export function FeedbackModal({ open, onClose, initialMessage }: FeedbackModalPr
 
             {mutation.isError ? (
               <p className="text-sm text-negative">
-                {mutation.error instanceof Error
-                  ? mutation.error.message
-                  : 'Could not send feedback.'}
+                {getUserErrorMessage(
+                  mutation.error,
+                  'We could not send your feedback right now. Please try again later.',
+                )}
               </p>
             ) : null}
 

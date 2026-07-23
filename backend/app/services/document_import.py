@@ -39,6 +39,7 @@ from app.schemas import (
 )
 from app.services.bank_import import BankImportService, RowError
 from app.services.expense_query import _validate_expense_enums
+from app.services.statement_import import StatementImportService
 
 logger = logging.getLogger(__name__)
 
@@ -114,6 +115,7 @@ class DocumentImportService:
         content: bytes,
         *,
         auto_detect_type: bool = False,
+        upload_kind: str | None = None,
     ) -> UploadAnalyzeResponse:
         ctx = AnalyzeContext(
             property_id=document.property_id,
@@ -130,7 +132,14 @@ class DocumentImportService:
         message: str | None = None
         match_confidence: MatchConfidence | None = None
 
-        if suffix in {".xlsx", ".xls", ".csv"}:
+        if upload_kind in {"bank_statement", "credit_card"}:
+            statement = StatementImportService(self.db)
+            drafts, parser, message = statement.analyze(
+                content,
+                filename=document.filename,
+                kind=upload_kind,  # type: ignore[arg-type]
+            )
+        elif suffix in {".xlsx", ".xls", ".csv"}:
             drafts, parser, message = self._analyze_spreadsheet(content, ctx, suffix)
         elif document.mime_type.startswith("image/"):
             drafts, parser, message = self._analyze_image(content, ctx)
@@ -155,6 +164,7 @@ class DocumentImportService:
             "drafts": [draft.model_dump(mode="json") for draft in drafts],
             "message": message,
             "match_confidence": match_confidence,
+            "upload_kind": upload_kind,
         }
         self.db.commit()
 
@@ -200,6 +210,10 @@ class DocumentImportService:
 
         for index, draft in enumerate(payload.drafts):
             try:
+                if draft.user_action == "ignore":
+                    skipped_count += 1
+                    continue
+
                 property_id = draft.property_id or document.property_id
                 if not property_id:
                     raise HTTPException(
@@ -1158,36 +1172,48 @@ class DocumentImportService:
     def _confirm_deposit(self, document: UploadedDocument, draft: TransactionDraft) -> UUID | None:
         if not draft.property_id:
             raise HTTPException(status_code=400, detail="property_id is required")
-        if not draft.bank_account_id:
-            raise HTTPException(status_code=400, detail="bank_account_id is required for deposits")
         if not draft.transaction_date or not draft.amount:
             raise HTTPException(status_code=400, detail="transaction_date and amount are required")
 
-        bank_account = self.db.get(BankAccount, draft.bank_account_id)
-        if not bank_account:
-            raise HTTPException(status_code=400, detail="Invalid bank_account_id")
+        bank_account_id = draft.bank_account_id
+        if bank_account_id:
+            bank_account = self.db.get(BankAccount, bank_account_id)
+            if not bank_account:
+                raise HTTPException(status_code=400, detail="Invalid bank_account_id")
+        elif draft.source not in {"bank_statement", "credit_card"}:
+            raise HTTPException(status_code=400, detail="bank_account_id is required for deposits")
 
-        existing = self.bank_import._find_existing_deposit(
-            bank_account.id,
-            draft.transaction_date,
-            draft.amount,
-            draft.reference,
-            draft.description,
-        )
-        if existing:
-            return None
+        force_create = draft.is_duplicate and draft.user_action == "add"
+        if bank_account_id and not force_create:
+            existing = self.bank_import._find_existing_deposit(
+                bank_account_id,
+                draft.transaction_date,
+                draft.amount,
+                draft.reference,
+                draft.description,
+            )
+            if existing:
+                return None
 
+        import_key = draft.import_key
+        if force_create and import_key:
+            import_key = f"{import_key}:manual-add"
+
+        incomplete = draft.transaction_date is None or draft.amount is None or draft.amount <= 0
         deposit = Deposit(
-            bank_account_id=bank_account.id,
+            bank_account_id=bank_account_id,
             property_id=draft.property_id,
             transaction_date=draft.transaction_date,
             amount=draft.amount,
             currency=draft.currency or self.settings.default_currency,
             reference=draft.reference,
             description=draft.description,
-            source="file_upload",
+            source=draft.source or "file_upload",
             receipt_ref=str(document.id),
             source_file=document.filename,
+            import_key=import_key,
+            needs_review=incomplete,
+            review_reasons="missing_date_or_amount" if incomplete else None,
         )
         self.db.add(deposit)
         self.db.flush()
@@ -1210,6 +1236,11 @@ class DocumentImportService:
             payment_method=draft.payment_method,
         )
 
+        import_key = draft.import_key
+        if draft.is_duplicate and draft.user_action == "add" and import_key:
+            import_key = f"{import_key}:manual-add"
+
+        incomplete = draft.transaction_date is None or draft.amount is None or draft.amount <= 0
         expense = Expense(
             property_id=draft.property_id,
             transaction_date=draft.transaction_date,
@@ -1223,6 +1254,9 @@ class DocumentImportService:
             description=draft.description,
             receipt_ref=str(document.id),
             source_file=document.filename,
+            import_key=import_key,
+            needs_review=incomplete,
+            review_reasons="missing_date_or_amount" if incomplete else None,
         )
         self.db.add(expense)
         self.db.flush()

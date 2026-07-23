@@ -357,6 +357,15 @@ class TransactionDraft(BaseModel):
     match_confidence: Literal["high", "medium", "low", "none"] | None = None
     status: Literal["ready", "needs_review", "error"] = "needs_review"
     warnings: list[FieldWarning] = Field(default_factory=list)
+    # Statement uploads: add creates a row; ignore skips. Duplicates default to ignore.
+    user_action: Literal["add", "ignore"] = "add"
+    is_duplicate: bool = False
+    duplicate_match_id: UUID | None = None
+    duplicate_match_kind: Literal["deposit", "expense"] | None = None
+    duplicate_summary: str | None = None
+    needs_review: bool = False
+    review_reasons: str | None = None
+    import_key: str | None = None
 
 
 class UploadAnalyzeResponse(BaseModel):

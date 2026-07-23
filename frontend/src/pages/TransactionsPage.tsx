@@ -266,6 +266,7 @@ export function TransactionsPage() {
   const [dateTo, setDateTo] = useState<string | undefined>();
   const [sections, setSections] = useState<string[]>([]);
   const [sources, setSources] = useState<string[]>([]);
+  const [sourceFiles, setSourceFiles] = useState<string[]>([]);
   const [alertFilters, setAlertFilters] = useState<AlertFilterKind[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [showUpload, setShowUpload] = useState(false);
@@ -554,6 +555,19 @@ export function TransactionsPage() {
     [],
   );
 
+  const sourceFileOptions = useMemo(() => {
+    const names = new Set<string>();
+    for (const row of depositsQuery.data?.items ?? []) {
+      if (row.source_file) names.add(row.source_file);
+    }
+    for (const row of expensesQuery.data?.items ?? []) {
+      if (row.source_file) names.add(row.source_file);
+    }
+    return [...names]
+      .sort((a, b) => a.localeCompare(b))
+      .map((value) => ({ value, label: value }));
+  }, [depositsQuery.data, expensesQuery.data]);
+
   const { items, total, totalPages, depositTotal, expenseTotal, depositCount, expenseTotalCount, netTotal, cardSubtitle } =
     useMemo(() => {
       const deposits = includeDeposits
@@ -611,6 +625,10 @@ export function TransactionsPage() {
           return source ? sourceSet.has(source) : false;
         });
       }
+      if (sourceFiles.length > 0) {
+        const fileSet = new Set(sourceFiles);
+        merged = merged.filter((row) => Boolean(row.source_file && fileSet.has(row.source_file)));
+      }
 
       // Card totals: match Excel Dashboard (Inflow=non-rental deposits, Expenses=non-He/She).
       // Prefer API summaries so we are not capped by the 2000-row fetch window.
@@ -662,8 +680,11 @@ export function TransactionsPage() {
 
       // Multi-select entity filters (2+) are applied client-side only — fall back to page sum
       const multiEntity =
-        propertyIds.length > 1 || clientPropIds.length > 1 || ownerIds.length > 1 || sections.length > 1;
-      if (multiEntity || sources.length > 0) {
+        propertyIds.length > 1 ||
+        clientPropIds.length > 1 ||
+        ownerIds.length > 1 ||
+        sections.length > 1;
+      if (multiEntity || sources.length > 0 || sourceFiles.length > 0) {
         const depItems = merged.filter((row) => row.kind === 'deposit');
         const expItems = merged.filter((row) => row.kind === 'expense');
         cardInflow = depItems.reduce((sum, row) => sum + Number(row.amount), 0);
@@ -708,6 +729,7 @@ export function TransactionsPage() {
       propertiesQuery.data,
       propertyIds,
       sections,
+      sourceFiles,
       sources,
     ]);
 
@@ -737,7 +759,8 @@ export function TransactionsPage() {
       dateFrom ||
       dateTo ||
       sections.length ||
-      sources.length,
+      sources.length ||
+      sourceFiles.length,
   );
 
   function clearFilters() {
@@ -750,6 +773,7 @@ export function TransactionsPage() {
     setDateTo(undefined);
     setSections([]);
     setSources([]);
+    setSourceFiles([]);
     setPage(1);
   }
 
@@ -1217,6 +1241,18 @@ export function TransactionsPage() {
           }}
           placeholder="All sources"
           searchPlaceholder="Search source…"
+        />
+        <SearchableMultiSelect
+          label="Source file"
+          tip="Original import/upload filename for the row."
+          options={sourceFileOptions}
+          selected={sourceFiles}
+          onChange={(next) => {
+            setSourceFiles(next);
+            resetPage();
+          }}
+          placeholder="All source files"
+          searchPlaceholder="Search file…"
         />
       </section>
 

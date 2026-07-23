@@ -270,6 +270,14 @@ export interface TransactionDraft {
   match_confidence?: 'high' | 'medium' | 'low' | 'none' | null;
   status: 'ready' | 'needs_review' | 'error';
   warnings: FieldWarning[];
+  user_action?: 'add' | 'ignore';
+  is_duplicate?: boolean;
+  duplicate_match_id?: string | null;
+  duplicate_match_kind?: 'deposit' | 'expense' | null;
+  duplicate_summary?: string | null;
+  needs_review?: boolean;
+  review_reasons?: string | null;
+  import_key?: string | null;
 }
 
 export interface UploadAnalyzeResponse {

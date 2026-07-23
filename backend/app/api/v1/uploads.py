@@ -19,11 +19,14 @@ async def analyze_upload(
     file: UploadFile = File(...),
     property_id: UUID | None = Form(None),
     transaction_type: str | None = Form(None),
+    upload_kind: str | None = Form(None),
     db: Session = Depends(get_db),
 ) -> UploadAnalyzeResponse:
     """Analyze an uploaded spreadsheet, image, or PDF.
 
-    For Excel/CSV, ``property_id`` and ``transaction_type`` are required.
+    ``upload_kind``: receipt (default), bank_statement, credit_card, or auto.
+    Bank/credit-card Excel does not require property_id or transaction_type.
+    For generic Excel/CSV, ``property_id`` and ``transaction_type`` are required.
     For images/PDFs they are optional — the system auto-detects type and
     matches the client/property from document contents when possible.
     """
@@ -31,6 +34,16 @@ async def analyze_upload(
         raise HTTPException(
             status_code=400,
             detail="transaction_type must be deposit, expense, or auto",
+        )
+    if upload_kind is not None and upload_kind not in {
+        "receipt",
+        "bank_statement",
+        "credit_card",
+        "auto",
+    }:
+        raise HTTPException(
+            status_code=400,
+            detail="upload_kind must be receipt, bank_statement, credit_card, or auto",
         )
 
     content = await file.read()
@@ -43,8 +56,17 @@ async def analyze_upload(
 
     suffix = (filename.rsplit(".", 1)[-1] if "." in filename else "").lower()
     is_spreadsheet = suffix in {"xlsx", "xls", "csv"}
+    resolved_kind = upload_kind or "receipt"
 
-    if is_spreadsheet:
+    if is_spreadsheet and resolved_kind == "auto":
+        from app.services.statement_import import detect_statement_kind
+
+        detected = detect_statement_kind(content)
+        resolved_kind = detected or "receipt"
+
+    is_statement = resolved_kind in {"bank_statement", "credit_card"}
+
+    if is_spreadsheet and not is_statement:
         if property_id is None:
             raise HTTPException(
                 status_code=400,
@@ -83,7 +105,12 @@ async def analyze_upload(
         mime_type=mime_type,
         auto_detect_type=transaction_type in (None, "auto"),
     )
-    return service.analyze(document, content, auto_detect_type=transaction_type in (None, "auto"))
+    return service.analyze(
+        document,
+        content,
+        auto_detect_type=transaction_type in (None, "auto"),
+        upload_kind=resolved_kind if is_statement else None,
+    )
 
 
 @router.get("/{upload_id}/file")

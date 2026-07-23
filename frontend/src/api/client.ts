@@ -200,6 +200,7 @@ export const api = {
     options?: {
       propertyId?: string;
       transactionType?: 'deposit' | 'expense' | 'auto';
+      uploadKind?: 'receipt' | 'bank_statement' | 'credit_card' | 'auto';
     },
   ) => {
     const form = new FormData();
@@ -209,6 +210,9 @@ export const api = {
     }
     if (options?.transactionType) {
       form.append('transaction_type', options.transactionType);
+    }
+    if (options?.uploadKind) {
+      form.append('upload_kind', options.uploadKind);
     }
     return request<UploadAnalyzeResponse>('/uploads/analyze', {
       method: 'POST',

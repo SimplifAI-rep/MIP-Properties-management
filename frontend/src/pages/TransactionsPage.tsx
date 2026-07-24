@@ -2,14 +2,18 @@ import { Fragment, useEffect, useMemo, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
-import type { Deposit, Expense, ExpenseCreate } from '../types';
+import type { ExpenseCreate } from '../types';
+import {
+  TransactionDisplayCells,
+  TransactionTableColgroup,
+  TransactionTableHeader,
+} from '../components/TransactionTable';
 import {
   Card,
   EmptyState,
   ErrorState,
   InlineError,
   formatCurrency,
-  formatDate,
   LoadingState,
 } from '../components/ui/States';
 import { SearchableMultiSelect } from '../components/ui/SearchableMultiSelect';
@@ -18,6 +22,14 @@ import { Tooltip } from '../components/ui/Tooltip';
 import { TransactionUploadPanel } from '../components/TransactionUploadPanel';
 import { useFeedback } from '../context/FeedbackContext';
 import {
+  depositToUnified,
+  expenseToUnified,
+  formatTransactionFeedback,
+  transactionRowClassName,
+  type TransactionKind,
+  type UnifiedTransaction,
+} from '../utils/unifiedTransaction';
+import {
   EXPENSE_SOURCES as SOURCES,
   PAYMENT_METHODS as METHODS,
   SECTION_SUGGESTIONS,
@@ -25,7 +37,6 @@ import {
 import { todayISO } from '../utils/dateFormat';
 import { validationError } from '../utils/errors';
 
-type TransactionKind = 'deposit' | 'expense';
 /** Filters that match Excel money lanes + Deposit/Expense. */
 type TypeFilterKind =
   | 'deposit'
@@ -38,35 +49,8 @@ type TypeFilterKind =
 type AlertFilterKind = 'incomplete_import';
 type TypeFilter = 'all' | TransactionKind;
 
-interface UnifiedTransaction {
-  id: string;
-  kind: TransactionKind;
-  property_id: string;
-  transaction_date: string | null;
-  client_prop_id: string;
-  property_name: string;
-  owner_name: string;
-  amount: string;
-  currency: string;
-  /** Excel "Section" (expense category / deposit account cue). */
-  section: string;
-  /** Excel "Notes". */
-  notes: string | null;
-  /** Excel "Company" when present. */
-  company: string | null;
-  payment_method?: string | null;
-  source?: string | null;
-  receipt_ref?: string | null;
-  source_file?: string | null;
-  balance_after?: string | null;
-  paid_by_resident?: boolean;
-  paid_by_company?: boolean;
-  paid_by_owner?: boolean;
-  ledger_column?: string | null;
-  is_rental_income?: boolean;
-  from_bank_statement?: boolean;
-  needs_review?: boolean;
-  review_reasons?: string | null;
+function label(value: string) {
+  return value.replace(/_/g, ' ');
 }
 
 interface TransactionEditForm {
@@ -100,12 +84,6 @@ function rowTypeTags(row: UnifiedTransaction): TypeFilterKind[] {
   return tags;
 }
 
-const UPLOAD_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-function isUploadReceiptRef(ref: string | null | undefined): ref is string {
-  return Boolean(ref && UPLOAD_ID_RE.test(ref));
-}
-
 const PAGE_SIZE = 50;
 
 function invalidateTransactionSummaries(queryClient: ReturnType<typeof useQueryClient>) {
@@ -120,10 +98,6 @@ function invalidateTransactionSummaries(queryClient: ReturnType<typeof useQueryC
   queryClient.invalidateQueries({ queryKey: ['alert-summary'] });
 }
 
-function label(value: string) {
-  return value.replace(/_/g, ' ');
-}
-
 function makeEmptyForm(): ExpenseCreate {
   return {
     property_id: '',
@@ -134,74 +108,6 @@ function makeEmptyForm(): ExpenseCreate {
     payment_method: 'company_account',
     vendor_name: '',
     description: '',
-  };
-}
-
-function expenseNotes(expense: Expense): string | null {
-  const desc = expense.description?.trim() || null;
-  const section = expense.category?.trim() || '';
-  if (!desc) return null;
-  // Import stores description as "Section | Notes" — show Notes only when possible.
-  if (section && desc.toLowerCase().startsWith(section.toLowerCase())) {
-    const rest = desc.slice(section.length).replace(/^\s*\|\s*/, '').trim();
-    return rest || null;
-  }
-  return desc;
-}
-
-function depositToUnified(deposit: Deposit): UnifiedTransaction {
-  return {
-    id: deposit.id,
-    kind: 'deposit',
-    property_id: deposit.property_id,
-    transaction_date: deposit.transaction_date,
-    client_prop_id: deposit.client_prop_id,
-    property_name: deposit.property_name,
-    owner_name: deposit.owner_name,
-    amount: deposit.amount,
-    currency: deposit.currency,
-    section: deposit.is_rental_income
-      ? 'Rental income'
-      : label(deposit.source || 'Inflow'),
-    notes: deposit.description,
-    company: null,
-    source: deposit.source,
-    receipt_ref: deposit.receipt_ref ?? null,
-    source_file: deposit.source_file ?? null,
-    balance_after: deposit.balance_after ?? null,
-    is_rental_income: Boolean(deposit.is_rental_income),
-    from_bank_statement: deposit.source === 'bank_statement',
-    needs_review: Boolean(deposit.needs_review),
-    review_reasons: deposit.review_reasons ?? null,
-  };
-}
-
-function expenseToUnified(expense: Expense): UnifiedTransaction {
-  return {
-    id: expense.id,
-    kind: 'expense',
-    property_id: expense.property_id,
-    transaction_date: expense.transaction_date,
-    client_prop_id: expense.client_prop_id,
-    property_name: expense.property_name,
-    owner_name: expense.owner_name,
-    amount: expense.amount,
-    currency: expense.currency,
-    section: expense.category || 'other',
-    notes: expenseNotes(expense),
-    company: expense.vendor_name,
-    payment_method: expense.payment_method,
-    source: expense.source,
-    receipt_ref: expense.receipt_ref ?? null,
-    source_file: expense.source_file ?? null,
-    balance_after: expense.balance_after ?? null,
-    paid_by_resident: Boolean(expense.paid_by_resident),
-    paid_by_company: Boolean(expense.paid_by_company),
-    paid_by_owner: Boolean(expense.paid_by_owner),
-    ledger_column: expense.ledger_column ?? null,
-    from_bank_statement: expense.source === 'bank_statement',
-    needs_review: Boolean(expense.needs_review),
-    review_reasons: expense.review_reasons ?? null,
   };
 }
 
@@ -219,43 +125,6 @@ function rowToEditForm(row: UnifiedTransaction): TransactionEditForm {
     source: row.source || (row.kind === 'deposit' ? 'management_ledger' : 'manual_company'),
     is_rental_income: Boolean(row.is_rental_income),
   };
-}
-
-function formatTransactionFeedback(row: UnifiedTransaction): string {
-  const lines = [
-    'Feedback about this transaction:',
-    '',
-    '',
-    '',
-    '--- Transaction ---',
-    `Type: ${row.kind === 'deposit' ? 'Deposit' : 'Expense'}`,
-    `ID: ${row.id}`,
-    `Prop ID: ${row.client_prop_id}`,
-    `Property: ${row.property_name}`,
-    `Owner: ${row.owner_name}`,
-    `Date: ${row.transaction_date ?? 'Missing date'}`,
-    `Section: ${row.section}`,
-    `Notes: ${row.notes || '—'}`,
-    `Amount: ${row.amount} ${row.currency}`,
-    `Company: ${row.company || '—'}`,
-  ];
-  if (row.kind === 'expense') {
-    if (row.payment_method) lines.push(`Method: ${row.payment_method}`);
-    if (row.source) lines.push(`Source: ${row.source}`);
-    if (row.paid_by_resident) lines.push('Flag: He/She paid');
-    if (row.paid_by_owner) lines.push('Flag: Owner paid');
-    if (row.paid_by_company) lines.push('Flag: MIP paid');
-    if (row.ledger_column) lines.push(`Ledger column: ${row.ledger_column}`);
-  } else {
-    if (row.is_rental_income) lines.push('Flag: Rental income');
-    if (row.source) lines.push(`Source: ${row.source}`);
-  }
-  if (row.needs_review) {
-    lines.push(`Needs review: yes (${row.review_reasons || 'unspecified'})`);
-  }
-  if (row.source_file) lines.push(`Source file: ${row.source_file}`);
-  lines.push('-------------------');
-  return lines.join('\n');
 }
 
 
@@ -1437,60 +1306,8 @@ export function TransactionsPage() {
       <section className="panel overflow-hidden">
         <div className="w-full min-w-0">
           <table className="table-shell">
-            <colgroup>
-              <col className="w-[11%]" />
-              <col className="w-[6%]" />
-              <col className="w-[7%]" />
-              <col className="w-[8%]" />
-              <col className="w-[10%]" />
-              <col className="w-[8%]" />
-              <col className="w-[8%]" />
-              <col className="w-[8%]" />
-              <col className="w-[9%]" />
-              <col className="w-[8%]" />
-              <col className="w-[7%]" />
-              <col className="w-[5%]" />
-              <col className="w-[5%]" />
-            </colgroup>
-            <thead className="table-head">
-              <tr>
-                <th className="px-2 py-3 font-medium">
-                  <Tooltip content="Deposit = Inflow · Expense = Amount (Excel money columns).">
-                    Type
-                  </Tooltip>
-                </th>
-                <th className="px-2 py-3 font-medium">
-                  <Tooltip content="Excel Prop ID.">Prop ID</Tooltip>
-                </th>
-                <th className="px-2 py-3 font-medium">Date</th>
-                <th className="px-2 py-3 font-medium">
-                  <Tooltip content="Excel Section.">Section</Tooltip>
-                </th>
-                <th className="px-2 py-3 font-medium">
-                  <Tooltip content="Excel Notes.">Notes</Tooltip>
-                </th>
-                <th className="px-2 py-3 font-medium">
-                  <Tooltip content="Excel Amount (out) or Inflow (in).">Amount</Tooltip>
-                </th>
-                <th className="px-2 py-3 font-medium">
-                  <Tooltip content="Running company-float balance after this row (like Excel Balance).">
-                    Balance
-                  </Tooltip>
-                </th>
-                <th className="px-2 py-3 font-medium">
-                  <Tooltip content="Excel Company — vendor or payee.">Company</Tooltip>
-                </th>
-                <th className="px-2 py-3 font-medium">Property</th>
-                <th className="px-2 py-3 font-medium">Owner</th>
-                <th className="px-2 py-3 font-medium">
-                  <Tooltip content="File this row was imported from.">Source file</Tooltip>
-                </th>
-                <th className="px-2 py-3 font-medium">
-                  <Tooltip content="Linked receipt (Excel Reciept), if uploaded.">Receipt</Tooltip>
-                </th>
-                <th className="px-2 py-3 font-medium">Actions</th>
-              </tr>
-            </thead>
+            <TransactionTableColgroup />
+            <TransactionTableHeader />
             <tbody>
               {items.map((row) => {
                 const isEditing =
@@ -1498,185 +1315,64 @@ export function TransactionsPage() {
                 return (
                   <Fragment key={`${row.kind}-${row.id}`}>
                     <tr
-                      className={`${
-                        row.paid_by_resident
-                          ? 'row-resident-paid'
-                          : row.paid_by_owner
-                            ? 'row-owner-paid'
-                            : row.paid_by_company
-                              ? 'row-mip-paid'
-                              : row.ledger_column === 'nearly_cc'
-                                ? 'row-nearly-cc'
-                                : row.ledger_column === 'cash'
-                                  ? 'row-cash-paid'
-                                  : row.ledger_column === 'other'
-                                    ? 'row-other-paid'
-                                    : row.is_rental_income
-                                      ? 'row-rental-income'
-                                      : row.kind === 'deposit'
-                                        ? 'row-deposit'
-                                        : 'row-expense'
-                      }${isEditing ? ' table-row-selected' : ''}`}
+                      className={`${transactionRowClassName(row)}${
+                        isEditing ? ' table-row-selected' : ''
+                      }`}
                     >
-                      <td className="px-2 py-3">
-                        <div className="flex flex-wrap items-center gap-1">
-                          {row.needs_review ? reviewBang(row) : null}
-                          <span
-                            className={row.kind === 'deposit' ? 'badge-deposit' : 'badge-expense'}
-                          >
-                            {row.kind === 'deposit' ? 'Deposit' : 'Expense'}
-                          </span>
-                          {row.paid_by_resident ? (
-                            <Tooltip content="Excel He/She paid — excluded from company float.">
-                              <span className="badge-resident-paid">He/She paid</span>
-                            </Tooltip>
-                          ) : null}
-                          {row.paid_by_owner ? (
-                            <Tooltip content="Paid by the owner — excluded from company float.">
-                              <span className="badge-owner-paid">Owner paid</span>
-                            </Tooltip>
-                          ) : null}
-                          {row.paid_by_company ? (
-                            <Tooltip content="Paid by the company (MIP) — counts in company float.">
-                              <span className="badge-mip-paid">MIP paid</span>
-                            </Tooltip>
-                          ) : null}
-                          {row.ledger_column === 'nearly_cc' ? (
-                            <Tooltip content="From the Nearly credit-card column.">
-                              <span className="badge-nearly-cc">Nearly CC</span>
-                            </Tooltip>
-                          ) : null}
-                          {row.ledger_column === 'cash' ? (
-                            <Tooltip content="From the Cash column in the ledger.">
-                              <span className="badge-cash-paid">Cash</span>
-                            </Tooltip>
-                          ) : null}
-                          {row.ledger_column === 'other' ? (
-                            <Tooltip content="From the Other column in the ledger.">
-                              <span className="badge-other-paid">Other</span>
-                            </Tooltip>
-                          ) : null}
-                          {row.is_rental_income ? (
-                            <Tooltip content="Excel Rental income — tracked separately from company float.">
-                              <span className="badge-rental-income">Rental income</span>
-                            </Tooltip>
-                          ) : null}
-                          {row.from_bank_statement ? (
-                            <Tooltip content="Imported from the company bank statement.">
-                              <span className="badge-bank-statement">Bank statement</span>
-                            </Tooltip>
-                          ) : null}
-                        </div>
-                      </td>
-                      <td className="px-2 py-3 font-mono text-xs font-medium truncate" title={row.client_prop_id}>
-                        {row.client_prop_id}
-                      </td>
-                      <td className="px-2 py-3 truncate">
-                        {row.transaction_date ? (
-                          formatDate(row.transaction_date)
-                        ) : row.needs_review ? (
-                          reviewBang(row)
-                        ) : (
-                          '—'
-                        )}
-                      </td>
-                      <td className="px-2 py-3 truncate" title={row.section || undefined}>
-                        {row.section}
-                      </td>
-                      <td className="px-2 py-3 muted-text truncate" title={row.notes || undefined}>
-                        {row.notes || '—'}
-                      </td>
-                      <td
-                        className={`px-2 py-3 tabular-nums truncate ${
-                          row.paid_by_resident
-                            ? 'amount-resident-paid'
-                            : row.paid_by_owner
-                              ? 'amount-owner-paid'
-                              : row.paid_by_company
-                                ? 'amount-mip-paid'
-                                : row.ledger_column === 'nearly_cc'
-                                  ? 'amount-nearly-cc'
-                                  : row.ledger_column === 'cash'
-                                    ? 'amount-cash-paid'
-                                    : row.ledger_column === 'other'
-                                      ? 'amount-other-paid'
-                                      : row.is_rental_income
-                                        ? 'amount-rental-income'
-                                        : row.kind === 'deposit'
-                                          ? 'amount-deposit'
-                                          : 'amount-expense'
-                        }`}
-                      >
-                        {Number(row.amount) <= 0 && row.needs_review ? (
-                          reviewBang(row)
-                        ) : (
-                          <>
-                            {row.kind === 'deposit' ? '+' : '−'}
-                            {formatCurrency(row.amount, row.currency)}
-                          </>
-                        )}
-                      </td>
-                      <td
-                        className={`px-2 py-3 tabular-nums font-medium truncate ${
-                          row.balance_after == null
-                            ? 'muted-text'
-                            : Number(row.balance_after) >= 0
-                              ? 'amount-deposit'
-                              : 'amount-expense'
-                        }`}
-                      >
-                        {row.balance_after == null
-                          ? '—'
-                          : formatCurrency(row.balance_after, row.currency)}
-                      </td>
-                      <td className="px-2 py-3 muted-text truncate" title={row.company || undefined}>
-                        {row.company || '—'}
-                      </td>
-                      <td className="px-2 py-3 font-medium truncate" title={row.property_name}>
-                        {row.property_name}
-                      </td>
-                      <td className="px-2 py-3 truncate" title={row.owner_name}>
-                        {row.owner_name}
-                      </td>
-                      <td
-                        className="px-2 py-3 text-xs muted-text truncate"
-                        title={row.source_file ?? undefined}
-                      >
-                        {row.source_file || '—'}
-                      </td>
-                  <td className="px-2 py-3">
-                    {isUploadReceiptRef(row.receipt_ref) ? (
-                      <a
-                        href={api.getUploadFileUrl(row.receipt_ref!, { download: true })}
-                        download={row.source_file || undefined}
-                        className="btn-icon"
-                        aria-label="Download file"
-                        title="Download"
-                      >
-                        <svg
-                          xmlns="http://www.w3.org/2000/svg"
-                          viewBox="0 0 20 20"
-                          fill="currentColor"
-                          className="h-4 w-4"
-                          aria-hidden="true"
-                        >
-                          <path d="M10.75 2.75a.75.75 0 0 0-1.5 0v8.614L6.295 8.235a.75.75 0 1 0-1.09 1.03l4.25 4.5a.75.75 0 0 0 1.09 0l4.25-4.5a.75.75 0 0 0-1.09-1.03l-2.955 3.129V2.75Z" />
-                          <path d="M3.5 12.75a.75.75 0 0 0-1.5 0v2.5A2.75 2.75 0 0 0 4.75 18h10.5A2.75 2.75 0 0 0 18 15.25v-2.5a.75.75 0 0 0-1.5 0v2.5c0 .69-.56 1.25-1.25 1.25H4.75c-.69 0-1.25-.56-1.25-1.25v-2.5Z" />
-                        </svg>
-                      </a>
-                    ) : (
-                      <span className="muted-text text-xs">—</span>
-                    )}
-                  </td>
-                      <td className="px-2 py-3">
-                        <div className="flex items-center gap-1">
-                          {isEditing ? (
-                            <Tooltip content="Close" hideHint>
+                      <TransactionDisplayCells
+                        row={row}
+                        reviewMarker={row.needs_review ? reviewBang(row) : null}
+                        actions={
+                          <div className="flex items-center gap-1">
+                            {isEditing ? (
+                              <Tooltip content="Close" hideHint>
+                                <button
+                                  type="button"
+                                  className="btn-icon"
+                                  onClick={cancelEdit}
+                                  aria-label="Close edit"
+                                >
+                                  <svg
+                                    xmlns="http://www.w3.org/2000/svg"
+                                    viewBox="0 0 20 20"
+                                    fill="currentColor"
+                                    className="h-4 w-4"
+                                    aria-hidden="true"
+                                  >
+                                    <path d="M6.28 5.22a.75.75 0 0 0-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 1 0 1.06 1.06L10 11.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L11.06 10l3.72-3.72a.75.75 0 0 0-1.06-1.06L10 8.94 6.28 5.22Z" />
+                                  </svg>
+                                </button>
+                              </Tooltip>
+                            ) : (
+                              <Tooltip content="Edit" hideHint>
+                                <button
+                                  type="button"
+                                  className="btn-icon"
+                                  onClick={() => openEdit(row)}
+                                  aria-label="Edit transaction"
+                                >
+                                  <svg
+                                    xmlns="http://www.w3.org/2000/svg"
+                                    viewBox="0 0 20 20"
+                                    fill="currentColor"
+                                    className="h-4 w-4"
+                                    aria-hidden="true"
+                                  >
+                                    <path d="m2.695 14.762-1.262 3.155a.5.5 0 0 0 .65.65l3.155-1.262a4 4 0 0 0 1.343-.886L17.5 5.501a2.121 2.121 0 0 0-3-3L3.58 13.419a4 4 0 0 0-.885 1.343Z" />
+                                  </svg>
+                                </button>
+                              </Tooltip>
+                            )}
+                            <Tooltip content="Feedback" hideHint>
                               <button
                                 type="button"
                                 className="btn-icon"
-                                onClick={cancelEdit}
-                                aria-label="Close edit"
+                                onClick={() =>
+                                  openFeedback({
+                                    initialMessage: formatTransactionFeedback(row),
+                                  })
+                                }
+                                aria-label="Send feedback"
                               >
                                 <svg
                                   xmlns="http://www.w3.org/2000/svg"
@@ -1685,58 +1381,17 @@ export function TransactionsPage() {
                                   className="h-4 w-4"
                                   aria-hidden="true"
                                 >
-                                  <path d="M6.28 5.22a.75.75 0 0 0-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 1 0 1.06 1.06L10 11.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L11.06 10l3.72-3.72a.75.75 0 0 0-1.06-1.06L10 8.94 6.28 5.22Z" />
+                                  <path
+                                    fillRule="evenodd"
+                                    d="M10 2c-2.236 0-4.43.18-6.512.512C2.35 2.718 1.5 3.958 1.5 5.373v4.254c0 1.415.85 2.655 1.988 2.86 1.113.178 2.259.3 3.418.364V16.5a.75.75 0 0 0 1.28.53l2.754-2.753A32.978 32.978 0 0 0 10 14c2.236 0 4.43-.18 6.512-.512 1.138-.205 1.988-1.445 1.988-2.86V5.373c0-1.415-.85-2.655-1.988-2.86A33.001 33.001 0 0 0 10 2Zm0 5a1 1 0 1 0 0 2 1 1 0 0 0 0-2ZM7 8a1 1 0 1 1-2 0 1 1 0 0 1 2 0Zm6 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0Z"
+                                    clipRule="evenodd"
+                                  />
                                 </svg>
                               </button>
                             </Tooltip>
-                          ) : (
-                            <Tooltip content="Edit" hideHint>
-                              <button
-                                type="button"
-                                className="btn-icon"
-                                onClick={() => openEdit(row)}
-                                aria-label="Edit transaction"
-                              >
-                                <svg
-                                  xmlns="http://www.w3.org/2000/svg"
-                                  viewBox="0 0 20 20"
-                                  fill="currentColor"
-                                  className="h-4 w-4"
-                                  aria-hidden="true"
-                                >
-                                  <path d="m2.695 14.762-1.262 3.155a.5.5 0 0 0 .65.65l3.155-1.262a4 4 0 0 0 1.343-.886L17.5 5.501a2.121 2.121 0 0 0-3-3L3.58 13.419a4 4 0 0 0-.885 1.343Z" />
-                                </svg>
-                              </button>
-                            </Tooltip>
-                          )}
-                          <Tooltip content="Feedback" hideHint>
-                            <button
-                              type="button"
-                              className="btn-icon"
-                              onClick={() =>
-                                openFeedback({
-                                  initialMessage: formatTransactionFeedback(row),
-                                })
-                              }
-                              aria-label="Send feedback"
-                            >
-                              <svg
-                                xmlns="http://www.w3.org/2000/svg"
-                                viewBox="0 0 20 20"
-                                fill="currentColor"
-                                className="h-4 w-4"
-                                aria-hidden="true"
-                              >
-                                <path
-                                  fillRule="evenodd"
-                                  d="M10 2c-2.236 0-4.43.18-6.512.512C2.35 2.718 1.5 3.958 1.5 5.373v4.254c0 1.415.85 2.655 1.988 2.86 1.113.178 2.259.3 3.418.364V16.5a.75.75 0 0 0 1.28.53l2.754-2.753A32.978 32.978 0 0 0 10 14c2.236 0 4.43-.18 6.512-.512 1.138-.205 1.988-1.445 1.988-2.86V5.373c0-1.415-.85-2.655-1.988-2.86A33.001 33.001 0 0 0 10 2Zm0 5a1 1 0 1 0 0 2 1 1 0 0 0 0-2ZM7 8a1 1 0 1 1-2 0 1 1 0 0 1 2 0Zm6 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0Z"
-                                  clipRule="evenodd"
-                                />
-                              </svg>
-                            </button>
-                          </Tooltip>
-                        </div>
-                      </td>
+                          </div>
+                        }
+                      />
                     </tr>
                     {isEditing ? (
                       <tr className="bg-slate-50/80 dark:bg-slate-900/40">

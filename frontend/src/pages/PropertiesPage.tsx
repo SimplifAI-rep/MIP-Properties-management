@@ -2,12 +2,12 @@ import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
+import { TransactionTable } from '../components/TransactionTable';
 import {
   Card,
   EmptyState,
   ErrorState,
   formatCurrency,
-  formatDate,
   LoadingState,
 } from '../components/ui/States';
 import { Tooltip } from '../components/ui/Tooltip';
@@ -17,6 +17,7 @@ import {
   ownerTransactionsState,
   propertyTransactionsState,
 } from '../utils/transactionsNav';
+import { depositToUnified } from '../utils/unifiedTransaction';
 
 function formatPropertyFeedback(property: Property): string {
   return [
@@ -332,29 +333,21 @@ export function PropertiesPage() {
               </div>
               <div>
                 <h4 className="subheading">Recent Deposits</h4>
-                <ul className="mt-2 space-y-2 text-sm">
-                  {detailQuery.data.recent_deposits.length === 0 ? (
-                    <li className="muted-text">No recent deposits.</li>
-                  ) : (
-                    detailQuery.data.recent_deposits.map((deposit) => (
-                      <li key={deposit.id}>
-                        <Link
-                          to="/transactions"
-                          state={propertyTransactionsState(
-                            detailQuery.data.id,
-                            detailQuery.data.client_prop_id,
-                          )}
-                          className="list-item block hover:bg-slate-50 dark:hover:bg-slate-800/60"
-                        >
-                          <p className="font-medium">{formatCurrency(deposit.amount)}</p>
-                          <p className="muted-text">
-                            {formatDate(deposit.transaction_date)} · {deposit.description}
-                          </p>
-                        </Link>
-                      </li>
-                    ))
-                  )}
-                </ul>
+                <div className="mt-2">
+                  <TransactionTable
+                    rows={detailQuery.data.recent_deposits.map(depositToUnified)}
+                    emptyMessage="No recent deposits."
+                    onRowClick={() =>
+                      navigate('/transactions', {
+                        state: propertyTransactionsState(
+                          detailQuery.data.id,
+                          detailQuery.data.client_prop_id,
+                        ),
+                      })
+                    }
+                    className="overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-700"
+                  />
+                </div>
               </div>
             </div>
           )}

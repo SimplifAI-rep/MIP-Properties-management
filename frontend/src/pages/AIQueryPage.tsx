@@ -1,13 +1,19 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
 import type { AIQueryResponse } from '../types';
+import { TransactionTable } from '../components/TransactionTable';
 import { ErrorState, formatCurrency, formatDate, LoadingState } from '../components/ui/States';
 import { Tooltip } from '../components/ui/Tooltip';
 import { downloadAIQueryExcel } from '../utils/exportExcel';
 import { getUserErrorMessage } from '../utils/errors';
 import { aiIntentToTransactionsState } from '../utils/transactionsNav';
+import {
+  looksLikeTransactionList,
+  recordToUnified,
+  type UnifiedTransaction,
+} from '../utils/unifiedTransaction';
 
 const EXAMPLE_PROMPTS = [
   'Show all deposits for Rothschild 12 in Q1 2026',
@@ -30,7 +36,7 @@ function renderCell(value: unknown): string {
   return JSON.stringify(value);
 }
 
-function QueryResultTable({ data }: { data: Record<string, unknown>[] }) {
+function AggregateResultTable({ data }: { data: Record<string, unknown>[] }) {
   if (data.length === 0) {
     return <p className="muted-text">No rows returned.</p>;
   }
@@ -71,6 +77,15 @@ function QueryResultTable({ data }: { data: Record<string, unknown>[] }) {
   );
 }
 
+function mapResultToTransactions(result: AIQueryResponse): UnifiedTransaction[] | null {
+  if (result.query_used.query_type !== 'list') return null;
+  if (!looksLikeTransactionList(result.data)) return null;
+  const domain = result.query_used.domain ?? 'deposits';
+  const fallbackKind =
+    domain === 'expenses' ? 'expense' : domain === 'deposits' ? 'deposit' : undefined;
+  return result.data.map((row) => recordToUnified(row, fallbackKind));
+}
+
 function canOpenInTransactions(result: AIQueryResponse): boolean {
   if (result.query_used.query_type === 'gap_analysis') return false;
   return true;
@@ -85,6 +100,11 @@ export function AIQueryPage() {
     mutationFn: api.postAIQuery,
     onSuccess: (data) => setResult(data),
   });
+
+  const transactionRows = useMemo(
+    () => (result ? mapResultToTransactions(result) : null),
+    [result],
+  );
 
   const handleSubmit = (value: string) => {
     const trimmed = value.trim();
@@ -208,7 +228,23 @@ export function AIQueryPage() {
                 </button>
               </div>
             </div>
-            <QueryResultTable data={result.data} />
+            {transactionRows ? (
+              <TransactionTable
+                rows={transactionRows}
+                emptyMessage="No rows returned."
+                onRowClick={(row) =>
+                  navigate('/transactions', {
+                    state: {
+                      ...aiIntentToTransactionsState(result.query_used),
+                      highlightId: row.id,
+                      highlightKind: row.kind,
+                    },
+                  })
+                }
+              />
+            ) : (
+              <AggregateResultTable data={result.data} />
+            )}
           </div>
         </section>
       ) : null}

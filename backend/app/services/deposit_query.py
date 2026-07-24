@@ -12,7 +12,7 @@ from app.models.deposit import Deposit
 from app.models.expected_deposit import ExpectedDeposit
 from app.models.owner import Owner
 from app.models.property import Property
-from app.schemas import DepositCreate, DepositGap, DepositRead
+from app.schemas import DepositCreate, DepositGap, DepositRead, DepositUpdate
 from app.services.running_balance import compute_running_balances
 from app.services.source_file import (
     load_batch_filenames,
@@ -60,6 +60,8 @@ def deposit_to_read(
             batch_names=batch_names,
         ),
         balance_after=balance,
+        needs_review=bool(getattr(deposit, "needs_review", False)),
+        review_reasons=getattr(deposit, "review_reasons", None),
     )
 
 
@@ -73,6 +75,9 @@ def list_deposits(
     date_to: date | None = None,
     min_amount: Decimal | None = None,
     max_amount: Decimal | None = None,
+    source_file: str | None = None,
+    needs_review: bool | None = None,
+    is_rental_income: bool | None = None,
     page: int = 1,
     page_size: int = 50,
 ) -> tuple[list[DepositRead], int]:
@@ -107,6 +112,12 @@ def list_deposits(
         stmt = stmt.where(Deposit.amount >= min_amount)
     if max_amount is not None:
         stmt = stmt.where(Deposit.amount <= max_amount)
+    if source_file:
+        stmt = stmt.where(Deposit.source_file == source_file.strip())
+    if needs_review is not None:
+        stmt = stmt.where(Deposit.needs_review.is_(needs_review))
+    if is_rental_income is not None:
+        stmt = stmt.where(Deposit.is_rental_income.is_(is_rental_income))
 
     count_stmt = select(func.count()).select_from(stmt.subquery())
     total = db.scalar(count_stmt) or 0
@@ -146,11 +157,17 @@ def get_deposit_summary(
     date_to: date | None = None,
     min_amount: Decimal | None = None,
     max_amount: Decimal | None = None,
+    source_file: str | None = None,
+    needs_review: bool | None = None,
+    is_rental_income: bool | None = None,
     include_all: bool = False,
 ) -> dict:
     # Default: rental-income rows are informational only — exclude from company float totals
+    # Explicit is_rental_income overrides include_all default.
     filters = []
-    if not include_all:
+    if is_rental_income is not None:
+        filters.append(Deposit.is_rental_income.is_(is_rental_income))
+    elif not include_all:
         filters.append(Deposit.is_rental_income.is_(False))
 
     needs_property_join = bool(client_prop_id or owner_id)
@@ -164,6 +181,10 @@ def get_deposit_summary(
         filters.append(Deposit.amount >= min_amount)
     if max_amount is not None:
         filters.append(Deposit.amount <= max_amount)
+    if source_file:
+        filters.append(Deposit.source_file == source_file.strip())
+    if needs_review is not None:
+        filters.append(Deposit.needs_review.is_(needs_review))
 
     amount_stmt = select(func.coalesce(func.sum(Deposit.amount), 0))
     count_stmt = select(func.count()).select_from(Deposit)
@@ -213,6 +234,9 @@ def find_deposit_gaps(
     month: int | None = None,
     date_from: date | None = None,
     date_to: date | None = None,
+    property_id: UUID | None = None,
+    client_prop_id: str | None = None,
+    owner_id: UUID | None = None,
 ) -> list[DepositGap]:
     settings = get_settings()
     tolerance = Decimal(str(settings.import_amount_tolerance))
@@ -239,12 +263,22 @@ def find_deposit_gaps(
             next_month = date(today.year, today.month + 1, 1)
             period_end = next_month - timedelta(days=1)
 
-    expected_rows = db.execute(
+    expected_stmt = (
         select(ExpectedDeposit, Property, Owner)
         .join(Property, ExpectedDeposit.property_id == Property.id)
         .join(Owner, Property.owner_id == Owner.id)
         .where(ExpectedDeposit.active.is_(True))
-    ).all()
+    )
+    if property_id:
+        expected_stmt = expected_stmt.where(Property.id == property_id)
+    if client_prop_id:
+        expected_stmt = expected_stmt.where(
+            func.upper(Property.client_prop_id) == client_prop_id.strip().upper()
+        )
+    if owner_id:
+        expected_stmt = expected_stmt.where(Property.owner_id == owner_id)
+
+    expected_rows = db.execute(expected_stmt).all()
 
     gaps: list[DepositGap] = []
     for expected, prop, owner in expected_rows:
@@ -324,3 +358,73 @@ def create_deposit(db: Session, payload: DepositCreate) -> DepositRead:
         account_number,
         property_row.client_prop_id,
     )
+
+
+def update_deposit(db: Session, deposit_id: UUID, payload: DepositUpdate) -> DepositRead:
+    deposit = db.get(Deposit, deposit_id)
+    if not deposit:
+        raise HTTPException(status_code=404, detail="Deposit not found")
+
+    data = payload.model_dump(exclude_unset=True)
+    property_id = data.get("property_id", deposit.property_id)
+    property_row = db.get(Property, property_id)
+    if not property_row:
+        raise HTTPException(status_code=404, detail="Property not found")
+
+    owner = db.get(Owner, property_row.owner_id)
+    if not owner:
+        raise HTTPException(status_code=404, detail="Owner not found")
+
+    account_number = None
+    if "bank_account_id" in data:
+        bank_account_id = data["bank_account_id"]
+        if bank_account_id is None:
+            deposit.bank_account_id = None
+        else:
+            bank_account = db.get(BankAccount, bank_account_id)
+            if not bank_account:
+                raise HTTPException(status_code=404, detail="Bank account not found")
+            if (
+                bank_account.property_id is not None
+                and bank_account.property_id != property_id
+            ):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Bank account does not belong to the selected property",
+                )
+            deposit.bank_account_id = bank_account.id
+            account_number = bank_account.account_number
+            data.pop("bank_account_id", None)
+    elif deposit.bank_account_id:
+        bank_account = db.get(BankAccount, deposit.bank_account_id)
+        account_number = bank_account.account_number if bank_account else None
+
+    for key, value in data.items():
+        setattr(deposit, key, value)
+
+    if (
+        getattr(deposit, "needs_review", False)
+        and deposit.transaction_date is not None
+        and deposit.amount is not None
+        and deposit.amount > 0
+    ):
+        deposit.needs_review = False
+        deposit.review_reasons = None
+
+    db.commit()
+    db.refresh(deposit)
+    return deposit_to_read(
+        deposit,
+        property_row.name,
+        owner.name,
+        account_number,
+        property_row.client_prop_id,
+    )
+
+
+def delete_deposit(db: Session, deposit_id: UUID) -> None:
+    deposit = db.get(Deposit, deposit_id)
+    if not deposit:
+        raise HTTPException(status_code=404, detail="Deposit not found")
+    db.delete(deposit)
+    db.commit()

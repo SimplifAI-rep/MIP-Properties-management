@@ -25,7 +25,8 @@ class Deposit(Base, TimestampMixin):
     property_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("properties.id"), nullable=False
     )
-    transaction_date: Mapped[date] = mapped_column(Date, nullable=False)
+    # Nullable when imported incomplete (missing Excel date) — needs_review=True
+    transaction_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     currency: Mapped[str] = mapped_column(String(3), nullable=False, default="ILS")
     reference: Mapped[str | None] = mapped_column(String(100))
@@ -42,6 +43,9 @@ class Deposit(Base, TimestampMixin):
     receipt_ref: Mapped[str | None] = mapped_column(String(100))
     # Original upload/import filename (Excel workbook, PDF receipt, etc.)
     source_file: Mapped[str | None] = mapped_column(String(255))
+    # Incomplete Excel import (missing date and/or money) awaiting user fix
+    needs_review: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    review_reasons: Mapped[str | None] = mapped_column(String(255))
 
     bank_account: Mapped["BankAccount | None"] = relationship(back_populates="deposits")
     property: Mapped["Property"] = relationship(back_populates="deposits")

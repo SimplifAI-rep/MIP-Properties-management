@@ -1,5 +1,9 @@
 # Property Asset Management — Implementation Specification
 
+> **Status:** Historical planning doc. The running app has moved past this MVP outline
+> (expenses, alerts, Data Import UI, no auto-seed). Prefer root `README.md` and
+> `docs/DEPLOY.md` for current setup.
+
 > **Document type:** Implementation plan (מסמך אפיון)  
 > **Language:** English  
 > **Last updated:** July 2026  

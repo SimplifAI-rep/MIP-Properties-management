@@ -1,127 +1,132 @@
-import { useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
-import type { Deposit, Expense, ExpenseCreate } from '../types';
+import type { ExpenseCreate } from '../types';
+import {
+  TransactionDisplayCells,
+  TransactionTableColgroup,
+  TransactionTableHeader,
+} from '../components/TransactionTable';
 import {
   Card,
   EmptyState,
   ErrorState,
+  InlineError,
   formatCurrency,
-  formatDate,
   LoadingState,
 } from '../components/ui/States';
+import { SearchableMultiSelect } from '../components/ui/SearchableMultiSelect';
+import { DateInputDMY } from '../components/ui/DateInputDMY';
 import { Tooltip } from '../components/ui/Tooltip';
 import { TransactionUploadPanel } from '../components/TransactionUploadPanel';
+import { useFeedback } from '../context/FeedbackContext';
+import {
+  depositToUnified,
+  expenseToUnified,
+  formatTransactionFeedback,
+  transactionRowClassName,
+  type TransactionKind,
+  type UnifiedTransaction,
+} from '../utils/unifiedTransaction';
+import {
+  EXPENSE_SOURCES as SOURCES,
+  PAYMENT_METHODS as METHODS,
+  SECTION_SUGGESTIONS,
+} from '../constants/expenseOptions';
+import { todayISO } from '../utils/dateFormat';
+import { validationError } from '../utils/errors';
 
-type TransactionKind = 'deposit' | 'expense';
+/** Filters that match Excel money lanes + Deposit/Expense. */
+type TypeFilterKind =
+  | 'deposit'
+  | 'expense'
+  | 'rental_income'
+  | 'he_she_paid'
+  | 'owner_paid'
+  | 'bank_statement'
+  | 'nearly_cc';
+type AlertFilterKind = 'incomplete_import';
 type TypeFilter = 'all' | TransactionKind;
-
-interface UnifiedTransaction {
-  id: string;
-  kind: TransactionKind;
-  transaction_date: string;
-  client_prop_id: string;
-  property_name: string;
-  owner_name: string;
-  amount: string;
-  currency: string;
-  details: string;
-  description: string | null;
-  receipt_ref?: string | null;
-  source_file?: string | null;
-  balance_after?: string | null;
-  paid_by_resident?: boolean;
-  paid_by_company?: boolean;
-  paid_by_owner?: boolean;
-  ledger_column?: string | null;
-  is_rental_income?: boolean;
-  from_bank_statement?: boolean;
-}
-
-const UPLOAD_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-function isUploadReceiptRef(ref: string | null | undefined): ref is string {
-  return Boolean(ref && UPLOAD_ID_RE.test(ref));
-}
-
-const CATEGORIES = [
-  'maintenance',
-  'tax',
-  'insurance',
-  'utilities',
-  'management_fee',
-  'other',
-] as const;
-
-const SOURCES = [
-  'standing_order',
-  'credit_card',
-  'manual_owner',
-  'manual_company',
-] as const;
-
-const PAYMENT_METHODS = [
-  'bank_direct_debit',
-  'credit_card',
-  'bank_transfer',
-  'owner_personal',
-  'company_account',
-] as const;
-
-const PAGE_SIZE = 50;
-const FETCH_SIZE = 200;
-/** When a Prop ID / property filter is active, load enough rows to merge locally. */
-const FILTERED_FETCH_SIZE = 2000;
 
 function label(value: string) {
   return value.replace(/_/g, ' ');
 }
 
-function depositToUnified(deposit: Deposit): UnifiedTransaction {
+interface TransactionEditForm {
+  kind: TransactionKind;
+  id: string;
+  property_id: string;
+  transaction_date?: string;
+  amount: string;
+  section: string;
+  notes: string;
+  company: string;
+  payment_method: string;
+  source: string;
+  is_rental_income: boolean;
+}
+
+
+function rowTypeTags(row: UnifiedTransaction): TypeFilterKind[] {
+  const tags: TypeFilterKind[] = [];
+  if (row.kind === 'deposit') {
+    tags.push(row.is_rental_income ? 'rental_income' : 'deposit');
+  } else if (row.paid_by_resident) {
+    tags.push('he_she_paid');
+  } else if (row.paid_by_owner) {
+    tags.push('owner_paid');
+  } else {
+    tags.push('expense');
+  }
+  if (row.from_bank_statement) tags.push('bank_statement');
+  if (row.ledger_column === 'nearly_cc') tags.push('nearly_cc');
+  return tags;
+}
+
+const PAGE_SIZE = 50;
+
+function invalidateTransactionSummaries(queryClient: ReturnType<typeof useQueryClient>) {
+  queryClient.invalidateQueries({ queryKey: ['expenses'] });
+  queryClient.invalidateQueries({ queryKey: ['deposits'] });
+  queryClient.invalidateQueries({ queryKey: ['expense-summary'] });
+  queryClient.invalidateQueries({ queryKey: ['deposit-summary'] });
+  queryClient.invalidateQueries({ queryKey: ['expense-summary-heshe'] });
+  queryClient.invalidateQueries({ queryKey: ['expense-summary-owner'] });
+  queryClient.invalidateQueries({ queryKey: ['deposit-summary-rental'] });
+  queryClient.invalidateQueries({ queryKey: ['alerts'] });
+  queryClient.invalidateQueries({ queryKey: ['alert-summary'] });
+}
+
+function makeEmptyForm(): ExpenseCreate {
   return {
-    id: deposit.id,
-    kind: 'deposit',
-    transaction_date: deposit.transaction_date,
-    client_prop_id: deposit.client_prop_id,
-    property_name: deposit.property_name,
-    owner_name: deposit.owner_name,
-    amount: deposit.amount,
-    currency: deposit.currency,
-    details: deposit.account_number ?? deposit.source,
-    description: deposit.description,
-    receipt_ref: deposit.receipt_ref ?? null,
-    source_file: deposit.source_file ?? null,
-    balance_after: deposit.balance_after ?? null,
-    is_rental_income: Boolean(deposit.is_rental_income),
-    from_bank_statement: deposit.source === 'bank_statement',
+    property_id: '',
+    transaction_date: todayISO(),
+    amount: '',
+    category: '',
+    source: 'manual_company',
+    payment_method: 'company_account',
+    vendor_name: '',
+    description: '',
   };
 }
 
-function expenseToUnified(expense: Expense): UnifiedTransaction {
+function rowToEditForm(row: UnifiedTransaction): TransactionEditForm {
   return {
-    id: expense.id,
-    kind: 'expense',
-    transaction_date: expense.transaction_date,
-    client_prop_id: expense.client_prop_id,
-    property_name: expense.property_name,
-    owner_name: expense.owner_name,
-    amount: expense.amount,
-    currency: expense.currency,
-    details: `${label(expense.category)} · ${label(expense.source)}`,
-    description: expense.vendor_name
-      ? `${expense.vendor_name}${expense.description ? ` — ${expense.description}` : ''}`
-      : expense.description,
-    receipt_ref: expense.receipt_ref ?? null,
-    source_file: expense.source_file ?? null,
-    balance_after: expense.balance_after ?? null,
-    paid_by_resident: Boolean(expense.paid_by_resident),
-    paid_by_company: Boolean(expense.paid_by_company),
-    paid_by_owner: Boolean(expense.paid_by_owner),
-    ledger_column: expense.ledger_column ?? null,
-    from_bank_statement: expense.source === 'bank_statement',
+    kind: row.kind,
+    id: row.id,
+    property_id: row.property_id,
+    transaction_date: row.transaction_date ?? undefined,
+    amount: Number(row.amount) > 0 ? row.amount : '',
+    section: row.kind === 'expense' ? row.section : '',
+    notes: row.notes ?? '',
+    company: row.company ?? '',
+    payment_method: row.payment_method || 'company_account',
+    source: row.source || (row.kind === 'deposit' ? 'management_ledger' : 'manual_company'),
+    is_rental_income: Boolean(row.is_rental_income),
   };
 }
+
 
 function downloadCsv(rows: Record<string, string | number | null>[], filename: string) {
   if (rows.length === 0) return;
@@ -146,36 +151,27 @@ function downloadCsv(rows: Record<string, string | number | null>[], filename: s
   URL.revokeObjectURL(link.href);
 }
 
-const emptyForm: ExpenseCreate = {
-  property_id: '',
-  transaction_date: '',
-  amount: '',
-  category: 'maintenance',
-  source: 'manual_company',
-  payment_method: 'company_account',
-  description: '',
-};
-
 export function TransactionsPage() {
   const location = useLocation();
   const queryClient = useQueryClient();
-  const [typeFilter, setTypeFilter] = useState<TypeFilter>('all');
+  const { openFeedback } = useFeedback();
+  const [kinds, setKinds] = useState<TypeFilterKind[]>(['deposit', 'expense']);
   const [page, setPage] = useState(1);
-  const [propertyId, setPropertyId] = useState<string | undefined>();
-  const [clientPropId, setClientPropId] = useState<string | undefined>();
-  const [ownerId, setOwnerId] = useState<string | undefined>();
+  const [propertyIds, setPropertyIds] = useState<string[]>([]);
+  const [clientPropIds, setClientPropIds] = useState<string[]>([]);
+  const [ownerIds, setOwnerIds] = useState<string[]>([]);
   const [dateFrom, setDateFrom] = useState<string | undefined>();
   const [dateTo, setDateTo] = useState<string | undefined>();
-  const [category, setCategory] = useState<string | undefined>();
-  const [source, setSource] = useState<string | undefined>();
+  const [sections, setSections] = useState<string[]>([]);
+  const [sources, setSources] = useState<string[]>([]);
+  const [sourceFiles, setSourceFiles] = useState<string[]>([]);
+  const [alertFilters, setAlertFilters] = useState<AlertFilterKind[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [showUpload, setShowUpload] = useState(false);
-  const [receiptViewer, setReceiptViewer] = useState<{
-    url: string;
-    label: string;
-  } | null>(null);
-  const [form, setForm] = useState<ExpenseCreate>(emptyForm);
-  const [formError, setFormError] = useState<string | null>(null);
+  const [form, setForm] = useState<ExpenseCreate>(() => makeEmptyForm());
+  const [formError, setFormError] = useState<unknown>(null);
+  const [editForm, setEditForm] = useState<TransactionEditForm | null>(null);
+  const [editError, setEditError] = useState<unknown>(null);
 
   useEffect(() => {
     const state = location.state as {
@@ -187,45 +183,127 @@ export function TransactionsPage() {
       dateFrom?: string;
       dateTo?: string;
       typeFilter?: TypeFilter;
+      kinds?: TypeFilterKind[];
+      sections?: string[];
+      sources?: string[];
+      sourceFiles?: string[];
+      alertFilters?: AlertFilterKind[];
     } | null;
-    if (state?.showUpload) {
+    if (!state) return;
+
+    if (state.showUpload) {
       setShowUpload(true);
       setShowForm(false);
     }
-    if (state?.showForm) {
+    if (state.showForm) {
       setShowForm(true);
       setShowUpload(false);
     }
-    if (state?.propertyId || state?.clientPropId) {
-      setPropertyId(state.propertyId);
-      setClientPropId(state.clientPropId);
-      setOwnerId(undefined);
-      setPage(1);
-    } else if (state?.ownerId) {
-      setOwnerId(state.ownerId);
-      setPropertyId(undefined);
-      setClientPropId(undefined);
+    if (state.propertyId || state.clientPropId) {
+      setPropertyIds(state.propertyId ? [state.propertyId] : []);
+      setClientPropIds(state.clientPropId ? [state.clientPropId] : []);
+      if (!state.ownerId) setOwnerIds([]);
       setPage(1);
     }
-    if (state?.dateFrom != null || state?.dateTo != null) {
+    if (state.ownerId) {
+      setOwnerIds([state.ownerId]);
+      if (!state.propertyId && !state.clientPropId) {
+        setPropertyIds([]);
+        setClientPropIds([]);
+      }
+      setPage(1);
+    }
+    if (state.dateFrom != null || state.dateTo != null) {
       setDateFrom(state.dateFrom);
       setDateTo(state.dateTo);
       setPage(1);
     }
-    if (state?.typeFilter) {
-      setTypeFilter(state.typeFilter);
+    if (state.kinds && state.kinds.length > 0) {
+      setKinds(state.kinds);
       setPage(1);
-    } else if (state?.propertyId || state?.clientPropId || state?.ownerId) {
-      setTypeFilter('all');
+    } else if (state.typeFilter === 'deposit') {
+      setKinds(['deposit']);
+      setPage(1);
+    } else if (state.typeFilter === 'expense') {
+      setKinds(['expense']);
+      setPage(1);
+    } else if (state.propertyId || state.clientPropId || state.ownerId) {
+      setKinds(['deposit', 'expense']);
+    }
+    if (state.sections) {
+      setSections(state.sections);
+      setPage(1);
+    }
+    if (state.sources) {
+      setSources(state.sources);
+      setPage(1);
+    }
+    if (state.sourceFiles) {
+      setSourceFiles(state.sourceFiles);
+      setPage(1);
+    }
+    if (state.alertFilters) {
+      setAlertFilters(state.alertFilters);
+      setPage(1);
     }
   }, [location.state]);
 
+  const apiPropertyId = propertyIds.length === 1 ? propertyIds[0] : undefined;
+  const apiClientPropId = clientPropIds.length === 1 ? clientPropIds[0] : undefined;
+  const apiOwnerId = ownerIds.length === 1 ? ownerIds[0] : undefined;
+  const apiSection = sections.length === 1 ? sections[0] : undefined;
+  const apiSource = sources.length === 1 ? sources[0] : undefined;
+
   const sharedFilters = {
-    property_id: propertyId,
-    client_prop_id: clientPropId,
-    owner_id: ownerId,
+    property_id: apiPropertyId,
+    client_prop_id: apiClientPropId,
+    owner_id: apiOwnerId,
     date_from: dateFrom,
     date_to: dateTo,
+  };
+
+  const includeDeposits =
+    kinds.length === 0 ||
+    kinds.includes('deposit') ||
+    kinds.includes('rental_income') ||
+    kinds.includes('bank_statement') ||
+    alertFilters.includes('incomplete_import');
+  const includeExpenses =
+    kinds.length === 0 ||
+    kinds.includes('expense') ||
+    kinds.includes('he_she_paid') ||
+    kinds.includes('owner_paid') ||
+    kinds.includes('bank_statement') ||
+    kinds.includes('nearly_cc') ||
+    alertFilters.includes('incomplete_import');
+
+  const singleSourceFile = sourceFiles.length === 1 ? sourceFiles[0] : undefined;
+  const needsReviewOnly = alertFilters.includes('incomplete_import') ? true : undefined;
+
+  // Narrow list fetches when a single Type lane is selected.
+  const depositTypeFilter =
+    kinds.length === 1 && kinds[0] === 'deposit'
+      ? false
+      : kinds.length === 1 && kinds[0] === 'rental_income'
+        ? true
+        : undefined;
+  const expenseResidentFilter =
+    kinds.length === 1 && kinds[0] === 'he_she_paid'
+      ? true
+      : kinds.length === 1 && kinds[0] === 'expense'
+        ? false
+        : undefined;
+  const expenseOwnerFilter =
+    kinds.length === 1 && kinds[0] === 'owner_paid'
+      ? true
+      : kinds.length === 1 && kinds[0] === 'expense'
+        ? false
+        : undefined;
+
+  const listFilters = {
+    ...sharedFilters,
+    source_file: singleSourceFile,
+    needs_review: needsReviewOnly,
   };
 
   const propertiesQuery = useQuery({
@@ -236,157 +314,587 @@ export function TransactionsPage() {
     queryKey: ['owners'],
     queryFn: api.getOwners,
   });
-  const depositSummaryQuery = useQuery({
-    queryKey: ['deposit-summary', sharedFilters, typeFilter],
-    queryFn: () =>
-      api.getDepositSummary({
-        ...sharedFilters,
-        // Match Excel: rental income is tracked but not part of company float totals
-        include_all: false,
-      }),
-    enabled: typeFilter !== 'expense',
-  });
   const expenseSummaryQuery = useQuery({
-    queryKey: ['expense-summary', sharedFilters, category, source, typeFilter],
+    queryKey: ['expense-summary', sharedFilters, apiSection, apiSource, singleSourceFile],
     queryFn: () =>
       api.getExpenseSummary({
         ...sharedFilters,
-        category,
-        source,
-        // Match Excel: He/She paid and owner-paid are informational only
+        category: apiSection,
+        source: apiSource,
+        source_file: singleSourceFile,
         include_all: false,
       }),
-    enabled: typeFilter !== 'deposit',
+    enabled: includeExpenses,
+  });
+  const depositSummaryQuery = useQuery({
+    queryKey: ['deposit-summary', sharedFilters, singleSourceFile],
+    queryFn: () =>
+      api.getDepositSummary({
+        ...sharedFilters,
+        source_file: singleSourceFile,
+        include_all: false,
+      }),
+    enabled: includeDeposits,
+  });
+  const depositRentalSummaryQuery = useQuery({
+    queryKey: ['deposit-summary-rental', sharedFilters, singleSourceFile],
+    queryFn: () =>
+      api.getDepositSummary({
+        ...sharedFilters,
+        source_file: singleSourceFile,
+        is_rental_income: true,
+      }),
+    enabled: includeDeposits && (kinds.length === 0 || kinds.includes('rental_income')),
+  });
+  const expenseHeSheSummaryQuery = useQuery({
+    queryKey: ['expense-summary-heshe', sharedFilters, apiSection, apiSource, singleSourceFile],
+    queryFn: () =>
+      api.getExpenseSummary({
+        ...sharedFilters,
+        category: apiSection,
+        source: apiSource,
+        source_file: singleSourceFile,
+        paid_by_resident: true,
+      }),
+    enabled: includeExpenses && (kinds.length === 0 || kinds.includes('he_she_paid')),
+  });
+  const expenseOwnerPaidSummaryQuery = useQuery({
+    queryKey: ['expense-summary-owner', sharedFilters, apiSection, apiSource, singleSourceFile],
+    queryFn: () =>
+      api.getExpenseSummary({
+        ...sharedFilters,
+        category: apiSection,
+        source: apiSource,
+        source_file: singleSourceFile,
+        paid_by_owner: true,
+      }),
+    enabled: includeExpenses && (kinds.length === 0 || kinds.includes('owner_paid')),
   });
 
-  const hasEntityFilter = Boolean(propertyId || clientPropId || ownerId);
-  const allModePageSize = hasEntityFilter ? FILTERED_FETCH_SIZE : FETCH_SIZE;
-
   const depositsQuery = useQuery({
-    queryKey: ['deposits', typeFilter, sharedFilters, page, allModePageSize],
+    queryKey: ['deposits', listFilters, depositTypeFilter],
     queryFn: () =>
-      api.getDeposits({
-        ...sharedFilters,
-        page: typeFilter === 'all' ? 1 : page,
-        page_size: typeFilter === 'all' ? allModePageSize : PAGE_SIZE,
+      api.getAllDeposits({
+        ...listFilters,
+        is_rental_income: depositTypeFilter,
       }),
-    enabled: typeFilter !== 'expense',
+    enabled: includeDeposits,
   });
 
   const expensesQuery = useQuery({
-    queryKey: ['expenses', typeFilter, sharedFilters, category, source, page, allModePageSize],
+    queryKey: [
+      'expenses',
+      listFilters,
+      apiSection,
+      apiSource,
+      expenseResidentFilter,
+      expenseOwnerFilter,
+    ],
     queryFn: () =>
-      api.getExpenses({
-        ...sharedFilters,
-        category,
-        source,
-        page: typeFilter === 'all' ? 1 : page,
-        page_size: typeFilter === 'all' ? allModePageSize : PAGE_SIZE,
+      api.getAllExpenses({
+        ...listFilters,
+        category: apiSection,
+        source: apiSource,
+        paid_by_resident: expenseResidentFilter,
+        paid_by_owner: expenseOwnerFilter,
       }),
-    enabled: typeFilter !== 'deposit',
+    enabled: includeExpenses,
   });
 
   const createMutation = useMutation({
     mutationFn: api.createExpense,
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['expenses'] });
-      queryClient.invalidateQueries({ queryKey: ['expense-summary'] });
-      setForm(emptyForm);
+      invalidateTransactionSummaries(queryClient);
+      setForm(makeEmptyForm());
       setShowForm(false);
       setFormError(null);
     },
     onError: (error: Error) => {
-      setFormError(error.message);
+      setFormError(error);
     },
   });
 
-  const { items, total, totalPages } = useMemo(() => {
-    if (typeFilter === 'deposit' && depositsQuery.data) {
-      return {
-        items: depositsQuery.data.items.map(depositToUnified),
-        total: depositsQuery.data.total,
-        totalPages: Math.max(1, Math.ceil(depositsQuery.data.total / PAGE_SIZE)),
-      };
+  const updateTransactionMutation = useMutation({
+    mutationFn: async (payload: TransactionEditForm) => {
+      if (payload.kind === 'expense') {
+        const section = payload.section.trim() || 'other';
+        const notes = payload.notes.trim();
+        return api.updateExpense(payload.id, {
+          property_id: payload.property_id,
+          transaction_date: payload.transaction_date || null,
+          amount: payload.amount || '0',
+          category: section,
+          source: payload.source || 'manual_company',
+          payment_method: payload.payment_method || 'company_account',
+          vendor_name: payload.company.trim() || null,
+          notes: notes || null,
+          description: notes ? `${section} | ${notes}` : section,
+        });
+      }
+      return api.updateDeposit(payload.id, {
+        property_id: payload.property_id,
+        transaction_date: payload.transaction_date || null,
+        amount: payload.amount || '0',
+        description: payload.notes.trim() || null,
+        is_rental_income: payload.is_rental_income,
+      });
+    },
+    onSuccess: () => {
+      invalidateTransactionSummaries(queryClient);
+      setEditForm(null);
+      setEditError(null);
+    },
+    onError: (error: Error) => setEditError(error),
+  });
+
+  const deleteTransactionMutation = useMutation({
+    mutationFn: async (payload: { kind: TransactionKind; id: string }) => {
+      if (payload.kind === 'expense') {
+        return api.deleteExpense(payload.id);
+      }
+      return api.deleteDeposit(payload.id);
+    },
+    onSuccess: () => {
+      invalidateTransactionSummaries(queryClient);
+      setEditForm(null);
+      setEditError(null);
+    },
+    onError: (error: Error) => setEditError(error),
+  });
+
+  const typeOptions = useMemo(
+    () => [
+      { value: 'deposit', label: 'Deposit (Inflow)' },
+      { value: 'expense', label: 'Expense (Amount)' },
+      { value: 'rental_income', label: 'Rental income' },
+      { value: 'he_she_paid', label: 'He/She paid' },
+      { value: 'owner_paid', label: 'Owner paid' },
+      { value: 'bank_statement', label: 'Bank statement' },
+      { value: 'nearly_cc', label: 'Nearly CC' },
+    ],
+    [],
+  );
+
+  const alertOptions = useMemo(
+    () => [{ value: 'incomplete_import', label: 'Incomplete import' }],
+    [],
+  );
+
+  const propIdOptions = useMemo(
+    () =>
+      (propertiesQuery.data ?? []).map((property) => ({
+        value: property.client_prop_id,
+        label:
+          property.status !== 'active'
+            ? `${property.client_prop_id} (inactive)`
+            : property.client_prop_id,
+      })),
+    [propertiesQuery.data],
+  );
+
+  const propertyOptions = useMemo(
+    () =>
+      (propertiesQuery.data ?? []).map((property) => ({
+        value: property.id,
+        label: `${property.client_prop_id} — ${property.name}`,
+      })),
+    [propertiesQuery.data],
+  );
+
+  const ownerOptions = useMemo(
+    () =>
+      (ownersQuery.data ?? []).map((owner) => ({
+        value: owner.id,
+        label: owner.name,
+      })),
+    [ownersQuery.data],
+  );
+
+  const sectionOptions = useMemo(() => {
+    const fromSummary = (expenseSummaryQuery.data?.by_category ?? [])
+      .map((row) => row.category)
+      .filter(Boolean);
+    const fromRows = (expensesQuery.data?.items ?? [])
+      .map((row) => row.category)
+      .filter(Boolean);
+    const merged = [...new Set([...SECTION_SUGGESTIONS, ...fromSummary, ...fromRows])].sort(
+      (a, b) => a.localeCompare(b),
+    );
+    return merged.map((value) => ({ value, label: value }));
+  }, [expenseSummaryQuery.data, expensesQuery.data]);
+
+  const sourceOptions = useMemo(
+    () => SOURCES.map((value) => ({ value, label: label(value) })),
+    [],
+  );
+
+  const sourceFileOptions = useMemo(() => {
+    const names = new Set<string>();
+    for (const row of depositsQuery.data?.items ?? []) {
+      if (row.source_file) names.add(row.source_file);
     }
-    if (typeFilter === 'expense' && expensesQuery.data) {
-      return {
-        items: expensesQuery.data.items.map(expenseToUnified),
-        total: expensesQuery.data.total,
-        totalPages: Math.max(1, Math.ceil(expensesQuery.data.total / PAGE_SIZE)),
-      };
+    for (const row of expensesQuery.data?.items ?? []) {
+      if (row.source_file) names.add(row.source_file);
     }
-    if (typeFilter === 'all') {
-      const deposits = (depositsQuery.data?.items ?? []).map(depositToUnified);
-      const expenses = (expensesQuery.data?.items ?? []).map(expenseToUnified);
-      const merged = [...deposits, ...expenses].sort(
-        (a, b) =>
-          new Date(b.transaction_date).getTime() - new Date(a.transaction_date).getTime(),
-      );
-      // Prefer API totals so capped fetches don't under-report
-      const depositTotal = depositsQuery.data?.total ?? deposits.length;
-      const expenseTotal = expensesQuery.data?.total ?? expenses.length;
-      const mergedTotal = depositTotal + expenseTotal;
+    return [...names]
+      .sort((a, b) => a.localeCompare(b))
+      .map((value) => ({ value, label: value }));
+  }, [depositsQuery.data, expensesQuery.data]);
+
+  const {
+    items,
+    total,
+    totalPages,
+    depositTotal,
+    expenseTotal,
+    depositCount,
+    expenseTotalCount,
+    netTotal,
+    inflowSubtitle,
+    expenseSubtitle,
+    outsideSelectedCount,
+    moneyRowCount,
+    listedRowCount,
+  } = useMemo(() => {
+      const deposits = includeDeposits
+        ? (depositsQuery.data?.items ?? []).map(depositToUnified)
+        : [];
+      const expenses = includeExpenses
+        ? (expensesQuery.data?.items ?? []).map(expenseToUnified)
+        : [];
+      let merged = [...deposits, ...expenses].sort((a, b) => {
+        // Newest date first. Missing date goes to the end.
+        // Missing amount keeps its date position (or end if date is also missing).
+        const aHasDate = Boolean(a.transaction_date);
+        const bHasDate = Boolean(b.transaction_date);
+        if (aHasDate !== bHasDate) return aHasDate ? -1 : 1;
+        const aTime = a.transaction_date ? new Date(a.transaction_date).getTime() : 0;
+        const bTime = b.transaction_date ? new Date(b.transaction_date).getTime() : 0;
+        return bTime - aTime;
+      });
+
+      if (kinds.length > 0) {
+        const kindSet = new Set(kinds);
+        merged = merged.filter((row) => rowTypeTags(row).some((tag) => kindSet.has(tag)));
+      }
+      if (alertFilters.includes('incomplete_import')) {
+        merged = merged.filter((row) => Boolean(row.needs_review));
+      }
+      if (clientPropIds.length > 0) {
+        const set = new Set(clientPropIds);
+        merged = merged.filter((row) => set.has(row.client_prop_id));
+      }
+      if (propertyIds.length > 0) {
+        const props = propertiesQuery.data ?? [];
+        merged = merged.filter((row) =>
+          props.some(
+            (property) =>
+              propertyIds.includes(property.id) && property.client_prop_id === row.client_prop_id,
+          ),
+        );
+      }
+      if (ownerIds.length > 0) {
+        const owners = ownersQuery.data ?? [];
+        const allowedNames = new Set(
+          owners.filter((owner) => ownerIds.includes(owner.id)).map((owner) => owner.name),
+        );
+        merged = merged.filter((row) => allowedNames.has(row.owner_name));
+      }
+      if (sections.length > 0) {
+        const set = new Set(sections.map((value) => value.toLowerCase()));
+        merged = merged.filter((row) => set.has(row.section.toLowerCase()));
+      }
+      if (sources.length > 0) {
+        const sourceSet = new Set(sources);
+        const expenseSourceById = new Map(
+          (expensesQuery.data?.items ?? []).map((row) => [row.id, row.source]),
+        );
+        merged = merged.filter((row) => {
+          if (row.kind !== 'expense') return true;
+          const source = expenseSourceById.get(row.id);
+          return source ? sourceSet.has(source) : false;
+        });
+      }
+      if (sourceFiles.length > 0) {
+        const fileSet = new Set(sourceFiles);
+        merged = merged.filter((row) => Boolean(row.source_file && fileSet.has(row.source_file)));
+      }
+
+      // Card money totals: Excel Dashboard (Inflow=non-rental, Expenses=non-He/She/Owner-paid).
+      // Matching = same Inflow/Expense rows + selected outside-total Type lanes.
+      const wantsInflow = kinds.length === 0 || kinds.includes('deposit');
+      const wantsExpense = kinds.length === 0 || kinds.includes('expense');
+      const wantsRental = kinds.length === 0 || kinds.includes('rental_income');
+      const wantsHeShe = kinds.length === 0 || kinds.includes('he_she_paid');
+      const wantsOwnerPaid = kinds.length === 0 || kinds.includes('owner_paid');
+      const laneOnly =
+        kinds.length > 0 &&
+        !wantsInflow &&
+        !wantsExpense &&
+        !wantsRental &&
+        !wantsHeShe &&
+        !wantsOwnerPaid &&
+        (kinds.includes('bank_statement') || kinds.includes('nearly_cc'));
+
+      const apiInflow = Number(depositSummaryQuery.data?.total_amount ?? 0);
+      const apiExpenses = Number(expenseSummaryQuery.data?.total_amount ?? 0);
+      const apiInflowCount = depositSummaryQuery.data?.deposit_count ?? 0;
+      const apiExpenseCount = expenseSummaryQuery.data?.expense_count ?? 0;
+      const rentalCount = depositRentalSummaryQuery.data?.deposit_count ?? 0;
+      const heSheCount = expenseHeSheSummaryQuery.data?.expense_count ?? 0;
+      const ownerPaidCount = expenseOwnerPaidSummaryQuery.data?.expense_count ?? 0;
+
+      let cardInflow = 0;
+      let cardExpenses = 0;
+      let cardInflowCount = 0;
+      let cardExpenseCount = 0;
+      let inflowSubtitle = 'Inflow (Excel)';
+      let expenseSubtitle = 'Amount (Excel)';
+
+      if (wantsInflow) {
+        cardInflow += apiInflow;
+        cardInflowCount += apiInflowCount;
+      }
+      if (wantsExpense) {
+        cardExpenses += apiExpenses;
+        cardExpenseCount += apiExpenseCount;
+      }
+
+      // Multi-select entity filters (2+) / multi source-file are client-side on the full loaded set.
+      const multiEntity =
+        propertyIds.length > 1 ||
+        clientPropIds.length > 1 ||
+        ownerIds.length > 1 ||
+        sections.length > 1;
+      const clientSideFiltered =
+        multiEntity || sources.length > 0 || sourceFiles.length > 1;
+      if (clientSideFiltered) {
+        const depItems = merged.filter(
+          (row) => row.kind === 'deposit' && !row.is_rental_income,
+        );
+        const expItems = merged.filter(
+          (row) =>
+            row.kind === 'expense' && !row.paid_by_resident && !row.paid_by_owner,
+        );
+        cardInflow = depItems.reduce((sum, row) => sum + Number(row.amount), 0);
+        cardExpenses = expItems.reduce((sum, row) => sum + Number(row.amount), 0);
+        cardInflowCount = depItems.length;
+        cardExpenseCount = expItems.length;
+        inflowSubtitle = 'filtered rows';
+        expenseSubtitle = 'filtered rows';
+      } else if (laneOnly) {
+        const depItems = merged.filter(
+          (row) => row.kind === 'deposit' && !row.is_rental_income,
+        );
+        const expItems = merged.filter(
+          (row) =>
+            row.kind === 'expense' && !row.paid_by_resident && !row.paid_by_owner,
+        );
+        cardInflow = depItems.reduce((sum, row) => sum + Number(row.amount), 0);
+        cardExpenses = expItems.reduce((sum, row) => sum + Number(row.amount), 0);
+        cardInflowCount = depItems.length;
+        cardExpenseCount = expItems.length;
+        inflowSubtitle = kinds.includes('bank_statement') ? 'Bank statement' : 'filtered rows';
+        expenseSubtitle = kinds.includes('nearly_cc')
+          ? 'Nearly CC'
+          : kinds.includes('bank_statement')
+            ? 'Bank statement'
+            : 'filtered rows';
+      }
+
+      let matchingCount = cardInflowCount + cardExpenseCount;
+      let outsideSelectedCount = 0;
+      if (clientSideFiltered || laneOnly || alertFilters.includes('incomplete_import')) {
+        const outsideItems = merged.filter(
+          (row) =>
+            (row.kind === 'deposit' && row.is_rental_income) ||
+            (row.kind === 'expense' && (row.paid_by_resident || row.paid_by_owner)),
+        );
+        outsideSelectedCount = outsideItems.length;
+        matchingCount = merged.length;
+      } else {
+        if (wantsRental) outsideSelectedCount += rentalCount;
+        if (wantsHeShe) outsideSelectedCount += heSheCount;
+        if (wantsOwnerPaid) outsideSelectedCount += ownerPaidCount;
+        matchingCount = cardInflowCount + cardExpenseCount + outsideSelectedCount;
+      }
+
+      const totalPagesCount = Math.max(1, Math.ceil(merged.length / PAGE_SIZE));
       const start = (page - 1) * PAGE_SIZE;
+      const pageItems = merged.slice(start, start + PAGE_SIZE);
+
       return {
-        items: merged.slice(start, start + PAGE_SIZE),
-        total: mergedTotal,
-        totalPages: Math.max(1, Math.ceil(mergedTotal / PAGE_SIZE)),
+        items: pageItems,
+        total: matchingCount,
+        totalPages: totalPagesCount,
+        depositTotal: cardInflow,
+        expenseTotal: cardExpenses,
+        depositCount: cardInflowCount,
+        expenseTotalCount: cardExpenseCount,
+        netTotal: cardInflow - cardExpenses,
+        inflowSubtitle,
+        expenseSubtitle,
+        outsideSelectedCount,
+        moneyRowCount: cardInflowCount + cardExpenseCount,
+        listedRowCount: merged.length,
       };
-    }
-    return { items: [], total: 0, totalPages: 1 };
-  }, [typeFilter, depositsQuery.data, expensesQuery.data, page]);
+    }, [
+      alertFilters,
+      clientPropIds,
+      depositRentalSummaryQuery.data,
+      depositSummaryQuery.data,
+      depositsQuery.data,
+      expenseHeSheSummaryQuery.data,
+      expenseOwnerPaidSummaryQuery.data,
+      expenseSummaryQuery.data,
+      expensesQuery.data,
+      includeDeposits,
+      includeExpenses,
+      kinds,
+      ownerIds,
+      ownersQuery.data,
+      page,
+      propertiesQuery.data,
+      propertyIds,
+      sections,
+      sourceFiles,
+      sources,
+    ]);
 
   const isLoading =
-    (typeFilter !== 'expense' && depositsQuery.isLoading) ||
-    (typeFilter !== 'deposit' && expensesQuery.isLoading) ||
-    (typeFilter !== 'expense' && depositSummaryQuery.isLoading) ||
-    (typeFilter !== 'deposit' && expenseSummaryQuery.isLoading);
-
+    propertiesQuery.isLoading ||
+    ownersQuery.isLoading ||
+    (includeDeposits && depositsQuery.isLoading) ||
+    (includeExpenses && expensesQuery.isLoading);
   const isError =
-    (typeFilter !== 'expense' && depositsQuery.isError) ||
-    (typeFilter !== 'deposit' && expensesQuery.isError) ||
-    (typeFilter !== 'expense' && depositSummaryQuery.isError) ||
-    (typeFilter !== 'deposit' && expenseSummaryQuery.isError);
+    propertiesQuery.isError ||
+    ownersQuery.isError ||
+    (includeDeposits && depositsQuery.isError) ||
+    (includeExpenses && expensesQuery.isError);
 
-  const resetPage = () => setPage(1);
+  function resetPage() {
+    setPage(1);
+  }
 
   const hasActiveFilters = Boolean(
-    typeFilter !== 'all' ||
-      propertyId ||
-      clientPropId ||
-      ownerId ||
+    kinds.length !== 2 ||
+      !kinds.includes('deposit') ||
+      !kinds.includes('expense') ||
+      alertFilters.length ||
+      propertyIds.length ||
+      clientPropIds.length ||
+      ownerIds.length ||
       dateFrom ||
       dateTo ||
-      category ||
-      source,
+      sections.length ||
+      sources.length ||
+      sourceFiles.length,
   );
 
   function clearFilters() {
-    setTypeFilter('all');
-    setPropertyId(undefined);
-    setClientPropId(undefined);
-    setOwnerId(undefined);
+    setKinds(['deposit', 'expense']);
+    setAlertFilters([]);
+    setPropertyIds([]);
+    setClientPropIds([]);
+    setOwnerIds([]);
     setDateFrom(undefined);
     setDateTo(undefined);
-    setCategory(undefined);
-    setSource(undefined);
+    setSections([]);
+    setSources([]);
+    setSourceFiles([]);
     setPage(1);
+  }
+
+  function openEdit(row: UnifiedTransaction) {
+    setEditForm(rowToEditForm(row));
+    setEditError(null);
+    setShowForm(false);
+    setShowUpload(false);
+  }
+
+  function cancelEdit() {
+    setEditForm(null);
+    setEditError(null);
+  }
+
+  function saveEdit() {
+    if (!editForm) return;
+    if (!editForm.property_id) {
+      setEditError(validationError('Please choose a property (Prop ID).'));
+      return;
+    }
+    if (!editForm.transaction_date || !editForm.amount || Number(editForm.amount) <= 0) {
+      setEditError(validationError('Please enter a date and an amount greater than 0.'));
+      return;
+    }
+    updateTransactionMutation.mutate(editForm);
+  }
+
+  function deleteEdit() {
+    if (!editForm) return;
+    const kindLabel = editForm.kind === 'deposit' ? 'deposit' : 'expense';
+    const confirmed = window.confirm(
+      `Delete this ${kindLabel}? This cannot be undone.`,
+    );
+    if (!confirmed) return;
+    deleteTransactionMutation.mutate({ kind: editForm.kind, id: editForm.id });
+  }
+
+  function patchEdit(patch: Partial<TransactionEditForm>) {
+    setEditForm((current) => (current ? { ...current, ...patch } : current));
+  }
+
+  function reviewBang(row: UnifiedTransaction) {
+    return (
+      <Tooltip content="Incomplete import — click to edit inline.">
+        <button
+          type="button"
+          className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-base font-bold leading-none text-negative hover:bg-rose-500/10"
+          aria-label="Needs review — edit transaction"
+          onClick={() => openEdit(row)}
+        >
+          !
+        </button>
+      </Tooltip>
+    );
+  }
+
+  function syncPropIdsFromProperties(nextPropertyIds: string[]) {
+    setPropertyIds(nextPropertyIds);
+    const props = propertiesQuery.data ?? [];
+    setClientPropIds(
+      nextPropertyIds
+        .map((id) => props.find((property) => property.id === id)?.client_prop_id)
+        .filter((value): value is string => Boolean(value)),
+    );
+    resetPage();
+  }
+
+  function syncPropertiesFromPropIds(nextPropIds: string[]) {
+    setClientPropIds(nextPropIds);
+    const props = propertiesQuery.data ?? [];
+    setPropertyIds(
+      nextPropIds
+        .map((propId) => props.find((property) => property.client_prop_id === propId)?.id)
+        .filter((value): value is string => Boolean(value)),
+    );
+    resetPage();
   }
 
   if (isLoading) return <LoadingState />;
   if (isError) {
-    return <ErrorState message="Could not load transactions from the API." />;
+    return (
+      <ErrorState
+        message="We couldn't load transactions. Please try again in a moment."
+        error={
+          propertiesQuery.error ??
+          ownersQuery.error ??
+          depositsQuery.error ??
+          expensesQuery.error
+        }
+      />
+    );
   }
-
-  const depositTotal =
-    typeFilter === 'expense' ? 0 : Number(depositSummaryQuery.data?.total_amount ?? 0);
-  const expenseTotal =
-    typeFilter === 'deposit' ? 0 : Number(expenseSummaryQuery.data?.total_amount ?? 0);
-  const depositCount =
-    typeFilter === 'expense' ? 0 : (depositSummaryQuery.data?.deposit_count ?? 0);
-  const expenseCount =
-    typeFilter === 'deposit' ? 0 : (expenseSummaryQuery.data?.expense_count ?? 0);
-  const netTotal = depositTotal - expenseTotal;
 
   return (
     <div className="space-y-6">
@@ -394,8 +902,10 @@ export function TransactionsPage() {
         <div>
           <h2 className="page-heading">Transactions</h2>
           <p className="page-desc">
-            View deposits and expenses together. Deposits are highlighted in green, expenses in
-            red. Resident-paid, rental income, and bank-statement rows are marked with badges.
+            Same ledger as your Excel: Prop ID, Date, Section, Notes, Amount, and Balance — plus
+            Property and Owner for easier browsing. Newest dates first; rows without a date appear
+            at the end. Incomplete imports (missing date/amount) stay in Alerts until fixed or
+            dismissed. He/She paid and rental income are marked like in the spreadsheet.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -412,8 +922,15 @@ export function TransactionsPage() {
           <button
             type="button"
             onClick={() => {
-              setShowForm((current) => !current);
-              if (!showForm) setShowUpload(false);
+              setShowForm((current) => {
+                const next = !current;
+                if (next) {
+                  setForm(makeEmptyForm());
+                  setFormError(null);
+                  setShowUpload(false);
+                }
+                return next;
+              });
             }}
             className="btn-primary"
           >
@@ -424,23 +941,21 @@ export function TransactionsPage() {
             onClick={() =>
               downloadCsv(
                 items.map((row) => ({
-                  type: row.kind,
-                  prop_id: row.client_prop_id,
-                  date: row.transaction_date,
-                  property: row.property_name,
-                  owner: row.owner_name,
-                  amount: row.amount,
-                  currency: row.currency,
-                  details: row.details,
-                  description: row.description,
-                  source_file: row.source_file ?? '',
-                  balance_after: row.balance_after ?? '',
-                  paid_by_resident: row.paid_by_resident ? 'yes' : '',
-                  paid_by_company: row.paid_by_company ? 'yes' : '',
-                  paid_by_owner: row.paid_by_owner ? 'yes' : '',
-                  ledger_column: row.ledger_column ?? '',
-                  rental_income: row.is_rental_income ? 'yes' : '',
-                  bank_statement: row.from_bank_statement ? 'yes' : '',
+                  'Prop ID': row.client_prop_id,
+                  Date: row.transaction_date,
+                  Section: row.section,
+                  Notes: row.notes ?? '',
+                  Type: row.kind === 'deposit' ? 'Deposit' : 'Expense',
+                  Amount: row.kind === 'expense' ? row.amount : '',
+                  Inflow: row.kind === 'deposit' ? row.amount : '',
+                  Company: row.company ?? '',
+                  Balance: row.balance_after ?? '',
+                  Property: row.property_name,
+                  Owner: row.owner_name,
+                  'Source file': row.source_file ?? '',
+                  'He/She paid': row.paid_by_resident ? 'yes' : '',
+                  'Owner paid': row.paid_by_owner ? 'yes' : '',
+                  'Rental income': row.is_rental_income ? 'yes' : '',
                 })),
                 'transactions.csv',
               )
@@ -454,46 +969,34 @@ export function TransactionsPage() {
 
       <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <Card
-          title="Total deposits"
+          title="Inflow"
           value={formatCurrency(depositTotal)}
-          subtitle={`${depositCount} matching deposit(s), excluding rental income`}
-          tooltip="Filtered deposits, excluding rental income."
+          subtitle={`${depositCount} row(s) · ${inflowSubtitle}`}
+          tooltip="Matches Excel Dashboard Inflow (sum of Inflow column). Rental income can be filtered in the list but is never included in this total."
         />
         <Card
-          title="Total expenses"
+          title="Expenses"
           value={formatCurrency(expenseTotal)}
-          subtitle={`${expenseCount} matching expense(s), excluding He/She & owner paid`}
-          tooltip="Filtered expenses, excluding resident/owner paid."
+          subtitle={`${expenseTotalCount} row(s) · ${expenseSubtitle}`}
+          tooltip="Matches Excel Dashboard Expenses (sum of Amount column). He/She paid can be filtered in the list but is never included in this total. Credit-card imports are included in the app but not on the Excel Dashboard."
         />
         <Card
-          title="Net"
+          title="Balance"
           value={formatCurrency(netTotal)}
-          subtitle="Deposits minus expenses (current filters)"
-          tooltip="Deposits minus expenses for current filters."
+          subtitle="Inflow minus Expenses (excludes Rental / He-She)"
+          tooltip="Same as Excel Dashboard Balance: Inflow − Expenses. Rental income and He/She paid are excluded even when filtered."
         />
         <Card
-          title="Showing"
-          value={items.length}
-          subtitle={`${total} matching transaction(s)`}
-          tooltip="Rows on this page, not the full ledger."
+          title="Matching"
+          value={total}
+          subtitle={
+            outsideSelectedCount > 0
+              ? `${moneyRowCount} in Inflow/Expenses + ${outsideSelectedCount} outside totals`
+              : `${moneyRowCount} = Inflow + Expenses rows`
+          }
+          tooltip="Matching is Inflow rows + Expenses rows, plus Rental / He-She / Owner-paid when those Type filters are selected. Money totals still exclude those labels."
         />
       </section>
-
-      <div className="flex flex-wrap gap-2">
-        {(['all', 'deposit', 'expense'] as const).map((filter) => (
-          <button
-            key={filter}
-            type="button"
-            onClick={() => {
-              setTypeFilter(filter);
-              resetPage();
-            }}
-            className={typeFilter === filter ? 'type-filter-active' : 'type-filter-inactive'}
-          >
-            {filter === 'all' ? 'All' : filter === 'deposit' ? 'Deposits' : 'Expenses'}
-          </button>
-        ))}
-      </div>
 
       {showUpload ? (
         <TransactionUploadPanel
@@ -504,20 +1007,39 @@ export function TransactionsPage() {
 
       {showForm ? (
         <section className="panel p-4">
-          <h3 className="subheading">New manual expense</h3>
+          <h3 className="subheading">New expense</h3>
+          <p className="mt-1 text-sm text-muted">
+            Fields use the same names as your Excel sheet (Section, Notes, Method, Source, Company).
+          </p>
           <form
             className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3"
             onSubmit={(event) => {
               event.preventDefault();
               if (!form.property_id || !form.transaction_date || !form.amount) {
-                setFormError('Property, date, and amount are required.');
+                setFormError(
+                  validationError('Please choose a property, date, and amount.'),
+                );
                 return;
               }
-              createMutation.mutate(form);
+              const section = form.category.trim() || 'other';
+              createMutation.mutate({
+                ...form,
+                category: section,
+                description: form.description?.trim()
+                  ? `${section} | ${form.description.trim()}`
+                  : section,
+                vendor_name: form.vendor_name?.trim() || undefined,
+                source: form.source || 'manual_company',
+                payment_method: form.payment_method || 'company_account',
+              });
             }}
           >
             <label className="text-sm">
-              <span className="label-text">Property</span>
+              <span className="label-text">
+                <Tooltip content="Same as Prop ID in Excel — pick the property sheet.">
+                  Prop ID / Property
+                </Tooltip>
+              </span>
               <select
                 required
                 className="field"
@@ -534,20 +1056,20 @@ export function TransactionsPage() {
                 ))}
               </select>
             </label>
+            <DateInputDMY
+              label="Date"
+              required
+              value={form.transaction_date || undefined}
+              onChange={(iso) =>
+                setForm((current) => ({ ...current, transaction_date: iso ?? '' }))
+              }
+            />
             <label className="text-sm">
-              <span className="label-text">Date</span>
-              <input
-                required
-                type="date"
-                className="field"
-                value={form.transaction_date}
-                onChange={(event) =>
-                  setForm((current) => ({ ...current, transaction_date: event.target.value }))
-                }
-              />
-            </label>
-            <label className="text-sm">
-              <span className="label-text">Amount (ILS)</span>
+              <span className="label-text">
+                <Tooltip content="Excel Amount column — money leaving the company float.">
+                  Amount
+                </Tooltip>
+              </span>
               <input
                 required
                 type="number"
@@ -561,15 +1083,37 @@ export function TransactionsPage() {
               />
             </label>
             <label className="text-sm">
-              <span className="label-text">Category</span>
-              <select
+              <span className="label-text">
+                <Tooltip content="Excel Section — what the expense is for.">Section</Tooltip>
+              </span>
+              <input
+                list="section-suggestions"
+                type="text"
                 className="field"
+                placeholder="e.g. Cleaning"
                 value={form.category}
                 onChange={(event) =>
                   setForm((current) => ({ ...current, category: event.target.value }))
                 }
+              />
+              <datalist id="section-suggestions">
+                {SECTION_SUGGESTIONS.map((item) => (
+                  <option key={item} value={item} />
+                ))}
+              </datalist>
+            </label>
+            <label className="text-sm">
+              <span className="label-text">
+                <Tooltip content="Excel Method — how it was paid.">Method</Tooltip>
+              </span>
+              <select
+                className="field"
+                value={form.payment_method}
+                onChange={(event) =>
+                  setForm((current) => ({ ...current, payment_method: event.target.value }))
+                }
               >
-                {CATEGORIES.map((item) => (
+                {METHODS.map((item) => (
                   <option key={item} value={item}>
                     {label(item)}
                   </option>
@@ -577,7 +1121,11 @@ export function TransactionsPage() {
               </select>
             </label>
             <label className="text-sm">
-              <span className="label-text">Source</span>
+              <span className="label-text">
+                <Tooltip content="How this expense was recorded (e.g. standing order).">
+                  Source
+                </Tooltip>
+              </span>
               <select
                 className="field"
                 value={form.source}
@@ -593,26 +1141,27 @@ export function TransactionsPage() {
               </select>
             </label>
             <label className="text-sm">
-              <span className="label-text">Payment method</span>
-              <select
-                className="field"
-                value={form.payment_method}
-                onChange={(event) =>
-                  setForm((current) => ({ ...current, payment_method: event.target.value }))
-                }
-              >
-                {PAYMENT_METHODS.map((item) => (
-                  <option key={item} value={item}>
-                    {label(item)}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="text-sm md:col-span-2 xl:col-span-3">
-              <span className="label-text">Description</span>
+              <span className="label-text">
+                <Tooltip content="Excel Company — vendor or payee name.">Company</Tooltip>
+              </span>
               <input
                 type="text"
                 className="field"
+                placeholder="Vendor / company name"
+                value={form.vendor_name ?? ''}
+                onChange={(event) =>
+                  setForm((current) => ({ ...current, vendor_name: event.target.value }))
+                }
+              />
+            </label>
+            <label className="text-sm md:col-span-2 xl:col-span-3">
+              <span className="label-text">
+                <Tooltip content="Excel Notes — free text about the row.">Notes</Tooltip>
+              </span>
+              <input
+                type="text"
+                className="field"
+                placeholder="Optional notes"
                 value={form.description ?? ''}
                 onChange={(event) =>
                   setForm((current) => ({ ...current, description: event.target.value }))
@@ -620,7 +1169,9 @@ export function TransactionsPage() {
               />
             </label>
             {formError ? (
-              <p className="text-negative text-sm md:col-span-2 xl:col-span-3">{formError}</p>
+              <div className="md:col-span-2 xl:col-span-3">
+                <InlineError error={formError} />
+              </div>
             ) : null}
             <div className="md:col-span-2 xl:col-span-3">
               <button type="submit" disabled={createMutation.isPending} className="btn-primary">
@@ -643,372 +1194,396 @@ export function TransactionsPage() {
         </button>
       </div>
 
-      <section
-        className={`filter-panel ${
-          typeFilter === 'expense' || typeFilter === 'all'
-            ? 'md:grid-cols-2 xl:grid-cols-7'
-            : 'md:grid-cols-2 xl:grid-cols-5'
-        }`}
-      >
-        <label className="text-sm">
-          <span className="label-text">Prop ID</span>
-          <select
-            className="field"
-            value={clientPropId ?? ''}
-            onChange={(event) => {
-              const value = event.target.value || undefined;
-              setClientPropId(value);
-              // Keep property filter in sync when choosing a Prop ID
-              if (value) {
-                const match = (propertiesQuery.data ?? []).find(
-                  (property) => property.client_prop_id === value,
-                );
-                setPropertyId(match?.id);
-              } else if (propertyId) {
-                // Clearing Prop ID should not force-clear property unless it was set via Prop ID
-                setPropertyId(undefined);
-              }
-              resetPage();
-            }}
-          >
-            <option value="">All Prop IDs</option>
-            {(propertiesQuery.data ?? []).map((property) => (
-              <option key={property.id} value={property.client_prop_id}>
-                {property.client_prop_id}
-                {property.status !== 'active' ? ' (inactive)' : ''}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="text-sm">
-          <span className="label-text">Property</span>
-          <select
-            className="field"
-            value={propertyId ?? ''}
-            onChange={(event) => {
-              const value = event.target.value || undefined;
-              setPropertyId(value);
-              if (value) {
-                const match = (propertiesQuery.data ?? []).find((property) => property.id === value);
-                setClientPropId(match?.client_prop_id);
-              } else {
-                setClientPropId(undefined);
-              }
-              resetPage();
-            }}
-          >
-            <option value="">All properties</option>
-            {(propertiesQuery.data ?? []).map((property) => (
-              <option key={property.id} value={property.id}>
-                {property.client_prop_id} — {property.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="text-sm">
-          <span className="label-text">Owner</span>
-          <select
-            className="field"
-            value={ownerId ?? ''}
-            onChange={(event) => {
-              setOwnerId(event.target.value || undefined);
-              resetPage();
-            }}
-          >
-            <option value="">All owners</option>
-            {(ownersQuery.data ?? []).map((owner) => (
-              <option key={owner.id} value={owner.id}>
-                {owner.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="text-sm">
-          <span className="label-text">From date</span>
-          <input
-            type="date"
-            className="field"
-            value={dateFrom ?? ''}
-            onChange={(event) => {
-              setDateFrom(event.target.value || undefined);
-              resetPage();
-            }}
-          />
-        </label>
-        <label className="text-sm">
-          <span className="label-text">To date</span>
-          <input
-            type="date"
-            className="field"
-            value={dateTo ?? ''}
-            onChange={(event) => {
-              setDateTo(event.target.value || undefined);
-              resetPage();
-            }}
-          />
-        </label>
-        {typeFilter === 'expense' || typeFilter === 'all' ? (
-          <>
-            <label className="text-sm">
-              <span className="label-text">Category</span>
-              <select
-                className="field"
-                value={category ?? ''}
-                onChange={(event) => {
-                  setCategory(event.target.value || undefined);
-                  resetPage();
-                }}
-              >
-                <option value="">All categories</option>
-                {CATEGORIES.map((item) => (
-                  <option key={item} value={item}>
-                    {label(item)}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="text-sm">
-              <span className="label-text">Source</span>
-              <select
-                className="field"
-                value={source ?? ''}
-                onChange={(event) => {
-                  setSource(event.target.value || undefined);
-                  resetPage();
-                }}
-              >
-                <option value="">All sources</option>
-                {SOURCES.map((item) => (
-                  <option key={item} value={item}>
-                    {label(item)}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </>
-        ) : null}
+      <section className="filter-panel md:grid-cols-2 xl:grid-cols-4">
+        <SearchableMultiSelect
+          label="Type"
+          tip="Deposit/Expense match Excel Inflow/Amount. Rental, He/She, Owner paid, Bank statement, and Nearly CC are separate lanes you can filter."
+          options={typeOptions}
+          selected={kinds}
+          onChange={(next) => {
+            setKinds(next as TypeFilterKind[]);
+            resetPage();
+          }}
+          placeholder="All types"
+          searchPlaceholder="Search type…"
+        />
+        <SearchableMultiSelect
+          label="Alerts"
+          tip="Filter to incomplete import rows (missing date and/or amount). Those also appear under Alerts until dismissed or fixed."
+          options={alertOptions}
+          selected={alertFilters}
+          onChange={(next) => {
+            setAlertFilters(next as AlertFilterKind[]);
+            resetPage();
+          }}
+          placeholder="All rows"
+          searchPlaceholder="Search alerts…"
+        />
+        <SearchableMultiSelect
+          label="Prop ID"
+          tip="Excel Prop ID — select one or more."
+          options={propIdOptions}
+          selected={clientPropIds}
+          onChange={syncPropertiesFromPropIds}
+          placeholder="All Prop IDs"
+          searchPlaceholder="Search Prop ID…"
+        />
+        <SearchableMultiSelect
+          label="Property"
+          tip="Select one or more properties."
+          options={propertyOptions}
+          selected={propertyIds}
+          onChange={syncPropIdsFromProperties}
+          placeholder="All properties"
+          searchPlaceholder="Search property…"
+        />
+        <SearchableMultiSelect
+          label="Owner"
+          tip="Select one or more owners."
+          options={ownerOptions}
+          selected={ownerIds}
+          onChange={(next) => {
+            setOwnerIds(next);
+            resetPage();
+          }}
+          placeholder="All owners"
+          searchPlaceholder="Search owner…"
+        />
+        <DateInputDMY
+          label="From date"
+          value={dateFrom}
+          onChange={(iso) => {
+            setDateFrom(iso);
+            resetPage();
+          }}
+        />
+        <DateInputDMY
+          label="To date"
+          value={dateTo}
+          onChange={(iso) => {
+            setDateTo(iso);
+            resetPage();
+          }}
+        />
+        <SearchableMultiSelect
+          label="Section"
+          tip="Excel Section — select one or more."
+          options={sectionOptions}
+          selected={sections}
+          onChange={(next) => {
+            setSections(next);
+            resetPage();
+          }}
+          placeholder="All sections"
+          searchPlaceholder="Search section…"
+        />
+        <SearchableMultiSelect
+          label="Source"
+          tip="How the expense was recorded."
+          options={sourceOptions}
+          selected={sources}
+          onChange={(next) => {
+            setSources(next);
+            resetPage();
+          }}
+          placeholder="All sources"
+          searchPlaceholder="Search source…"
+        />
+        <SearchableMultiSelect
+          label="Source file"
+          tip="Original import/upload filename for the row."
+          options={sourceFileOptions}
+          selected={sourceFiles}
+          onChange={(next) => {
+            setSourceFiles(next);
+            resetPage();
+          }}
+          placeholder="All source files"
+          searchPlaceholder="Search file…"
+        />
       </section>
 
       <section className="panel overflow-hidden">
-        <div className="overflow-x-auto">
+        <div className="w-full min-w-0">
           <table className="table-shell">
-            <thead className="table-head">
-              <tr>
-                <th className="px-5 py-3 font-medium">Type</th>
-                <th className="px-5 py-3 font-medium">
-                  <Tooltip content="Client property ID from the source files.">Prop ID</Tooltip>
-                </th>
-                <th className="px-5 py-3 font-medium">Date</th>
-                <th className="px-5 py-3 font-medium">Property</th>
-                <th className="px-5 py-3 font-medium">Owner</th>
-                <th className="px-5 py-3 font-medium">
-                  <Tooltip content="Account for deposits, or category/source for expenses.">
-                    Details
-                  </Tooltip>
-                </th>
-                <th className="px-5 py-3 font-medium">Amount</th>
-                <th className="px-5 py-3 font-medium">
-                  <Tooltip content="Running company-float net for this property after this row.">
-                    Balance
-                  </Tooltip>
-                </th>
-                <th className="px-5 py-3 font-medium">Description</th>
-                <th className="px-5 py-3 font-medium">
-                  <Tooltip content="File this transaction was imported from.">Source file</Tooltip>
-                </th>
-                <th className="px-5 py-3 font-medium">
-                  <Tooltip content="Linked receipt image or PDF, if uploaded.">Receipt</Tooltip>
-                </th>
-              </tr>
-            </thead>
+            <TransactionTableColgroup />
+            <TransactionTableHeader />
             <tbody>
-              {items.map((row) => (
-                <tr
-                  key={`${row.kind}-${row.id}`}
-                  className={
-                    row.paid_by_resident
-                      ? 'row-resident-paid'
-                      : row.paid_by_owner
-                        ? 'row-owner-paid'
-                        : row.paid_by_company
-                          ? 'row-mip-paid'
-                          : row.ledger_column === 'nearly_cc'
-                            ? 'row-nearly-cc'
-                            : row.ledger_column === 'cash'
-                              ? 'row-cash-paid'
-                              : row.ledger_column === 'other'
-                                ? 'row-other-paid'
-                                : row.is_rental_income
-                                  ? 'row-rental-income'
-                                  : row.kind === 'deposit'
-                                    ? 'row-deposit'
-                                    : 'row-expense'
-                  }
-                >
-                  <td className="px-5 py-3 whitespace-nowrap">
-                    <div className="flex flex-nowrap items-center gap-1.5">
-                      <span className={row.kind === 'deposit' ? 'badge-deposit' : 'badge-expense'}>
-                        {row.kind === 'deposit' ? 'Deposit' : 'Expense'}
-                      </span>
-                      {row.paid_by_resident ? (
-                        <Tooltip content="Paid by the resident — excluded from company float.">
-                          <span className="badge-resident-paid">Resident paid</span>
-                        </Tooltip>
-                      ) : null}
-                      {row.paid_by_owner ? (
-                        <Tooltip content="Paid by the owner — excluded from company float.">
-                          <span className="badge-owner-paid">Owner paid</span>
-                        </Tooltip>
-                      ) : null}
-                      {row.paid_by_company ? (
-                        <Tooltip content="Paid by the company (MIP) — counts in company float.">
-                          <span className="badge-mip-paid">MIP paid</span>
-                        </Tooltip>
-                      ) : null}
-                      {row.ledger_column === 'nearly_cc' ? (
-                        <Tooltip content="From the Nearly credit-card column.">
-                          <span className="badge-nearly-cc">Nearly CC</span>
-                        </Tooltip>
-                      ) : null}
-                      {row.ledger_column === 'cash' ? (
-                        <Tooltip content="From the Cash column in the ledger.">
-                          <span className="badge-cash-paid">Cash</span>
-                        </Tooltip>
-                      ) : null}
-                      {row.ledger_column === 'other' ? (
-                        <Tooltip content="From the Other column in the ledger.">
-                          <span className="badge-other-paid">Other</span>
-                        </Tooltip>
-                      ) : null}
-                      {row.is_rental_income ? (
-                        <Tooltip content="Tenant rent — tracked separately from company float.">
-                          <span className="badge-rental-income">Rental income</span>
-                        </Tooltip>
-                      ) : null}
-                      {row.from_bank_statement ? (
-                        <Tooltip content="Imported from the company bank statement.">
-                          <span className="badge-bank-statement">Bank statement</span>
-                        </Tooltip>
-                      ) : null}
-                    </div>
-                  </td>
-                  <td className="px-5 py-3 font-mono text-xs font-medium">{row.client_prop_id}</td>
-                  <td className="px-5 py-3">{formatDate(row.transaction_date)}</td>
-                  <td className="px-5 py-3 font-medium">{row.property_name}</td>
-                  <td className="px-5 py-3">{row.owner_name}</td>
-                  <td className="px-5 py-3">{row.details}</td>
-                  <td
-                    className={`px-5 py-3 whitespace-nowrap tabular-nums ${
-                      row.paid_by_resident
-                        ? 'amount-resident-paid'
-                        : row.paid_by_owner
-                          ? 'amount-owner-paid'
-                          : row.paid_by_company
-                            ? 'amount-mip-paid'
-                            : row.ledger_column === 'nearly_cc'
-                              ? 'amount-nearly-cc'
-                              : row.ledger_column === 'cash'
-                                ? 'amount-cash-paid'
-                                : row.ledger_column === 'other'
-                                  ? 'amount-other-paid'
-                                  : row.is_rental_income
-                                    ? 'amount-rental-income'
-                                    : row.kind === 'deposit'
-                                      ? 'amount-deposit'
-                                      : 'amount-expense'
-                    }`}
-                  >
-                    {row.kind === 'deposit' ? '+' : '−'}
-                    {formatCurrency(row.amount, row.currency)}
-                  </td>
-                  <td
-                    className={`px-5 py-3 whitespace-nowrap tabular-nums font-medium ${
-                      row.balance_after == null
-                        ? 'muted-text'
-                        : Number(row.balance_after) >= 0
-                          ? 'amount-deposit'
-                          : 'amount-expense'
-                    }`}
-                  >
-                    {row.balance_after == null
-                      ? '—'
-                      : formatCurrency(row.balance_after, row.currency)}
-                  </td>
-                  <td className="px-5 py-3 muted-text">{row.description}</td>
-                  <td
-                    className="px-5 py-3 text-xs muted-text max-w-[14rem] truncate"
-                    title={row.source_file ?? undefined}
-                  >
-                    {row.source_file || '—'}
-                  </td>
-                  <td className="px-5 py-3">
-                    {isUploadReceiptRef(row.receipt_ref) ? (
-                      <button
-                        type="button"
-                        className="btn-secondary text-xs"
-                        onClick={() =>
-                          setReceiptViewer({
-                            url: api.getUploadFileUrl(row.receipt_ref!),
-                            label: `${row.kind} · ${row.property_name} · ${formatDate(row.transaction_date)}`,
-                          })
+              {items.map((row) => {
+                const isEditing =
+                  editForm?.id === row.id && editForm.kind === row.kind && editForm != null;
+                return (
+                  <Fragment key={`${row.kind}-${row.id}`}>
+                    <tr
+                      className={`${transactionRowClassName(row)}${
+                        isEditing ? ' table-row-selected' : ''
+                      }`}
+                    >
+                      <TransactionDisplayCells
+                        row={row}
+                        reviewMarker={row.needs_review ? reviewBang(row) : null}
+                        actions={
+                          <div className="flex items-center gap-1">
+                            {isEditing ? (
+                              <Tooltip content="Close" hideHint>
+                                <button
+                                  type="button"
+                                  className="btn-icon"
+                                  onClick={cancelEdit}
+                                  aria-label="Close edit"
+                                >
+                                  <svg
+                                    xmlns="http://www.w3.org/2000/svg"
+                                    viewBox="0 0 20 20"
+                                    fill="currentColor"
+                                    className="h-4 w-4"
+                                    aria-hidden="true"
+                                  >
+                                    <path d="M6.28 5.22a.75.75 0 0 0-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 1 0 1.06 1.06L10 11.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L11.06 10l3.72-3.72a.75.75 0 0 0-1.06-1.06L10 8.94 6.28 5.22Z" />
+                                  </svg>
+                                </button>
+                              </Tooltip>
+                            ) : (
+                              <Tooltip content="Edit" hideHint>
+                                <button
+                                  type="button"
+                                  className="btn-icon"
+                                  onClick={() => openEdit(row)}
+                                  aria-label="Edit transaction"
+                                >
+                                  <svg
+                                    xmlns="http://www.w3.org/2000/svg"
+                                    viewBox="0 0 20 20"
+                                    fill="currentColor"
+                                    className="h-4 w-4"
+                                    aria-hidden="true"
+                                  >
+                                    <path d="m2.695 14.762-1.262 3.155a.5.5 0 0 0 .65.65l3.155-1.262a4 4 0 0 0 1.343-.886L17.5 5.501a2.121 2.121 0 0 0-3-3L3.58 13.419a4 4 0 0 0-.885 1.343Z" />
+                                  </svg>
+                                </button>
+                              </Tooltip>
+                            )}
+                            <Tooltip content="Feedback" hideHint>
+                              <button
+                                type="button"
+                                className="btn-icon"
+                                onClick={() =>
+                                  openFeedback({
+                                    initialMessage: formatTransactionFeedback(row),
+                                  })
+                                }
+                                aria-label="Send feedback"
+                              >
+                                <svg
+                                  xmlns="http://www.w3.org/2000/svg"
+                                  viewBox="0 0 20 20"
+                                  fill="currentColor"
+                                  className="h-4 w-4"
+                                  aria-hidden="true"
+                                >
+                                  <path
+                                    fillRule="evenodd"
+                                    d="M10 2c-2.236 0-4.43.18-6.512.512C2.35 2.718 1.5 3.958 1.5 5.373v4.254c0 1.415.85 2.655 1.988 2.86 1.113.178 2.259.3 3.418.364V16.5a.75.75 0 0 0 1.28.53l2.754-2.753A32.978 32.978 0 0 0 10 14c2.236 0 4.43-.18 6.512-.512 1.138-.205 1.988-1.445 1.988-2.86V5.373c0-1.415-.85-2.655-1.988-2.86A33.001 33.001 0 0 0 10 2Zm0 5a1 1 0 1 0 0 2 1 1 0 0 0 0-2ZM7 8a1 1 0 1 1-2 0 1 1 0 0 1 2 0Zm6 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0Z"
+                                    clipRule="evenodd"
+                                  />
+                                </svg>
+                              </button>
+                            </Tooltip>
+                          </div>
                         }
-                      >
-                        View
-                      </button>
-                    ) : (
-                      <span className="muted-text text-xs">—</span>
-                    )}
-                  </td>
-                </tr>
-              ))}
+                      />
+                    </tr>
+                    {isEditing ? (
+                      <tr className="bg-slate-50/80 dark:bg-slate-900/40">
+                        <td colSpan={13} className="p-0">
+                          <div className="box-border max-w-full px-4 py-4">
+                            <div className="grid max-w-full gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                              <label className="text-sm min-w-0">
+                                <span className="label-text">Prop ID / Property</span>
+                                <select
+                                  className="field"
+                                  value={editForm.property_id}
+                                  onChange={(event) =>
+                                    patchEdit({ property_id: event.target.value })
+                                  }
+                                >
+                                  {(propertiesQuery.data ?? []).map((property) => (
+                                    <option key={property.id} value={property.id}>
+                                      {property.client_prop_id} — {property.name}
+                                    </option>
+                                  ))}
+                                </select>
+                              </label>
+                              <DateInputDMY
+                                label="Date"
+                                value={editForm.transaction_date}
+                                onChange={(iso) => patchEdit({ transaction_date: iso })}
+                                className="text-sm min-w-0"
+                              />
+                              <label className="text-sm min-w-0">
+                                <span className="label-text">Amount</span>
+                                <input
+                                  type="number"
+                                  min="0.01"
+                                  step="0.01"
+                                  className="field"
+                                  value={editForm.amount}
+                                  onChange={(event) => patchEdit({ amount: event.target.value })}
+                                />
+                              </label>
+                              {row.kind === 'expense' ? (
+                                <>
+                                  <label className="text-sm min-w-0">
+                                    <span className="label-text">Section</span>
+                                    <input
+                                      list="inline-section-suggestions"
+                                      type="text"
+                                      className="field"
+                                      value={editForm.section}
+                                      onChange={(event) =>
+                                        patchEdit({ section: event.target.value })
+                                      }
+                                    />
+                                  </label>
+                                  <label className="text-sm min-w-0">
+                                    <span className="label-text">Method</span>
+                                    <select
+                                      className="field"
+                                      value={editForm.payment_method}
+                                      onChange={(event) =>
+                                        patchEdit({ payment_method: event.target.value })
+                                      }
+                                    >
+                                      {METHODS.map((item) => (
+                                        <option key={item} value={item}>
+                                          {label(item)}
+                                        </option>
+                                      ))}
+                                      {editForm.payment_method &&
+                                      !(METHODS as readonly string[]).includes(
+                                        editForm.payment_method,
+                                      ) ? (
+                                        <option value={editForm.payment_method}>
+                                          {label(editForm.payment_method)}
+                                        </option>
+                                      ) : null}
+                                    </select>
+                                  </label>
+                                  <label className="text-sm min-w-0">
+                                    <span className="label-text">Company</span>
+                                    <input
+                                      type="text"
+                                      className="field"
+                                      value={editForm.company}
+                                      onChange={(event) =>
+                                        patchEdit({ company: event.target.value })
+                                      }
+                                    />
+                                  </label>
+                                  <label className="text-sm min-w-0">
+                                    <span className="label-text">Source</span>
+                                    <select
+                                      className="field"
+                                      value={editForm.source}
+                                      onChange={(event) =>
+                                        patchEdit({ source: event.target.value })
+                                      }
+                                    >
+                                      {SOURCES.map((item) => (
+                                        <option key={item} value={item}>
+                                          {label(item)}
+                                        </option>
+                                      ))}
+                                      {editForm.source &&
+                                      !(SOURCES as readonly string[]).includes(editForm.source) ? (
+                                        <option value={editForm.source}>
+                                          {label(editForm.source)}
+                                        </option>
+                                      ) : null}
+                                    </select>
+                                  </label>
+                                </>
+                              ) : (
+                                <label className="text-sm flex items-end gap-2 pb-2 min-w-0">
+                                  <input
+                                    type="checkbox"
+                                    checked={editForm.is_rental_income}
+                                    onChange={(event) =>
+                                      patchEdit({ is_rental_income: event.target.checked })
+                                    }
+                                  />
+                                  <span className="label-text mb-0">Rental income</span>
+                                </label>
+                              )}
+                              <label className="text-sm min-w-0 sm:col-span-2 lg:col-span-3 xl:col-span-4">
+                                <span className="label-text">Notes</span>
+                                <input
+                                  type="text"
+                                  className="field"
+                                  value={editForm.notes}
+                                  onChange={(event) => patchEdit({ notes: event.target.value })}
+                                />
+                              </label>
+                              {editError ? (
+                                <div className="sm:col-span-2 lg:col-span-3 xl:col-span-4">
+                                  <InlineError error={editError} />
+                                </div>
+                              ) : null}
+                              <div className="flex flex-wrap gap-2 sm:col-span-2 lg:col-span-3 xl:col-span-4">
+                                <button
+                                  type="button"
+                                  className="btn-primary"
+                                  disabled={
+                                    updateTransactionMutation.isPending ||
+                                    deleteTransactionMutation.isPending
+                                  }
+                                  onClick={saveEdit}
+                                >
+                                  {updateTransactionMutation.isPending
+                                    ? 'Saving…'
+                                    : 'Save changes'}
+                                </button>
+                                <button
+                                  type="button"
+                                  className="btn-secondary"
+                                  disabled={
+                                    updateTransactionMutation.isPending ||
+                                    deleteTransactionMutation.isPending
+                                  }
+                                  onClick={cancelEdit}
+                                >
+                                  Cancel
+                                </button>
+                                <button
+                                  type="button"
+                                  className="btn-danger ml-auto"
+                                  disabled={
+                                    updateTransactionMutation.isPending ||
+                                    deleteTransactionMutation.isPending
+                                  }
+                                  onClick={deleteEdit}
+                                >
+                                  {deleteTransactionMutation.isPending
+                                    ? 'Deleting…'
+                                    : 'Delete'}
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                    ) : null}
+                  </Fragment>
+                );
+              })}
             </tbody>
           </table>
+          <datalist id="inline-section-suggestions">
+            {SECTION_SUGGESTIONS.map((item) => (
+              <option key={item} value={item} />
+            ))}
+          </datalist>
         </div>
-        {receiptViewer ? (
-          <div
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-            role="dialog"
-            aria-modal="true"
-            aria-label="Receipt viewer"
-            onClick={() => setReceiptViewer(null)}
-          >
-            <div
-              className="panel flex max-h-[90vh] w-full max-w-3xl flex-col gap-3 p-4"
-              onClick={(event) => event.stopPropagation()}
-            >
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <h3 className="subheading">Receipt</h3>
-                  <p className="page-desc">{receiptViewer.label}</p>
-                </div>
-                <div className="flex gap-2">
-                  <a
-                    href={receiptViewer.url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="btn-secondary text-xs"
-                  >
-                    Open in new tab
-                  </a>
-                  <button
-                    type="button"
-                    className="btn-secondary text-xs"
-                    onClick={() => setReceiptViewer(null)}
-                  >
-                    Close
-                  </button>
-                </div>
-              </div>
-              <div className="min-h-0 flex-1 overflow-auto rounded-md border border-border bg-black/5">
-                <iframe
-                  title="Receipt document"
-                  src={receiptViewer.url}
-                  className="h-[70vh] w-full"
-                />
-              </div>
-            </div>
-          </div>
-        ) : null}
         {items.length === 0 ? (
           <div className="p-5">
             <EmptyState message="No transactions match the current filters." />
@@ -1016,7 +1591,8 @@ export function TransactionsPage() {
         ) : null}
         <div className="table-footer">
           <span>
-            Showing {items.length} of {total} transactions
+            Showing {items.length} of {listedRowCount} loaded
+            {total !== listedRowCount ? ` · ${total} match filters` : ''}
           </span>
           <div className="flex gap-2">
             <button

@@ -3,9 +3,11 @@
 One-command dev startup for SimplifAI.
 
 - Ensures backend venv + dependencies
-- Seeds database and imports sample deposits (if empty)
 - Ensures frontend dependencies
 - Starts API then web UI
+
+The database is created empty on API startup. Load data via
+Data Import in the web UI (or optional CLI scripts under scripts/).
 
 Usage (from project root):
     python scripts/start_dev.py
@@ -28,7 +30,6 @@ ROOT = Path(__file__).resolve().parents[1]
 BACKEND = ROOT / "backend"
 FRONTEND = ROOT / "frontend"
 VENV_DIR = BACKEND / ".venv"
-SEED_EXCEL = ROOT / "data" / "seed" / "bank_deposits.xlsx"
 
 API_PORT = 8000
 UI_PORT = 5173
@@ -117,59 +118,6 @@ def ensure_frontend_deps() -> None:
     if not env_file.exists() and env_example.exists():
         shutil.copy(env_example, env_file)
         log(f"Created {env_file.relative_to(ROOT)} from .env.example")
-
-
-def ensure_seed_excel() -> None:
-    if SEED_EXCEL.exists():
-        return
-    log("Generating sample Excel seed file...")
-    py = python_exe()
-    run([str(py), str(ROOT / "scripts" / "generate_bank_deposits.py")])
-
-
-def ensure_database() -> None:
-    sys.path.insert(0, str(BACKEND))
-    from sqlalchemy import func, select
-
-    from app.core.database import SessionLocal, init_db
-    from app.models.deposit import Deposit
-    from app.models.expense import Expense
-    from app.models.owner import Owner
-    from app.services.bank_import import BankImportService
-    from app.services.seed import seed_reference_data, seed_sample_expenses
-
-    init_db()
-    db = SessionLocal()
-    try:
-        owner_count = db.scalar(select(func.count()).select_from(Owner)) or 0
-        deposit_count = db.scalar(select(func.count()).select_from(Deposit)) or 0
-        expense_count = db.scalar(select(func.count()).select_from(Expense)) or 0
-
-        if owner_count == 0:
-            log("Seeding owners, properties, and bank accounts...")
-            seed_reference_data(db)
-        else:
-            log(f"Database already has {owner_count} owner(s) — skipping seed")
-
-        if deposit_count == 0:
-            ensure_seed_excel()
-            log("Importing sample bank deposits...")
-            result = BankImportService(db).import_deposits(SEED_EXCEL)
-            log(
-                f"Imported {result.imported_count} deposit(s) "
-                f"({result.skipped_count} skipped, {result.error_count} errors)"
-            )
-        else:
-            log(f"Database already has {deposit_count} deposit(s) — skipping import")
-
-        if expense_count == 0:
-            added = seed_sample_expenses(db)
-            if added:
-                log(f"Seeded {added} sample expense(s)")
-        else:
-            log(f"Database already has {expense_count} expense(s) — skipping expense seed")
-    finally:
-        db.close()
 
 
 def can_bind_port(port: int) -> bool:
@@ -272,7 +220,6 @@ def main() -> int:
         reexec_in_venv()
         ensure_backend_deps()
         ensure_frontend_deps()
-        ensure_database()
     except Exception as exc:
         log(f"Setup failed: {exc}")
         return 1
@@ -297,6 +244,7 @@ def main() -> int:
         print(f"  Web UI:  {UI_URL}")
         print(f"  API:     http://127.0.0.1:{API_PORT}")
         print(f"  API docs http://127.0.0.1:{API_PORT}/docs")
+        print("  Load data via Data Import in the UI (DB starts empty)")
         print("  Press Ctrl+C to stop both servers")
         print("=" * 60)
         print()

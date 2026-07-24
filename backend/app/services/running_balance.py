@@ -90,7 +90,7 @@ def property_float_totals(
 @dataclass(frozen=True)
 class _LedgerEvent:
     property_id: UUID
-    transaction_date: date
+    transaction_date: date | None
     created_at: datetime | None
     kind: str  # deposit | expense
     id: UUID
@@ -145,7 +145,8 @@ def compute_running_balances(
     events.sort(
         key=lambda event: (
             str(event.property_id),
-            event.transaction_date.isoformat(),
+            # Incomplete imports (null date) sort first within the property
+            event.transaction_date.isoformat() if event.transaction_date else "",
             event.created_at.isoformat() if event.created_at else "",
             event.kind,
             str(event.id),

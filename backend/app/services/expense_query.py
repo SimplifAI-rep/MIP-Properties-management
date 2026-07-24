@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from app.models.expense import Expense
 from app.models.owner import Owner
 from app.models.property import Property
-from app.schemas import ExpenseCategoryTotal, ExpenseCreate, ExpenseRead
+from app.schemas import ExpenseCategoryTotal, ExpenseCreate, ExpenseRead, ExpenseUpdate
 from app.services.running_balance import compute_running_balances
 from app.services.source_file import load_upload_filenames, resolve_source_file
 
@@ -55,6 +55,8 @@ def expense_to_read(
         paid_by_company=bool(expense.paid_by_company),
         paid_by_owner=bool(expense.paid_by_owner),
         ledger_column=expense.ledger_column,
+        needs_review=bool(getattr(expense, "needs_review", False)),
+        review_reasons=getattr(expense, "review_reasons", None),
     )
 
 
@@ -87,6 +89,12 @@ def list_expenses(
     date_to: date | None = None,
     min_amount: Decimal | None = None,
     max_amount: Decimal | None = None,
+    source_file: str | None = None,
+    needs_review: bool | None = None,
+    paid_by_resident: bool | None = None,
+    paid_by_owner: bool | None = None,
+    paid_by_company: bool | None = None,
+    ledger_column: str | None = None,
     page: int = 1,
     page_size: int = 50,
 ) -> tuple[list[ExpenseRead], int]:
@@ -128,6 +136,18 @@ def list_expenses(
         stmt = stmt.where(Expense.amount >= min_amount)
     if max_amount is not None:
         stmt = stmt.where(Expense.amount <= max_amount)
+    if source_file:
+        stmt = stmt.where(Expense.source_file == source_file.strip())
+    if needs_review is not None:
+        stmt = stmt.where(Expense.needs_review.is_(needs_review))
+    if paid_by_resident is not None:
+        stmt = stmt.where(Expense.paid_by_resident.is_(paid_by_resident))
+    if paid_by_owner is not None:
+        stmt = stmt.where(Expense.paid_by_owner.is_(paid_by_owner))
+    if paid_by_company is not None:
+        stmt = stmt.where(Expense.paid_by_company.is_(paid_by_company))
+    if ledger_column:
+        stmt = stmt.where(Expense.ledger_column == ledger_column)
 
     count_stmt = select(func.count()).select_from(stmt.subquery())
     total = db.scalar(count_stmt) or 0
@@ -183,6 +203,67 @@ def create_expense(db: Session, payload: ExpenseCreate) -> ExpenseRead:
     return expense_to_read(expense, property_row.name, owner.name, property_row.client_prop_id)
 
 
+def _clear_review_if_complete(expense: Expense) -> None:
+    if (
+        getattr(expense, "needs_review", False)
+        and expense.transaction_date is not None
+        and expense.amount is not None
+        and expense.amount > 0
+    ):
+        expense.needs_review = False
+        expense.review_reasons = None
+
+
+def update_expense(db: Session, expense_id: UUID, payload: ExpenseUpdate) -> ExpenseRead:
+    expense = db.get(Expense, expense_id)
+    if not expense:
+        raise HTTPException(status_code=404, detail="Expense not found")
+
+    data = payload.model_dump(exclude_unset=True)
+    if "category" in data or "source" in data or "payment_method" in data:
+        _validate_expense_enums(
+            category=data.get("category", expense.category),
+            source=data.get("source", expense.source),
+            payment_method=data.get("payment_method", expense.payment_method),
+        )
+
+    property_id = data.get("property_id", expense.property_id)
+    property_row = db.get(Property, property_id)
+    if not property_row:
+        raise HTTPException(status_code=404, detail="Property not found")
+
+    owner = db.get(Owner, property_row.owner_id)
+    if not owner:
+        raise HTTPException(status_code=404, detail="Owner not found")
+
+    for key, value in data.items():
+        setattr(expense, key, value)
+
+    # Keep description in sync when section/notes style updates are sent
+    if "category" in data and "description" not in data and expense.notes:
+        expense.description = f"{expense.category} | {expense.notes}"
+    elif "category" in data and "description" not in data and not expense.notes:
+        expense.description = expense.category
+    elif "notes" in data and "description" not in data:
+        notes = data.get("notes")
+        expense.description = (
+            f"{expense.category} | {notes}" if notes else expense.category
+        )
+
+    _clear_review_if_complete(expense)
+    db.commit()
+    db.refresh(expense)
+    return expense_to_read(expense, property_row.name, owner.name, property_row.client_prop_id)
+
+
+def delete_expense(db: Session, expense_id: UUID) -> None:
+    expense = db.get(Expense, expense_id)
+    if not expense:
+        raise HTTPException(status_code=404, detail="Expense not found")
+    db.delete(expense)
+    db.commit()
+
+
 def get_expense_summary(
     db: Session,
     *,
@@ -196,11 +277,29 @@ def get_expense_summary(
     date_to: date | None = None,
     min_amount: Decimal | None = None,
     max_amount: Decimal | None = None,
+    source_file: str | None = None,
+    needs_review: bool | None = None,
+    paid_by_resident: bool | None = None,
+    paid_by_owner: bool | None = None,
+    paid_by_company: bool | None = None,
     include_all: bool = False,
 ) -> dict:
-    # Default: resident/owner-paid rows are informational only — exclude from company totals
+    # Default: resident/owner-paid rows are informational only — exclude from company totals.
+    # Explicit paid_by_* flags override that default.
     filters = []
-    if not include_all:
+    explicit_payer = (
+        paid_by_resident is not None
+        or paid_by_owner is not None
+        or paid_by_company is not None
+    )
+    if explicit_payer:
+        if paid_by_resident is not None:
+            filters.append(Expense.paid_by_resident.is_(paid_by_resident))
+        if paid_by_owner is not None:
+            filters.append(Expense.paid_by_owner.is_(paid_by_owner))
+        if paid_by_company is not None:
+            filters.append(Expense.paid_by_company.is_(paid_by_company))
+    elif not include_all:
         filters.extend(
             [
                 Expense.paid_by_resident.is_(False),
@@ -225,6 +324,10 @@ def get_expense_summary(
         filters.append(Expense.amount >= min_amount)
     if max_amount is not None:
         filters.append(Expense.amount <= max_amount)
+    if source_file:
+        filters.append(Expense.source_file == source_file.strip())
+    if needs_review is not None:
+        filters.append(Expense.needs_review.is_(needs_review))
 
     amount_stmt = select(func.coalesce(func.sum(Expense.amount), 0))
     count_stmt = select(func.count()).select_from(Expense)

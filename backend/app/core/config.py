@@ -26,7 +26,6 @@ class Settings(BaseSettings):
     storage_dir: str = str(PROJECT_ROOT / "storage")
     upload_max_bytes: int = 10 * 1024 * 1024
 
-    llm_provider: str = "openai"
     llm_api_key: str = ""
     llm_model: str = "gpt-4o-mini"
     llm_base_url: str = "https://api.openai.com/v1"

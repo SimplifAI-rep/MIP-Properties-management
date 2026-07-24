@@ -63,7 +63,7 @@ class DepositRead(BaseModel):
     owner_name: str
     bank_account_id: UUID | None = None
     account_number: str | None = None
-    transaction_date: date
+    transaction_date: date | None = None
     amount: Decimal
     currency: str
     reference: str | None = None
@@ -73,6 +73,8 @@ class DepositRead(BaseModel):
     receipt_ref: str | None = None
     source_file: str | None = None
     balance_after: Decimal | None = None
+    needs_review: bool = False
+    review_reasons: str | None = None
 
 
 class PropertyRead(BaseModel):
@@ -133,6 +135,17 @@ class DepositCreate(BaseModel):
     currency: str = "ILS"
     reference: str | None = None
     description: str | None = None
+
+
+class DepositUpdate(BaseModel):
+    property_id: UUID | None = None
+    bank_account_id: UUID | None = None
+    transaction_date: date | None = None
+    amount: Decimal | None = Field(default=None, ge=0)
+    currency: str | None = None
+    reference: str | None = None
+    description: str | None = None
+    is_rental_income: bool | None = None
 
 
 class ImportResultRead(BaseModel):
@@ -211,6 +224,7 @@ class DepositQueryIntent(BaseModel):
     domain: str = "deposits"
     property_id: UUID | None = None
     property_name: str | None = None
+    client_prop_id: str | None = None
     owner_id: UUID | None = None
     owner_name: str | None = None
     date_from: date | None = None
@@ -226,6 +240,13 @@ class DepositQueryIntent(BaseModel):
     source: str | None = None
     payment_method: str | None = None
     search_text: str | None = None
+    source_file: str | None = None
+    needs_review: bool | None = None
+    is_rental_income: bool | None = None
+    paid_by_resident: bool | None = None
+    paid_by_owner: bool | None = None
+    paid_by_company: bool | None = None
+    ledger_column: str | None = None
 
 
 class AIQueryRequest(BaseModel):
@@ -247,7 +268,7 @@ class ExpenseRead(BaseModel):
     client_prop_id: str
     property_name: str
     owner_name: str
-    transaction_date: date
+    transaction_date: date | None = None
     amount: Decimal
     currency: str
     category: str
@@ -265,6 +286,8 @@ class ExpenseRead(BaseModel):
     paid_by_company: bool = False
     paid_by_owner: bool = False
     ledger_column: str | None = None
+    needs_review: bool = False
+    review_reasons: str | None = None
 
 
 class ExpenseCreate(BaseModel):
@@ -278,6 +301,20 @@ class ExpenseCreate(BaseModel):
     vendor_name: str | None = None
     reference: str | None = None
     description: str | None = None
+
+
+class ExpenseUpdate(BaseModel):
+    property_id: UUID | None = None
+    transaction_date: date | None = None
+    amount: Decimal | None = Field(default=None, ge=0)
+    currency: str | None = None
+    category: str | None = None
+    source: str | None = None
+    payment_method: str | None = None
+    vendor_name: str | None = None
+    reference: str | None = None
+    description: str | None = None
+    notes: str | None = None
 
 
 class ExpenseListResponse(BaseModel):
@@ -328,6 +365,15 @@ class TransactionDraft(BaseModel):
     match_confidence: Literal["high", "medium", "low", "none"] | None = None
     status: Literal["ready", "needs_review", "error"] = "needs_review"
     warnings: list[FieldWarning] = Field(default_factory=list)
+    # Statement uploads: add creates a row; ignore skips. Duplicates default to ignore.
+    user_action: Literal["add", "ignore"] = "add"
+    is_duplicate: bool = False
+    duplicate_match_id: UUID | None = None
+    duplicate_match_kind: Literal["deposit", "expense"] | None = None
+    duplicate_summary: str | None = None
+    needs_review: bool = False
+    review_reasons: str | None = None
+    import_key: str | None = None
 
 
 class UploadAnalyzeResponse(BaseModel):
@@ -347,7 +393,6 @@ class UploadAnalyzeResponse(BaseModel):
     ready_count: int = 0
     needs_review_count: int = 0
     error_count: int = 0
-    preview_url: str | None = None
 
 
 class UploadConfirmRequest(BaseModel):
@@ -368,6 +413,7 @@ class AlertRead(BaseModel):
         "missing_deposit",
         "upload_pending",
         "duplicate_deposit",
+        "incomplete_import",
     ]
     severity: Literal["error", "warning", "info"]
     title: str
@@ -377,6 +423,13 @@ class AlertRead(BaseModel):
     owner_name: str | None = None
     upload_id: UUID | None = None
     transaction_type: Literal["deposit", "expense"] | None = None
+    expense_id: UUID | None = None
+    deposit_id: UUID | None = None
+    transaction_date: date | None = None
+    amount: Decimal | None = None
+    section: str | None = None
+    notes: str | None = None
+    review_reasons: str | None = None
     created_at: datetime | None = None
     gap: DepositGap | None = None
     drafts: list[TransactionDraft] = Field(default_factory=list)
@@ -395,8 +448,16 @@ class AlertSummary(BaseModel):
     warning_count: int = 0
 
 
+class FixIncompletePayload(BaseModel):
+    transaction_type: Literal["deposit", "expense"]
+    id: UUID
+    transaction_date: date | None = None
+    amount: Decimal | None = Field(default=None, ge=0)
+
+
 class AlertResolveRequest(BaseModel):
-    action: Literal["add_deposit", "confirm_upload"]
+    action: Literal["add_deposit", "confirm_upload", "fix_incomplete"]
     deposit: DepositCreate | None = None
     drafts: list[TransactionDraft] | None = None
+    fix_incomplete: FixIncompletePayload | None = None
 

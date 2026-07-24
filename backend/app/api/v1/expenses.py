@@ -6,8 +6,14 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db
-from app.schemas import ExpenseCreate, ExpenseListResponse, ExpenseRead, ExpenseSummary
-from app.services.expense_query import create_expense, get_expense_summary, list_expenses
+from app.schemas import ExpenseCreate, ExpenseListResponse, ExpenseRead, ExpenseSummary, ExpenseUpdate
+from app.services.expense_query import (
+    create_expense,
+    delete_expense,
+    get_expense_summary,
+    list_expenses,
+    update_expense,
+)
 
 router = APIRouter(prefix="/expenses", tags=["expenses"])
 
@@ -24,6 +30,11 @@ def get_expenses(
     date_to: date | None = None,
     min_amount: Decimal | None = None,
     max_amount: Decimal | None = None,
+    source_file: str | None = None,
+    needs_review: bool | None = None,
+    paid_by_resident: bool | None = None,
+    paid_by_owner: bool | None = None,
+    paid_by_company: bool | None = None,
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=2000),
     db: Session = Depends(get_db),
@@ -40,6 +51,11 @@ def get_expenses(
         date_to=date_to,
         min_amount=min_amount,
         max_amount=max_amount,
+        source_file=source_file,
+        needs_review=needs_review,
+        paid_by_resident=paid_by_resident,
+        paid_by_owner=paid_by_owner,
+        paid_by_company=paid_by_company,
         page=page,
         page_size=page_size,
     )
@@ -68,6 +84,11 @@ def expense_summary(
     date_to: date | None = None,
     min_amount: Decimal | None = None,
     max_amount: Decimal | None = None,
+    source_file: str | None = None,
+    needs_review: bool | None = None,
+    paid_by_resident: bool | None = None,
+    paid_by_owner: bool | None = None,
+    paid_by_company: bool | None = None,
     include_all: bool = False,
     db: Session = Depends(get_db),
 ) -> ExpenseSummary:
@@ -83,6 +104,28 @@ def expense_summary(
         date_to=date_to,
         min_amount=min_amount,
         max_amount=max_amount,
+        source_file=source_file,
+        needs_review=needs_review,
+        paid_by_resident=paid_by_resident,
+        paid_by_owner=paid_by_owner,
+        paid_by_company=paid_by_company,
         include_all=include_all,
     )
     return ExpenseSummary(**data)
+
+
+@router.patch("/{expense_id}", response_model=ExpenseRead)
+def patch_expense(
+    expense_id: UUID,
+    payload: ExpenseUpdate,
+    db: Session = Depends(get_db),
+) -> ExpenseRead:
+    return update_expense(db, expense_id, payload)
+
+
+@router.delete("/{expense_id}", status_code=204)
+def remove_expense(
+    expense_id: UUID,
+    db: Session = Depends(get_db),
+) -> None:
+    delete_expense(db, expense_id)

@@ -6,12 +6,21 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db
-from app.schemas import DepositCreate, DepositGap, DepositListResponse, DepositRead, DepositSummary
+from app.schemas import (
+    DepositCreate,
+    DepositGap,
+    DepositListResponse,
+    DepositRead,
+    DepositSummary,
+    DepositUpdate,
+)
 from app.services.deposit_query import (
     create_deposit,
+    delete_deposit,
     find_deposit_gaps,
     get_deposit_summary,
     list_deposits,
+    update_deposit,
 )
 
 router = APIRouter(prefix="/deposits", tags=["deposits"])
@@ -26,6 +35,9 @@ def get_deposits(
     date_to: date | None = None,
     min_amount: Decimal | None = None,
     max_amount: Decimal | None = None,
+    source_file: str | None = None,
+    needs_review: bool | None = None,
+    is_rental_income: bool | None = None,
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=2000),
     db: Session = Depends(get_db),
@@ -39,6 +51,9 @@ def get_deposits(
         date_to=date_to,
         min_amount=min_amount,
         max_amount=max_amount,
+        source_file=source_file,
+        needs_review=needs_review,
+        is_rental_income=is_rental_income,
         page=page,
         page_size=page_size,
     )
@@ -64,6 +79,9 @@ def deposit_summary(
     date_to: date | None = None,
     min_amount: Decimal | None = None,
     max_amount: Decimal | None = None,
+    source_file: str | None = None,
+    needs_review: bool | None = None,
+    is_rental_income: bool | None = None,
     include_all: bool = False,
     db: Session = Depends(get_db),
 ) -> DepositSummary:
@@ -76,6 +94,9 @@ def deposit_summary(
         date_to=date_to,
         min_amount=min_amount,
         max_amount=max_amount,
+        source_file=source_file,
+        needs_review=needs_review,
+        is_rental_income=is_rental_income,
         include_all=include_all,
     )
     return DepositSummary(**data)
@@ -96,3 +117,20 @@ def deposit_gaps(
         date_from=date_from,
         date_to=date_to,
     )
+
+
+@router.patch("/{deposit_id}", response_model=DepositRead)
+def patch_deposit(
+    deposit_id: UUID,
+    payload: DepositUpdate,
+    db: Session = Depends(get_db),
+) -> DepositRead:
+    return update_deposit(db, deposit_id, payload)
+
+
+@router.delete("/{deposit_id}", status_code=204)
+def remove_deposit(
+    deposit_id: UUID,
+    db: Session = Depends(get_db),
+) -> None:
+    delete_deposit(db, deposit_id)

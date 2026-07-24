@@ -2,7 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
-import type { Deposit, DepositGap, Expense, Property } from '../types';
+import type { DepositGap, Property } from '../types';
+import { TransactionTable } from '../components/TransactionTable';
 import {
   Card,
   EmptyState,
@@ -16,6 +17,7 @@ import {
   ownerTransactionsState,
   propertyTransactionsState,
 } from '../utils/transactionsNav';
+import { depositToUnified, expenseToUnified } from '../utils/unifiedTransaction';
 import {
   buildDashboardPeriod,
   defaultDashboardPeriod,
@@ -26,19 +28,9 @@ import {
 } from '../utils/dashboardPeriod';
 
 const RECENT_LIMIT = 10;
-const FETCH_SIZE = 200;
 
-interface RecentItem {
-  id: string;
-  kind: 'deposit' | 'expense';
-  transaction_date: string;
-  property_id: string;
-  client_prop_id: string;
-  property_name: string;
-  owner_id?: string;
-  owner_name: string;
-  amount: string;
-  label: string;
+function label(value: string) {
+  return value.replace(/_/g, ' ');
 }
 
 interface PropertyHealth {
@@ -58,40 +50,6 @@ interface OwnerPeriodRow {
   expenseTotal: number;
   depositCount: number;
   expenseCount: number;
-}
-
-function label(value: string) {
-  return value.replace(/_/g, ' ');
-}
-
-function depositToRecent(deposit: Deposit): RecentItem {
-  return {
-    id: deposit.id,
-    kind: 'deposit',
-    transaction_date: deposit.transaction_date,
-    property_id: deposit.property_id,
-    client_prop_id: deposit.client_prop_id,
-    property_name: deposit.property_name,
-    owner_name: deposit.owner_name,
-    amount: deposit.amount,
-    label: deposit.description ?? deposit.account_number ?? 'Deposit',
-  };
-}
-
-function expenseToRecent(expense: Expense): RecentItem {
-  return {
-    id: expense.id,
-    kind: 'expense',
-    transaction_date: expense.transaction_date,
-    property_id: expense.property_id,
-    client_prop_id: expense.client_prop_id,
-    property_name: expense.property_name,
-    owner_name: expense.owner_name,
-    amount: expense.amount,
-    label: expense.vendor_name
-      ? `${expense.vendor_name} · ${label(expense.category)}`
-      : label(expense.category),
-  };
 }
 
 function severityBadge(severity: string) {
@@ -186,21 +144,17 @@ export function DashboardPage() {
   const periodDepositsQuery = useQuery({
     queryKey: ['dashboard-period-deposits', period.dateFrom, period.dateTo],
     queryFn: () =>
-      api.getDeposits({
+      api.getAllDeposits({
         date_from: period.dateFrom,
         date_to: period.dateTo,
-        page: 1,
-        page_size: FETCH_SIZE,
       }),
   });
   const periodExpensesQuery = useQuery({
     queryKey: ['dashboard-period-expenses', period.dateFrom, period.dateTo],
     queryFn: () =>
-      api.getExpenses({
+      api.getAllExpenses({
         date_from: period.dateFrom,
         date_to: period.dateTo,
-        page: 1,
-        page_size: FETCH_SIZE,
       }),
   });
 
@@ -218,8 +172,13 @@ export function DashboardPage() {
 
   const propertyHealth = useMemo(() => {
     const properties = propertiesQuery.data ?? [];
-    const deposits = periodDepositsQuery.data?.items ?? [];
-    const expenses = periodExpensesQuery.data?.items ?? [];
+    // Match Excel/dashboard summary cards: exclude rental and He/She/Owner-paid.
+    const deposits = (periodDepositsQuery.data?.items ?? []).filter(
+      (deposit) => !deposit.is_rental_income,
+    );
+    const expenses = (periodExpensesQuery.data?.items ?? []).filter(
+      (expense) => !expense.paid_by_resident && !expense.paid_by_owner,
+    );
     const gaps = gapsQuery.data ?? [];
 
     const gapCountByProperty = new Map<string, number>();
@@ -273,8 +232,12 @@ export function DashboardPage() {
   ]);
 
   const ownerPeriodRows = useMemo(() => {
-    const deposits = periodDepositsQuery.data?.items ?? [];
-    const expenses = periodExpensesQuery.data?.items ?? [];
+    const deposits = (periodDepositsQuery.data?.items ?? []).filter(
+      (deposit) => !deposit.is_rental_income,
+    );
+    const expenses = (periodExpensesQuery.data?.items ?? []).filter(
+      (expense) => !expense.paid_by_resident && !expense.paid_by_owner,
+    );
     const properties = propertiesQuery.data ?? [];
     const byOwner = new Map<string, OwnerPeriodRow>();
 
@@ -328,13 +291,14 @@ export function DashboardPage() {
   }, [propertiesQuery.data]);
 
   const recentActivity = useMemo(() => {
-    const deposits = (periodDepositsQuery.data?.items ?? []).map(depositToRecent);
-    const expenses = (periodExpensesQuery.data?.items ?? []).map(expenseToRecent);
+    const deposits = (periodDepositsQuery.data?.items ?? []).map(depositToUnified);
+    const expenses = (periodExpensesQuery.data?.items ?? []).map(expenseToUnified);
     return [...deposits, ...expenses]
-      .sort(
-        (a, b) =>
-          new Date(b.transaction_date).getTime() - new Date(a.transaction_date).getTime(),
-      )
+      .sort((a, b) => {
+        const aDate = a.transaction_date || '';
+        const bDate = b.transaction_date || '';
+        return bDate.localeCompare(aDate);
+      })
       .slice(0, RECENT_LIMIT);
   }, [periodDepositsQuery.data, periodExpensesQuery.data]);
 
@@ -344,7 +308,10 @@ export function DashboardPage() {
 
   if (depositSummaryQuery.isError || expenseSummaryQuery.isError) {
     return (
-      <ErrorState message="Could not load dashboard. Make sure the API server is running on port 8000." />
+      <ErrorState
+        message="We couldn't load the dashboard. Please check your connection and try again."
+        error={depositSummaryQuery.error ?? expenseSummaryQuery.error}
+      />
     );
   }
 
@@ -837,7 +804,14 @@ export function DashboardPage() {
             <h3 className="section-title">Recent activity — {period.label}</h3>
             <p className="section-subtitle">Latest deposits and expenses in the selected period.</p>
           </div>
-          <Link to="/transactions" className="btn-secondary text-sm">
+          <Link
+            to="/transactions"
+            state={{
+              dateFrom: period.dateFrom,
+              dateTo: period.dateTo,
+            }}
+            className="btn-secondary text-sm"
+          >
             View all
           </Link>
         </div>
@@ -846,53 +820,19 @@ export function DashboardPage() {
             <LoadingState label="Loading activity..." />
           </div>
         ) : recentActivity.length > 0 ? (
-          <div className="overflow-x-auto">
-            <table className="table-shell">
-              <thead className="table-head">
-                <tr>
-                  <th className="px-5 py-3 font-medium">Type</th>
-                  <th className="px-5 py-3 font-medium">Date</th>
-                  <th className="px-5 py-3 font-medium">Property</th>
-                  <th className="px-5 py-3 font-medium">Owner</th>
-                  <th className="px-5 py-3 font-medium">Details</th>
-                  <th className="px-5 py-3 font-medium">Amount</th>
-                </tr>
-              </thead>
-              <tbody>
-                {recentActivity.map((item) => (
-                  <tr
-                    key={`${item.kind}-${item.id}`}
-                    className={`${item.kind === 'deposit' ? 'row-deposit' : 'row-expense'} table-row-link`}
-                    onClick={() =>
-                      navigate('/transactions', {
-                        state: propertyTransactionsState(
-                          item.property_id,
-                          item.client_prop_id,
-                          periodDates,
-                        ),
-                      })
-                    }
-                  >
-                    <td className="px-5 py-3">
-                      <span className={item.kind === 'deposit' ? 'badge-deposit' : 'badge-expense'}>
-                        {item.kind}
-                      </span>
-                    </td>
-                    <td className="px-5 py-3">{formatDate(item.transaction_date)}</td>
-                    <td className="px-5 py-3 font-medium">{item.property_name}</td>
-                    <td className="px-5 py-3">{item.owner_name}</td>
-                    <td className="px-5 py-3 text-muted">{item.label}</td>
-                    <td className="px-5 py-3">
-                      <span className={item.kind === 'deposit' ? 'amount-deposit' : 'amount-expense'}>
-                        {item.kind === 'deposit' ? '+' : '−'}
-                        {formatCurrency(item.amount)}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <TransactionTable
+            rows={recentActivity}
+            onRowClick={(row) =>
+              navigate('/transactions', {
+                state: propertyTransactionsState(
+                  row.property_id,
+                  row.client_prop_id,
+                  periodDates,
+                ),
+              })
+            }
+            className="overflow-x-auto"
+          />
         ) : (
           <div className="p-5">
             <EmptyState message="No transactions in this period." />

@@ -7,6 +7,8 @@ import type {
   ExpenseFilters,
   ExpenseListResponse,
   ExpenseSummary,
+  ExpenseUpdate,
+  DepositUpdate,
   OwnerDetail,
   OwnerSummary,
   Property,
@@ -18,11 +20,13 @@ import type {
   AlertSummary,
   AlertResolveRequest,
   AlertItem,
-  DepositCreate,
+  FixIncompletePayload,
+  FixIncompleteResponse,
   ClientDataStatusResponse,
   ClientDataImportJobAccepted,
   ClientDataImportJobStatus,
 } from '../types';
+import { AppError, appErrorFromResponse } from '../utils/errors';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000/api/v1';
 
@@ -31,15 +35,42 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (init?.body && !(init.body instanceof FormData) && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json');
   }
-  const response = await fetch(`${API_BASE}${path}`, { ...init, headers });
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE}${path}`, { ...init, headers });
+  } catch (error) {
+    throw new AppError({
+      userMessage:
+        'We could not reach the server. Check your internet connection and try again.',
+      technicalDetail: error instanceof Error ? error.message : String(error),
+      reportable: true,
+      status: 0,
+    });
+  }
   if (!response.ok) {
     const detail = await response.text();
-    throw new Error(detail || `Request failed: ${response.status}`);
+    throw appErrorFromResponse(response.status, detail);
   }
-  return response.json() as Promise<T>;
+  if (response.status === 204) {
+    return undefined as T;
+  }
+  const text = await response.text();
+  if (!text) {
+    return undefined as T;
+  }
+  try {
+    return JSON.parse(text) as T;
+  } catch (error) {
+    throw new AppError({
+      userMessage: 'The server returned an unexpected response. Please try again.',
+      technicalDetail: error instanceof Error ? error.message : String(error),
+      reportable: true,
+      status: response.status,
+    });
+  }
 }
 
-function toQuery(params: Record<string, string | number | undefined>): string {
+function toQuery(params: Record<string, string | number | boolean | undefined>): string {
   const search = new URLSearchParams();
   Object.entries(params).forEach(([key, value]) => {
     if (value !== undefined && value !== '') {
@@ -50,8 +81,24 @@ function toQuery(params: Record<string, string | number | undefined>): string {
   return query ? `?${query}` : '';
 }
 
+async function fetchAllPages<T>(
+  fetchPage: (page: number, pageSize: number) => Promise<{ items: T[]; total: number }>,
+  pageSize = 2000,
+): Promise<{ items: T[]; total: number }> {
+  const first = await fetchPage(1, pageSize);
+  const items = [...first.items];
+  const total = first.total;
+  let page = 2;
+  while (items.length < total) {
+    const next = await fetchPage(page, pageSize);
+    if (!next.items.length) break;
+    items.push(...next.items);
+    page += 1;
+  }
+  return { items, total };
+}
+
 export const api = {
-  getHealth: () => request<{ status: string }>('/health'),
   getTransactionYears: () => request<{ years: number[] }>('/meta/transaction-years'),
   getOwners: () => request<OwnerSummary[]>('/owners'),
   getOwner: (id: string) => request<OwnerDetail>(`/owners/${id}`),
@@ -67,10 +114,24 @@ export const api = {
         date_to: filters.date_to,
         min_amount: filters.min_amount,
         max_amount: filters.max_amount,
+        source_file: filters.source_file,
+        needs_review: filters.needs_review,
+        is_rental_income: filters.is_rental_income,
         page: filters.page,
         page_size: filters.page_size,
       })}`,
     ),
+  getAllDeposits: async (filters: Omit<DepositFilters, 'page' | 'page_size'> = {}) => {
+    const result = await fetchAllPages((page, page_size) =>
+      api.getDeposits({ ...filters, page, page_size }),
+    );
+    return {
+      items: result.items,
+      total: result.total,
+      page: 1,
+      page_size: result.items.length,
+    } satisfies DepositListResponse;
+  },
   getDepositSummary: (
     filters: {
       property_id?: string;
@@ -80,6 +141,9 @@ export const api = {
       date_to?: string;
       min_amount?: string;
       max_amount?: string;
+      source_file?: string;
+      needs_review?: boolean;
+      is_rental_income?: boolean;
       include_all?: boolean;
     } = {},
   ) =>
@@ -92,6 +156,9 @@ export const api = {
         date_to: filters.date_to,
         min_amount: filters.min_amount,
         max_amount: filters.max_amount,
+        source_file: filters.source_file,
+        needs_review: filters.needs_review,
+        is_rental_income: filters.is_rental_income,
         include_all: filters.include_all ? 'true' : undefined,
       })}`,
     ),
@@ -126,10 +193,28 @@ export const api = {
         payment_method: filters.payment_method,
         date_from: filters.date_from,
         date_to: filters.date_to,
+        min_amount: filters.min_amount,
+        max_amount: filters.max_amount,
+        source_file: filters.source_file,
+        needs_review: filters.needs_review,
+        paid_by_resident: filters.paid_by_resident,
+        paid_by_owner: filters.paid_by_owner,
+        paid_by_company: filters.paid_by_company,
         page: filters.page,
         page_size: filters.page_size,
       })}`,
     ),
+  getAllExpenses: async (filters: Omit<ExpenseFilters, 'page' | 'page_size'> = {}) => {
+    const result = await fetchAllPages((page, page_size) =>
+      api.getExpenses({ ...filters, page, page_size }),
+    );
+    return {
+      items: result.items,
+      total: result.total,
+      page: 1,
+      page_size: result.items.length,
+    } satisfies ExpenseListResponse;
+  },
   getExpenseSummary: (
     filters: {
       property_id?: string;
@@ -142,6 +227,11 @@ export const api = {
       date_to?: string;
       min_amount?: string;
       max_amount?: string;
+      source_file?: string;
+      needs_review?: boolean;
+      paid_by_resident?: boolean;
+      paid_by_owner?: boolean;
+      paid_by_company?: boolean;
       include_all?: boolean;
     } = {},
   ) =>
@@ -157,6 +247,11 @@ export const api = {
         date_to: filters.date_to,
         min_amount: filters.min_amount,
         max_amount: filters.max_amount,
+        source_file: filters.source_file,
+        needs_review: filters.needs_review,
+        paid_by_resident: filters.paid_by_resident,
+        paid_by_owner: filters.paid_by_owner,
+        paid_by_company: filters.paid_by_company,
         include_all: filters.include_all ? 'true' : undefined,
       })}`,
     ),
@@ -166,11 +261,32 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     }),
+  updateExpense: (id: string, payload: ExpenseUpdate) =>
+    request<import('../types').Expense>(`/expenses/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }),
+  updateDeposit: (id: string, payload: DepositUpdate) =>
+    request<import('../types').Deposit>(`/deposits/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }),
+  deleteExpense: (id: string) =>
+    request<void>(`/expenses/${id}`, {
+      method: 'DELETE',
+    }),
+  deleteDeposit: (id: string) =>
+    request<void>(`/deposits/${id}`, {
+      method: 'DELETE',
+    }),
   analyzeUpload: (
     file: File,
     options?: {
       propertyId?: string;
       transactionType?: 'deposit' | 'expense' | 'auto';
+      uploadKind?: 'receipt' | 'bank_statement' | 'credit_card' | 'auto';
     },
   ) => {
     const form = new FormData();
@@ -181,12 +297,18 @@ export const api = {
     if (options?.transactionType) {
       form.append('transaction_type', options.transactionType);
     }
+    if (options?.uploadKind) {
+      form.append('upload_kind', options.uploadKind);
+    }
     return request<UploadAnalyzeResponse>('/uploads/analyze', {
       method: 'POST',
       body: form,
     });
   },
-  getUploadFileUrl: (uploadId: string) => `${API_BASE}/uploads/${uploadId}/file`,
+  getUploadFileUrl: (uploadId: string, options?: { download?: boolean }) => {
+    const base = `${API_BASE}/uploads/${uploadId}/file`;
+    return options?.download ? `${base}?download=1` : base;
+  },
   confirmUpload: (uploadId: string, drafts: TransactionDraft[]) =>
     request<UploadConfirmResponse>(`/uploads/${uploadId}/confirm`, {
       method: 'POST',
@@ -205,8 +327,8 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     }),
-  createDeposit: (payload: DepositCreate) =>
-    request<import('../types').Deposit>('/deposits', {
+  fixIncompleteTransaction: (payload: FixIncompletePayload) =>
+    request<FixIncompleteResponse>('/alerts/fix-incomplete', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),

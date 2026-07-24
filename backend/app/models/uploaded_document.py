@@ -9,9 +9,6 @@ from sqlalchemy.types import JSON
 from app.core.database import Base
 from app.models.base import TimestampMixin, uuid_pk
 
-TRANSACTION_TYPES = ("deposit", "expense")
-UPLOAD_STATUSES = ("pending_review", "confirmed", "failed")
-
 
 class UploadedDocument(Base, TimestampMixin):
     __tablename__ = "uploaded_documents"

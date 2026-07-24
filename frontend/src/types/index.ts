@@ -47,7 +47,7 @@ export interface Deposit {
   owner_name: string;
   bank_account_id: string | null;
   account_number: string | null;
-  transaction_date: string;
+  transaction_date: string | null;
   amount: string;
   currency: string;
   reference: string | null;
@@ -57,6 +57,8 @@ export interface Deposit {
   receipt_ref?: string | null;
   source_file?: string | null;
   balance_after?: string | null;
+  needs_review?: boolean;
+  review_reasons?: string | null;
 }
 
 export interface Property {
@@ -109,17 +111,27 @@ export interface DepositGap {
 export interface DepositQueryIntent {
   query_type: string;
   domain?: string;
-  property_id: string | null;
-  property_name: string | null;
-  owner_id: string | null;
-  owner_name: string | null;
-  date_from: string | null;
-  date_to: string | null;
-  group_by: string | null;
-  year: number | null;
-  month: number | null;
+  property_id?: string | null;
+  property_name?: string | null;
+  client_prop_id?: string | null;
+  owner_id?: string | null;
+  owner_name?: string | null;
+  date_from?: string | null;
+  date_to?: string | null;
+  group_by?: string | null;
+  year?: number | null;
+  month?: number | null;
   category?: string | null;
   source?: string | null;
+  payment_method?: string | null;
+  search_text?: string | null;
+  source_file?: string | null;
+  needs_review?: boolean | null;
+  is_rental_income?: boolean | null;
+  paid_by_resident?: boolean | null;
+  paid_by_owner?: boolean | null;
+  paid_by_company?: boolean | null;
+  ledger_column?: string | null;
 }
 
 export interface AIQueryResponse {
@@ -137,6 +149,9 @@ export interface DepositFilters {
   date_to?: string;
   min_amount?: string;
   max_amount?: string;
+  source_file?: string;
+  needs_review?: boolean;
+  is_rental_income?: boolean;
   page?: number;
   page_size?: number;
 }
@@ -147,7 +162,7 @@ export interface Expense {
   client_prop_id: string;
   property_name: string;
   owner_name: string;
-  transaction_date: string;
+  transaction_date: string | null;
   amount: string;
   currency: string;
   category: string;
@@ -165,6 +180,8 @@ export interface Expense {
   paid_by_company?: boolean;
   paid_by_owner?: boolean;
   ledger_column?: string | null;
+  needs_review?: boolean;
+  review_reasons?: string | null;
 }
 
 export interface ExpenseListResponse {
@@ -196,6 +213,13 @@ export interface ExpenseFilters {
   payment_method?: string;
   date_from?: string;
   date_to?: string;
+  min_amount?: string;
+  max_amount?: string;
+  source_file?: string;
+  needs_review?: boolean;
+  paid_by_resident?: boolean;
+  paid_by_owner?: boolean;
+  paid_by_company?: boolean;
   page?: number;
   page_size?: number;
 }
@@ -211,6 +235,31 @@ export interface ExpenseCreate {
   vendor_name?: string;
   reference?: string;
   description?: string;
+}
+
+export interface ExpenseUpdate {
+  property_id?: string;
+  transaction_date?: string | null;
+  amount?: string;
+  currency?: string;
+  category?: string;
+  source?: string;
+  payment_method?: string;
+  vendor_name?: string | null;
+  reference?: string | null;
+  description?: string | null;
+  notes?: string | null;
+}
+
+export interface DepositUpdate {
+  property_id?: string;
+  bank_account_id?: string | null;
+  transaction_date?: string | null;
+  amount?: string;
+  currency?: string;
+  reference?: string | null;
+  description?: string | null;
+  is_rental_income?: boolean;
 }
 
 export interface FieldWarning {
@@ -241,6 +290,14 @@ export interface TransactionDraft {
   match_confidence?: 'high' | 'medium' | 'low' | 'none' | null;
   status: 'ready' | 'needs_review' | 'error';
   warnings: FieldWarning[];
+  user_action?: 'add' | 'ignore';
+  is_duplicate?: boolean;
+  duplicate_match_id?: string | null;
+  duplicate_match_kind?: 'deposit' | 'expense' | null;
+  duplicate_summary?: string | null;
+  needs_review?: boolean;
+  review_reasons?: string | null;
+  import_key?: string | null;
 }
 
 export interface UploadAnalyzeResponse {
@@ -260,7 +317,6 @@ export interface UploadAnalyzeResponse {
   ready_count: number;
   needs_review_count: number;
   error_count: number;
-  preview_url?: string | null;
 }
 
 export interface UploadConfirmResponse {
@@ -334,7 +390,7 @@ export interface DepositCreate {
 
 export interface AlertItem {
   id: string;
-  alert_type: 'missing_deposit' | 'upload_pending' | 'duplicate_deposit';
+  alert_type: 'missing_deposit' | 'upload_pending' | 'duplicate_deposit' | 'incomplete_import';
   severity: 'error' | 'warning' | 'info';
   title: string;
   message: string;
@@ -343,6 +399,13 @@ export interface AlertItem {
   owner_name?: string | null;
   upload_id?: string | null;
   transaction_type?: 'deposit' | 'expense' | null;
+  expense_id?: string | null;
+  deposit_id?: string | null;
+  transaction_date?: string | null;
+  amount?: string | null;
+  section?: string | null;
+  notes?: string | null;
+  review_reasons?: string | null;
   created_at?: string | null;
   gap?: DepositGap | null;
   drafts: TransactionDraft[];
@@ -361,8 +424,24 @@ export interface AlertSummary {
   warning_count: number;
 }
 
+export interface FixIncompletePayload {
+  transaction_type: 'deposit' | 'expense';
+  id: string;
+  transaction_date?: string | null;
+  amount?: string | null;
+}
+
 export interface AlertResolveRequest {
-  action: 'add_deposit' | 'confirm_upload';
+  action: 'add_deposit' | 'confirm_upload' | 'fix_incomplete';
   deposit?: DepositCreate;
   drafts?: TransactionDraft[];
+  fix_incomplete?: FixIncompletePayload;
+}
+
+export interface FixIncompleteResponse {
+  transaction_type: 'deposit' | 'expense';
+  id: string;
+  needs_review: boolean;
+  transaction_date: string | null;
+  amount: string;
 }

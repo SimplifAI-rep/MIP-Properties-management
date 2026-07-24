@@ -1,10 +1,19 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
+import { useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
 import type { AIQueryResponse } from '../types';
+import { TransactionTable } from '../components/TransactionTable';
 import { ErrorState, formatCurrency, formatDate, LoadingState } from '../components/ui/States';
 import { Tooltip } from '../components/ui/Tooltip';
 import { downloadAIQueryExcel } from '../utils/exportExcel';
+import { getUserErrorMessage } from '../utils/errors';
+import { aiIntentToTransactionsState } from '../utils/transactionsNav';
+import {
+  looksLikeTransactionList,
+  recordToUnified,
+  type UnifiedTransaction,
+} from '../utils/unifiedTransaction';
 
 const EXAMPLE_PROMPTS = [
   'Show all deposits for Rothschild 12 in Q1 2026',
@@ -13,6 +22,12 @@ const EXAMPLE_PROMPTS = [
   'What were the electricity expenses in January 2026?',
   'Total expenses per property this year',
   'How many expenses were recorded in 2026?',
+  'Show transactions from source file Bank Account example.xlsx',
+  'List incomplete imports that need review',
+  'Show rental income deposits this year',
+  'List He/She paid expenses in 2026',
+  'Show credit card expenses from July 2026',
+  'Expenses for Prop ID BUFFER',
 ];
 
 function renderCell(value: unknown): string {
@@ -21,7 +36,7 @@ function renderCell(value: unknown): string {
   return JSON.stringify(value);
 }
 
-function QueryResultTable({ data }: { data: Record<string, unknown>[] }) {
+function AggregateResultTable({ data }: { data: Record<string, unknown>[] }) {
   if (data.length === 0) {
     return <p className="muted-text">No rows returned.</p>;
   }
@@ -45,8 +60,10 @@ function QueryResultTable({ data }: { data: Record<string, unknown>[] }) {
             <tr key={index} className="table-row">
               {columns.map((column) => (
                 <td key={column} className="px-4 py-2">
-                  {column.includes('amount') && row[column] != null
-                    ? formatCurrency(renderCell(row[column]))
+                  {column.includes('amount') || column.includes('total')
+                    ? row[column] != null
+                      ? formatCurrency(renderCell(row[column]))
+                      : ''
                     : column.includes('date') && row[column]
                       ? formatDate(renderCell(row[column]))
                       : renderCell(row[column])}
@@ -60,7 +77,22 @@ function QueryResultTable({ data }: { data: Record<string, unknown>[] }) {
   );
 }
 
+function mapResultToTransactions(result: AIQueryResponse): UnifiedTransaction[] | null {
+  if (result.query_used.query_type !== 'list') return null;
+  if (!looksLikeTransactionList(result.data)) return null;
+  const domain = result.query_used.domain ?? 'deposits';
+  const fallbackKind =
+    domain === 'expenses' ? 'expense' : domain === 'deposits' ? 'deposit' : undefined;
+  return result.data.map((row) => recordToUnified(row, fallbackKind));
+}
+
+function canOpenInTransactions(result: AIQueryResponse): boolean {
+  if (result.query_used.query_type === 'gap_analysis') return false;
+  return true;
+}
+
 export function AIQueryPage() {
+  const navigate = useNavigate();
   const [question, setQuestion] = useState('');
   const [result, setResult] = useState<AIQueryResponse | null>(null);
 
@@ -69,11 +101,23 @@ export function AIQueryPage() {
     onSuccess: (data) => setResult(data),
   });
 
+  const transactionRows = useMemo(
+    () => (result ? mapResultToTransactions(result) : null),
+    [result],
+  );
+
   const handleSubmit = (value: string) => {
     const trimmed = value.trim();
     if (!trimmed) return;
     setQuestion(trimmed);
     mutation.mutate(trimmed);
+  };
+
+  const openInTransactions = () => {
+    if (!result) return;
+    navigate('/transactions', {
+      state: aiIntentToTransactionsState(result.query_used),
+    });
   };
 
   return (
@@ -85,8 +129,9 @@ export function AIQueryPage() {
           </Tooltip>
         </h2>
         <p className="page-desc">
-          Ask natural-language questions about deposits and expenses. Uses rule-based parsing by
-          default; set LLM_API_KEY for OpenAI-powered parsing.
+          Ask about deposits, expenses, or mixed transactions using the same filters as
+          Transactions — dates, Prop ID, source file, incomplete imports, rental income,
+          He/She paid, and more. Open matching rows in Transactions after an answer.
         </p>
       </div>
 
@@ -118,7 +163,7 @@ export function AIQueryPage() {
             type="text"
             value={question}
             onChange={(event) => setQuestion(event.target.value)}
-            placeholder="Ask about deposits or expenses, e.g. Total utilities expenses in 2026"
+            placeholder="Ask about deposits, expenses, or transactions…"
             className="field flex-1 text-sm"
           />
           <button type="submit" disabled={mutation.isPending} className="btn-primary">
@@ -131,11 +176,11 @@ export function AIQueryPage() {
 
       {mutation.isError ? (
         <ErrorState
-          message={
-            mutation.error instanceof Error
-              ? mutation.error.message
-              : 'The query could not be completed.'
-          }
+          message={getUserErrorMessage(
+            mutation.error,
+            'We could not complete that question. Please try again.',
+          )}
+          error={mutation.error}
         />
       ) : null}
 
@@ -145,7 +190,7 @@ export function AIQueryPage() {
             <h3 className="section-title">Answer</h3>
             <p className="mt-2 body-text">{result.answer}</p>
             <p className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500 dark:text-slate-400">
-              <Tooltip content="Data area used for the answer, usually deposits or expenses.">
+              <Tooltip content="Data area used for the answer: deposits, expenses, or mixed transactions.">
                 Domain
               </Tooltip>
               : {result.query_used.domain ?? 'deposits'}
@@ -164,15 +209,42 @@ export function AIQueryPage() {
           <div>
             <div className="mb-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <h3 className="section-title">Data</h3>
-              <button
-                type="button"
-                onClick={() => downloadAIQueryExcel(result, question)}
-                className="btn-secondary"
-              >
-                Export to Excel
-              </button>
+              <div className="flex flex-wrap gap-2">
+                {canOpenInTransactions(result) ? (
+                  <button
+                    type="button"
+                    onClick={openInTransactions}
+                    className="btn-primary"
+                  >
+                    Open in Transactions
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={() => downloadAIQueryExcel(result, question)}
+                  className="btn-secondary"
+                >
+                  Export to Excel
+                </button>
+              </div>
             </div>
-            <QueryResultTable data={result.data} />
+            {transactionRows ? (
+              <TransactionTable
+                rows={transactionRows}
+                emptyMessage="No rows returned."
+                onRowClick={(row) =>
+                  navigate('/transactions', {
+                    state: {
+                      ...aiIntentToTransactionsState(result.query_used),
+                      highlightId: row.id,
+                      highlightKind: row.kind,
+                    },
+                  })
+                }
+              />
+            ) : (
+              <AggregateResultTable data={result.data} />
+            )}
           </div>
         </section>
       ) : null}

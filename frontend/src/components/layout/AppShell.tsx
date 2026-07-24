@@ -1,9 +1,8 @@
-import { useState } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../api/client';
+import { FeedbackProvider, useFeedback } from '../../context/FeedbackContext';
 import { useTheme } from '../../context/ThemeContext';
-import { FeedbackModal } from '../FeedbackModal';
 import { Tooltip } from '../ui/Tooltip';
 
 const navItems = [
@@ -16,9 +15,9 @@ const navItems = [
   { to: '/ai', label: 'AI Query' },
 ];
 
-export function AppShell() {
+function AppShellInner() {
   const { theme, toggleTheme } = useTheme();
-  const [feedbackOpen, setFeedbackOpen] = useState(false);
+  const { openFeedback } = useFeedback();
   const alertSummaryQuery = useQuery({
     queryKey: ['alert-summary'],
     queryFn: api.getAlertSummary,
@@ -68,7 +67,7 @@ export function AppShell() {
           <button
             type="button"
             className="nav-link-inactive w-full text-left"
-            onClick={() => setFeedbackOpen(true)}
+            onClick={() => openFeedback()}
           >
             <Tooltip content="Send a problem report or improvement idea by email.">
               Feedback
@@ -76,10 +75,17 @@ export function AppShell() {
           </button>
         </div>
       </aside>
-      <main className="flex-1 px-4 py-6 sm:px-6 lg:px-8">
+      <main className="min-w-0 flex-1 px-4 py-4 sm:px-6 lg:overflow-y-auto lg:px-8 lg:py-4">
         <Outlet />
       </main>
-      <FeedbackModal open={feedbackOpen} onClose={() => setFeedbackOpen(false)} />
     </div>
+  );
+}
+
+export function AppShell() {
+  return (
+    <FeedbackProvider>
+      <AppShellInner />
+    </FeedbackProvider>
   );
 }

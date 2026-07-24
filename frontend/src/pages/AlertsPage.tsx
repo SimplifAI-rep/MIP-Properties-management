@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
 import type { AlertItem, DepositCreate, TransactionDraft } from '../types';
@@ -6,18 +6,15 @@ import {
   Card,
   EmptyState,
   ErrorState,
+  InlineError,
+  formatCurrency,
+  formatDate,
   LoadingState,
 } from '../components/ui/States';
 import { Tooltip } from '../components/ui/Tooltip';
-
-const CATEGORIES = [
-  'maintenance',
-  'tax',
-  'insurance',
-  'utilities',
-  'management_fee',
-  'other',
-] as const;
+import { DateInputDMY } from '../components/ui/DateInputDMY';
+import { EXPENSE_CATEGORIES as CATEGORIES } from '../constants/expenseOptions';
+import { validationError } from '../utils/errors';
 
 function label(value: string) {
   return value.replace(/_/g, ' ');
@@ -32,6 +29,7 @@ function severityBadge(severity: AlertItem['severity']) {
 function typeLabel(alertType: AlertItem['alert_type']) {
   if (alertType === 'missing_deposit') return 'Missing deposit';
   if (alertType === 'duplicate_deposit') return 'Possible duplicate';
+  if (alertType === 'incomplete_import') return 'Incomplete import';
   return 'Upload review';
 }
 
@@ -62,19 +60,28 @@ function buildDepositForm(alert: AlertItem): DepositCreate {
 
 export function AlertsPage() {
   const queryClient = useQueryClient();
+  const detailPanelRef = useRef<HTMLElement>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [checkedIds, setCheckedIds] = useState<string[]>([]);
   const [depositForm, setDepositForm] = useState<DepositCreate | null>(null);
   const [drafts, setDrafts] = useState<TransactionDraft[]>([]);
-  const [actionError, setActionError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<unknown>(null);
+  const [fixDate, setFixDate] = useState<string | undefined>();
+  const [fixAmount, setFixAmount] = useState('');
 
   const alertsQuery = useQuery({
     queryKey: ['alerts'],
     queryFn: api.getAlerts,
   });
 
+  const alerts = alertsQuery.data?.items ?? [];
+  const checkedSet = useMemo(() => new Set(checkedIds), [checkedIds]);
+  const allChecked = alerts.length > 0 && alerts.every((alert) => checkedSet.has(alert.id));
+  const someChecked = checkedIds.length > 0;
+
   const selectedAlert = useMemo(
-    () => alertsQuery.data?.items.find((alert) => alert.id === selectedId) ?? null,
-    [alertsQuery.data, selectedId],
+    () => alerts.find((alert) => alert.id === selectedId) ?? null,
+    [alerts, selectedId],
   );
 
   const propertyQuery = useQuery({
@@ -95,7 +102,36 @@ export function AlertsPage() {
       setSelectedId(null);
       setActionError(null);
     },
-    onError: (error: Error) => setActionError(error.message),
+    onError: (error: Error) => setActionError(error),
+  });
+
+  const dismissManyMutation = useMutation({
+    mutationFn: async (alertIds: string[]) => {
+      const results = await Promise.allSettled(
+        alertIds.map((alertId) => api.dismissAlert(alertId)),
+      );
+      const failed = results.filter((result) => result.status === 'rejected').length;
+      if (failed > 0 && failed === results.length) {
+        throw validationError(
+          `We couldn't dismiss ${failed} alert(s). Please try again.`,
+        );
+      }
+      return { total: alertIds.length, failed };
+    },
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ['alerts'] });
+      queryClient.invalidateQueries({ queryKey: ['alert-summary'] });
+      setCheckedIds([]);
+      setSelectedId(null);
+      setActionError(
+        result.failed > 0
+          ? validationError(
+              `Dismissed ${result.total - result.failed} of ${result.total}; ${result.failed} could not be dismissed.`,
+            )
+          : null,
+      );
+    },
+    onError: (error: Error) => setActionError(error),
   });
 
   const resolveMutation = useMutation({
@@ -108,12 +144,33 @@ export function AlertsPage() {
       queryClient.invalidateQueries({ queryKey: ['expenses'] });
       queryClient.invalidateQueries({ queryKey: ['deposit-summary'] });
       queryClient.invalidateQueries({ queryKey: ['expense-summary'] });
+      queryClient.invalidateQueries({ queryKey: ['deposit-summary-rental'] });
+      queryClient.invalidateQueries({ queryKey: ['expense-summary-heshe'] });
+      queryClient.invalidateQueries({ queryKey: ['expense-summary-owner'] });
       setSelectedId(null);
       setDepositForm(null);
       setDrafts([]);
       setActionError(null);
     },
-    onError: (error: Error) => setActionError(error.message),
+    onError: (error: Error) => setActionError(error),
+  });
+
+  const fixIncompleteMutation = useMutation({
+    mutationFn: api.fixIncompleteTransaction,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['alerts'] });
+      queryClient.invalidateQueries({ queryKey: ['alert-summary'] });
+      queryClient.invalidateQueries({ queryKey: ['deposits'] });
+      queryClient.invalidateQueries({ queryKey: ['expenses'] });
+      queryClient.invalidateQueries({ queryKey: ['deposit-summary'] });
+      queryClient.invalidateQueries({ queryKey: ['expense-summary'] });
+      queryClient.invalidateQueries({ queryKey: ['deposit-summary-rental'] });
+      queryClient.invalidateQueries({ queryKey: ['expense-summary-heshe'] });
+      queryClient.invalidateQueries({ queryKey: ['expense-summary-owner'] });
+      setSelectedId(null);
+      setActionError(null);
+    },
+    onError: (error: Error) => setActionError(error),
   });
 
   const selectAlert = (alert: AlertItem) => {
@@ -122,10 +179,55 @@ export function AlertsPage() {
     if (alert.alert_type === 'missing_deposit') {
       setDepositForm(buildDepositForm(alert));
       setDrafts([]);
+      setFixDate(undefined);
+      setFixAmount('');
+    } else if (alert.alert_type === 'incomplete_import') {
+      setDepositForm(null);
+      setDrafts([]);
+      setFixDate(alert.transaction_date ?? undefined);
+      setFixAmount(
+        alert.amount && Number(alert.amount) > 0 ? String(alert.amount) : '',
+      );
     } else {
       setDepositForm(null);
       setDrafts(alert.drafts);
+      setFixDate(undefined);
+      setFixAmount('');
     }
+  };
+
+  const toggleChecked = (alertId: string) => {
+    setCheckedIds((current) =>
+      current.includes(alertId)
+        ? current.filter((id) => id !== alertId)
+        : [...current, alertId],
+    );
+  };
+
+  const toggleCheckAll = () => {
+    if (allChecked) {
+      setCheckedIds([]);
+      return;
+    }
+    setCheckedIds(alerts.map((alert) => alert.id));
+  };
+
+  const dismissSelected = () => {
+    if (checkedIds.length === 0) return;
+    const confirmed = window.confirm(
+      `Dismiss ${checkedIds.length} selected alert${checkedIds.length === 1 ? '' : 's'}?`,
+    );
+    if (!confirmed) return;
+    dismissManyMutation.mutate(checkedIds);
+  };
+
+  const dismissAll = () => {
+    if (alerts.length === 0) return;
+    const confirmed = window.confirm(
+      `Dismiss all ${alerts.length} open alert${alerts.length === 1 ? '' : 's'}?`,
+    );
+    if (!confirmed) return;
+    dismissManyMutation.mutate(alerts.map((alert) => alert.id));
   };
 
   const updateDraft = (index: number, patch: Partial<TransactionDraft>) => {
@@ -142,21 +244,48 @@ export function AlertsPage() {
 
   if (alertsQuery.isLoading) return <LoadingState />;
   if (alertsQuery.isError) {
-    return <ErrorState message="Could not load alerts from the API." />;
+    return (
+      <ErrorState
+        message="We couldn't load alerts. Please try again in a moment."
+        error={alertsQuery.error}
+      />
+    );
   }
 
-  const alerts = alertsQuery.data?.items ?? [];
+  const bulkBusy = dismissManyMutation.isPending;
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h2 className="page-heading">Alerts</h2>
-        <p className="page-desc">
-          Review missing deposits and uploaded files that need attention. Click an alert to fix it.
-        </p>
+    <div className="flex flex-col gap-3 overflow-hidden xl:h-[calc(100dvh-2rem)]">
+      <div className="flex shrink-0 flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h2 className="page-heading">Alerts</h2>
+          <p className="page-desc">
+            Review missing deposits, incomplete imports, and uploaded files that need attention.
+          </p>
+        </div>
+        {alerts.length > 0 ? (
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              className="btn-secondary"
+              disabled={!someChecked || bulkBusy}
+              onClick={dismissSelected}
+            >
+              {bulkBusy ? 'Dismissing…' : `Dismiss selected (${checkedIds.length})`}
+            </button>
+            <button
+              type="button"
+              className="btn-secondary"
+              disabled={bulkBusy}
+              onClick={dismissAll}
+            >
+              Dismiss all
+            </button>
+          </div>
+        ) : null}
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-3">
+      <div className="grid shrink-0 gap-3 sm:grid-cols-3">
         <Card
           title="Open alerts"
           value={alertsQuery.data?.total ?? 0}
@@ -174,29 +303,40 @@ export function AlertsPage() {
         />
       </div>
 
-      <div className="grid gap-6 xl:grid-cols-[1.4fr_1fr]">
-        <section className="panel">
+      {actionError && !selectedAlert ? <InlineError error={actionError} /> : null}
+
+      <div className="grid min-h-0 flex-1 gap-4 xl:grid-cols-[1.4fr_1fr]">
+        <section className="panel flex min-h-0 flex-col overflow-hidden">
           {alerts.length === 0 ? (
             <div className="p-5">
               <EmptyState message="No open alerts. Everything looks good." />
             </div>
           ) : (
-            <div className="overflow-x-auto">
+            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
               <table className="table-shell">
-                <thead className="table-head">
+                <thead className="table-head sticky top-0 z-10">
                   <tr>
-                    <th className="px-5 py-3 font-medium">
+                    <th className="w-10 px-3 py-3">
+                      <input
+                        type="checkbox"
+                        className="align-middle"
+                        checked={allChecked}
+                        aria-label="Select all alerts"
+                        onChange={toggleCheckAll}
+                      />
+                    </th>
+                    <th className="px-3 py-3 font-medium">
                       <Tooltip content="Error needs a fix; warning needs a review.">
                         Severity
                       </Tooltip>
                     </th>
-                    <th className="px-5 py-3 font-medium">
-                      <Tooltip content="Missing deposit, possible duplicate, or upload review.">
+                    <th className="px-3 py-3 font-medium">
+                      <Tooltip content="Missing deposit, incomplete import, duplicate, or upload review.">
                         Type
                       </Tooltip>
                     </th>
-                    <th className="px-5 py-3 font-medium">Alert</th>
-                    <th className="px-5 py-3 font-medium">Property</th>
+                    <th className="px-3 py-3 font-medium">Alert</th>
+                    <th className="px-3 py-3 font-medium">Property</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -208,17 +348,40 @@ export function AlertsPage() {
                         selectedId === alert.id ? 'table-row-selected' : ''
                       }`}
                     >
-                      <td className="px-5 py-3">
+                      <td
+                        className="px-3 py-3"
+                        onClick={(event) => event.stopPropagation()}
+                      >
+                        <input
+                          type="checkbox"
+                          className="align-middle"
+                          checked={checkedSet.has(alert.id)}
+                          aria-label={`Select ${alert.title}`}
+                          onChange={() => toggleChecked(alert.id)}
+                        />
+                      </td>
+                      <td className="px-3 py-3">
                         <span className={severityBadge(alert.severity)}>{alert.severity}</span>
                       </td>
-                      <td className="px-5 py-3">{typeLabel(alert.alert_type)}</td>
-                      <td className="px-5 py-3">
-                        <p className="font-medium">{alert.title}</p>
-                        <p className="text-xs text-muted">{alert.message}</p>
+                      <td className="px-3 py-3">{typeLabel(alert.alert_type)}</td>
+                      <td className="px-3 py-3">
+                        <p className="font-medium truncate" title={alert.title}>
+                          {alert.title}
+                        </p>
+                        <p className="text-xs text-muted truncate" title={alert.message}>
+                          {alert.message}
+                        </p>
                       </td>
-                      <td className="px-5 py-3">
-                        <p>{alert.property_name}</p>
-                        <p className="text-xs text-muted">{alert.owner_name}</p>
+                      <td className="px-3 py-3">
+                        <p className="truncate" title={alert.property_name ?? undefined}>
+                          {alert.property_name}
+                        </p>
+                        <p
+                          className="text-xs text-muted truncate"
+                          title={alert.owner_name ?? undefined}
+                        >
+                          {alert.owner_name}
+                        </p>
                       </td>
                     </tr>
                   ))}
@@ -228,7 +391,10 @@ export function AlertsPage() {
           )}
         </section>
 
-        <section className="panel p-4">
+        <section
+          ref={detailPanelRef}
+          className="panel flex min-h-0 flex-col overflow-y-auto overscroll-contain p-4"
+        >
           {!selectedAlert ? (
             <p className="muted-text">Select an alert to review and resolve it.</p>
           ) : (
@@ -238,13 +404,107 @@ export function AlertsPage() {
                 <p className="mt-1 text-sm text-muted">{selectedAlert.message}</p>
               </div>
 
+              {selectedAlert.alert_type === 'incomplete_import' ? (
+                <form
+                  className="grid gap-3"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    const txId =
+                      selectedAlert.transaction_type === 'expense'
+                        ? selectedAlert.expense_id
+                        : selectedAlert.deposit_id;
+                    if (!txId || !selectedAlert.transaction_type) {
+                      setActionError(validationError('This alert is missing a transaction link.'));
+                      return;
+                    }
+                    if (!fixDate || !fixAmount || Number(fixAmount) <= 0) {
+                      setActionError(
+                        validationError('Please enter a date (dd/mm/yyyy) and an amount greater than 0.'),
+                      );
+                      return;
+                    }
+                    fixIncompleteMutation.mutate({
+                      transaction_type: selectedAlert.transaction_type,
+                      id: txId,
+                      transaction_date: fixDate,
+                      amount: fixAmount,
+                    });
+                  }}
+                >
+                  <dl className="grid gap-2 text-sm">
+                    <div>
+                      <dt className="label-text">Prop ID / Property</dt>
+                      <dd>{selectedAlert.property_name ?? '—'}</dd>
+                    </div>
+                    <div>
+                      <dt className="label-text">Type</dt>
+                      <dd className="capitalize">{selectedAlert.transaction_type ?? '—'}</dd>
+                    </div>
+                    <div>
+                      <dt className="label-text">Section</dt>
+                      <dd>{selectedAlert.section || '—'}</dd>
+                    </div>
+                    <div>
+                      <dt className="label-text">Notes</dt>
+                      <dd>{selectedAlert.notes || '—'}</dd>
+                    </div>
+                    <div>
+                      <dt className="label-text">Current date</dt>
+                      <dd>
+                        {selectedAlert.transaction_date
+                          ? formatDate(selectedAlert.transaction_date)
+                          : 'Missing date'}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="label-text">Current amount</dt>
+                      <dd>
+                        {selectedAlert.amount && Number(selectedAlert.amount) > 0
+                          ? formatCurrency(selectedAlert.amount)
+                          : '—'}
+                      </dd>
+                    </div>
+                  </dl>
+                  <DateInputDMY label="Date" value={fixDate} onChange={setFixDate} />
+                  <label className="text-sm">
+                    <span className="label-text">Amount</span>
+                    <input
+                      required
+                      type="number"
+                      min="0.01"
+                      step="0.01"
+                      className="field"
+                      value={fixAmount}
+                      onChange={(event) => setFixAmount(event.target.value)}
+                    />
+                  </label>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="submit"
+                      disabled={fixIncompleteMutation.isPending}
+                      className="btn-primary"
+                    >
+                      {fixIncompleteMutation.isPending ? 'Saving...' : 'Save & clear alert'}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-secondary"
+                      disabled={dismissMutation.isPending}
+                      onClick={() => dismissMutation.mutate(selectedAlert.id)}
+                    >
+                      Dismiss
+                    </button>
+                  </div>
+                </form>
+              ) : null}
+
               {selectedAlert.alert_type === 'missing_deposit' && depositForm ? (
                 <form
                   className="grid gap-3"
                   onSubmit={(event) => {
                     event.preventDefault();
                     if (!depositForm.bank_account_id) {
-                      setActionError('Select a bank account.');
+                      setActionError(validationError('Please select a bank account.'));
                       return;
                     }
                     resolveMutation.mutate({
@@ -278,22 +538,18 @@ export function AlertsPage() {
                       ))}
                     </select>
                   </label>
-                  <label className="text-sm">
-                    <span className="label-text">Date</span>
-                    <input
-                      required
-                      type="date"
-                      className="field"
-                      value={depositForm.transaction_date}
-                      onChange={(event) =>
-                        setDepositForm((current) =>
-                          current
-                            ? { ...current, transaction_date: event.target.value }
-                            : current,
-                        )
-                      }
-                    />
-                  </label>
+                  <DateInputDMY
+                    label="Date"
+                    required
+                    value={depositForm.transaction_date || undefined}
+                    onChange={(iso) =>
+                      setDepositForm((current) =>
+                        current
+                          ? { ...current, transaction_date: iso ?? '' }
+                          : current,
+                      )
+                    }
+                  />
                   <label className="text-sm">
                     <span className="label-text">Amount</span>
                     <input
@@ -335,7 +591,8 @@ export function AlertsPage() {
                 </form>
               ) : null}
 
-              {selectedAlert.alert_type !== 'missing_deposit' ? (
+              {selectedAlert.alert_type === 'upload_pending' ||
+              selectedAlert.alert_type === 'duplicate_deposit' ? (
                 <div className="space-y-3">
                   <div className="overflow-x-auto rounded-lg border border-border">
                     <table className="data-table min-w-full">
@@ -360,12 +617,12 @@ export function AlertsPage() {
                           <tr key={draft.row_number ?? index}>
                             <td>{draft.row_number ?? index + 1}</td>
                             <td>
-                              <input
-                                type="date"
-                                className="field field-compact"
-                                value={draft.transaction_date ?? ''}
-                                onChange={(event) =>
-                                  updateDraft(index, { transaction_date: event.target.value })
+                              <DateInputDMY
+                                className="block"
+                                inputClassName="field field-compact"
+                                value={draft.transaction_date ?? undefined}
+                                onChange={(iso) =>
+                                  updateDraft(index, { transaction_date: iso ?? null })
                                 }
                               />
                             </td>
@@ -392,7 +649,8 @@ export function AlertsPage() {
                                     );
                                     updateDraft(index, {
                                       bank_account_id: event.target.value || null,
-                                      account_number: account?.account_number ?? draft.account_number,
+                                      account_number:
+                                        account?.account_number ?? draft.account_number,
                                     });
                                   }}
                                 >
@@ -500,7 +758,8 @@ export function AlertsPage() {
                     </button>
                   </div>
                 </div>
-              ) : (
+              ) : selectedAlert.alert_type !== 'incomplete_import' &&
+                selectedAlert.alert_type !== 'missing_deposit' ? (
                 <button
                   type="button"
                   className="btn-secondary"
@@ -509,9 +768,9 @@ export function AlertsPage() {
                 >
                   Dismiss alert
                 </button>
-              )}
+              ) : null}
 
-              {actionError ? <p className="text-negative text-sm">{actionError}</p> : null}
+              {actionError ? <InlineError error={actionError} /> : null}
             </div>
           )}
         </section>

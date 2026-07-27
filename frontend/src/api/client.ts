@@ -29,11 +29,33 @@ import type {
 import { AppError, appErrorFromResponse } from '../utils/errors';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000/api/v1';
+const ADMIN_TOKEN_KEY = 'simplifai_admin_token';
+
+export function getAdminToken(): string | null {
+  try {
+    return localStorage.getItem(ADMIN_TOKEN_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function setAdminToken(token: string | null) {
+  try {
+    if (token) localStorage.setItem(ADMIN_TOKEN_KEY, token);
+    else localStorage.removeItem(ADMIN_TOKEN_KEY);
+  } catch {
+    // Ignore storage failures (private mode, etc.)
+  }
+}
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers);
   if (init?.body && !(init.body instanceof FormData) && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json');
+  }
+  const token = getAdminToken();
+  if (token && !headers.has('Authorization')) {
+    headers.set('Authorization', `Bearer ${token}`);
   }
   let response: Response;
   try {
@@ -99,11 +121,25 @@ async function fetchAllPages<T>(
 }
 
 export const api = {
+  adminLogin: (password: string) =>
+    request<{ token: string; expires_at: number; role: string }>('/auth/admin/login', {
+      method: 'POST',
+      body: JSON.stringify({ password }),
+    }),
+  getAdminSession: () =>
+    request<{ authenticated: boolean; role: string | null; configured: boolean }>(
+      '/auth/admin/session',
+    ),
   getTransactionYears: () => request<{ years: number[] }>('/meta/transaction-years'),
   getOwners: () => request<OwnerSummary[]>('/owners'),
   getOwner: (id: string) => request<OwnerDetail>(`/owners/${id}`),
   getProperties: () => request<Property[]>('/properties'),
   getProperty: (id: string) => request<PropertyDetail>(`/properties/${id}`),
+  updatePropertyStatus: (id: string, status: 'active' | 'inactive') =>
+    request<Property>(`/properties/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status }),
+    }),
   getDeposits: (filters: DepositFilters = {}) =>
     request<DepositListResponse>(
       `/deposits${toQuery({

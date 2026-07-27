@@ -1,10 +1,11 @@
 import shutil
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db
+from app.core.admin_auth import require_admin
 from app.schemas import (
     ClientDataImportJobAccepted,
     ClientDataImportJobStatus,
@@ -69,18 +70,23 @@ async def import_client_data_files(
     credit_card_2: UploadFile | None = File(None, description="credit card 2 example.xlsx"),
     reset: bool = Form(False),
     confirm_reset: bool = Form(False),
+    authorization: str | None = Header(default=None),
 ) -> ClientDataImportJobAccepted:
     """Queue a ClientData Excel import (background job — poll GET .../jobs/{job_id}).
 
     Required: client_list + management.
     Optional: bank, credit_card_1, credit_card_2.
-    Set reset=true and confirm_reset=true to wipe all tables before importing.
+    Set reset=true and confirm_reset=true to wipe all tables before importing
+    (requires admin login).
     """
-    if reset and not confirm_reset:
-        raise HTTPException(
-            status_code=400,
-            detail="confirm_reset must be true when reset is requested",
-        )
+    if reset:
+        # Validate admin before staging large uploads for a destructive action.
+        require_admin(authorization)
+        if not confirm_reset:
+            raise HTTPException(
+                status_code=400,
+                detail="confirm_reset must be true when reset is requested",
+            )
 
     job_id, files_dir = create_staged_job_dir()
     try:

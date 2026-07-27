@@ -1,6 +1,9 @@
+import { useState } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../api/client';
+import { AdminLoginModal } from '../AdminLoginModal';
+import { useAuth } from '../../context/AuthContext';
 import { FeedbackProvider, useFeedback } from '../../context/FeedbackContext';
 import { useTheme } from '../../context/ThemeContext';
 import { Tooltip } from '../ui/Tooltip';
@@ -18,6 +21,8 @@ const navItems = [
 function AppShellInner() {
   const { theme, toggleTheme } = useTheme();
   const { openFeedback } = useFeedback();
+  const { isAdmin } = useAuth();
+  const [adminOpen, setAdminOpen] = useState(false);
   const alertSummaryQuery = useQuery({
     queryKey: ['alert-summary'],
     queryFn: api.getAlertSummary,
@@ -63,7 +68,7 @@ function AppShellInner() {
             </NavLink>
           ))}
         </nav>
-        <div className="sidebar-footer">
+        <div className="sidebar-footer space-y-1">
           <button
             type="button"
             className="nav-link-inactive w-full text-left"
@@ -73,11 +78,19 @@ function AppShellInner() {
               Feedback
             </Tooltip>
           </button>
+          <button
+            type="button"
+            className="nav-link-inactive w-full text-left text-xs opacity-70"
+            onClick={() => setAdminOpen(true)}
+          >
+            {isAdmin ? 'Admin · signed in' : 'Admin'}
+          </button>
         </div>
       </aside>
       <main className="min-w-0 flex-1 px-4 py-4 sm:px-6 lg:overflow-y-auto lg:px-8 lg:py-4">
         <Outlet />
       </main>
+      <AdminLoginModal open={adminOpen} onClose={() => setAdminOpen(false)} />
     </div>
   );
 }

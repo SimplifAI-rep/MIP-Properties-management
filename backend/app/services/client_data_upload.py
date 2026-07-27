@@ -54,9 +54,18 @@ def expected_file_labels() -> list[str]:
 
 
 def database_counts(db: Session) -> ClientDataImportCounts:
+    properties_total = db.scalar(select(func.count()).select_from(Property)) or 0
+    properties_active = (
+        db.scalar(
+            select(func.count()).select_from(Property).where(Property.status == "active")
+        )
+        or 0
+    )
     return ClientDataImportCounts(
         owners=db.scalar(select(func.count()).select_from(Owner)) or 0,
-        properties=db.scalar(select(func.count()).select_from(Property)) or 0,
+        properties=properties_total,
+        properties_active=properties_active,
+        properties_inactive=max(properties_total - properties_active, 0),
         bank_accounts=db.scalar(select(func.count()).select_from(BankAccount)) or 0,
         expenses=db.scalar(select(func.count()).select_from(Expense)) or 0,
         deposits=db.scalar(select(func.count()).select_from(Deposit)) or 0,
@@ -201,7 +210,16 @@ def run_client_data_import(
             deposits_skipped=stats.deposits_skipped,
             rows_seen=stats.rows_seen,
             rows_skipped_empty=stats.rows_skipped_empty,
+            needs_review_created=stats.needs_review_created,
+            properties_marked_active=stats.properties_marked_active,
+            properties_marked_inactive=stats.properties_marked_inactive,
+            properties_active=stats.properties_active,
+            properties_inactive=stats.properties_inactive,
+            properties_active_ids=list(stats.properties_active_ids),
+            properties_inactive_ids=list(stats.properties_inactive_ids),
             skipped_row_count=skipped_total,
+            skip_reason_counts=dict(stats.skip_reason_counts),
+            incomplete_reason_counts=dict(stats.incomplete_reason_counts),
             skip_report_id=report_id,
             skip_report_url=report_url,
             warnings=stats.warnings[:100],

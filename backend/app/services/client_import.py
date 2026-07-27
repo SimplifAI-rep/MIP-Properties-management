@@ -105,11 +105,20 @@ class ImportStats:
     bank_accounts_created: int = 0
     rows_seen: int = 0
     rows_skipped_empty: int = 0
+    needs_review_created: int = 0
+    properties_marked_active: int = 0
+    properties_marked_inactive: int = 0
+    properties_active: int = 0
+    properties_inactive: int = 0
+    properties_active_ids: list[str] = field(default_factory=list)
+    properties_inactive_ids: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     sheet_counts: dict[str, dict[str, int]] = field(default_factory=dict)
     skipped_rows: list[SkippedRow] = field(default_factory=list)
     skipped_rows_omitted: int = 0
+    skip_reason_counts: dict[str, int] = field(default_factory=dict)
+    incomplete_reason_counts: dict[str, int] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -122,7 +131,16 @@ class ImportStats:
             "bank_accounts_created": self.bank_accounts_created,
             "rows_seen": self.rows_seen,
             "rows_skipped_empty": self.rows_skipped_empty,
+            "needs_review_created": self.needs_review_created,
+            "properties_marked_active": self.properties_marked_active,
+            "properties_marked_inactive": self.properties_marked_inactive,
+            "properties_active": self.properties_active,
+            "properties_inactive": self.properties_inactive,
+            "properties_active_ids": list(self.properties_active_ids),
+            "properties_inactive_ids": list(self.properties_inactive_ids),
             "skipped_row_count": len(self.skipped_rows) + self.skipped_rows_omitted,
+            "skip_reason_counts": dict(self.skip_reason_counts),
+            "incomplete_reason_counts": dict(self.incomplete_reason_counts),
             "warnings": self.warnings,
             "errors": self.errors,
             "sheet_counts": self.sheet_counts,
@@ -308,6 +326,8 @@ class ClientDataImportService:
         self.properties_by_id: dict[str, Property] = {}
         self.existing_expense_keys: set[str] = set()
         self.existing_deposit_keys: set[str] = set()
+        # Prop IDs from the "current clients" sheet — source of truth for active status.
+        self.current_client_ids: set[str] = set()
 
     def _report(self, message: str) -> None:
         if self.progress:
@@ -340,8 +360,34 @@ class ClientDataImportService:
             self._report("Importing credit cards…")
             self._import_credit_cards()
             self._checkpoint()
+        self._apply_property_active_status()
         self.db.commit()
         return self.stats
+
+    def _apply_property_active_status(self) -> None:
+        """Mark current-client properties active; everything else inactive (except BUFFER)."""
+        active_ids: list[str] = []
+        inactive_ids: list[str] = []
+        for prop in self.db.scalars(select(Property).order_by(Property.client_prop_id)).all():
+            previous = (prop.status or "").strip().lower()
+            if prop.client_prop_id == BUFFER_PROP_ID or prop.client_prop_id in self.current_client_ids:
+                next_status = "active"
+            else:
+                next_status = "inactive"
+            if previous != next_status:
+                if next_status == "active":
+                    self.stats.properties_marked_active += 1
+                else:
+                    self.stats.properties_marked_inactive += 1
+            prop.status = next_status
+            if next_status == "active":
+                active_ids.append(prop.client_prop_id)
+            else:
+                inactive_ids.append(prop.client_prop_id)
+        self.stats.properties_active = len(active_ids)
+        self.stats.properties_inactive = len(inactive_ids)
+        self.stats.properties_active_ids = active_ids
+        self.stats.properties_inactive_ids = inactive_ids
 
     def _load_existing_keys(self) -> None:
         self.existing_expense_keys = {
@@ -382,8 +428,14 @@ class ClientDataImportService:
 
         if len(self.stats.skipped_rows) >= MAX_SKIPPED_ROW_DETAILS:
             self.stats.skipped_rows_omitted += 1
+            self.stats.skip_reason_counts[reason] = (
+                self.stats.skip_reason_counts.get(reason, 0) + 1
+            )
             return
 
+        self.stats.skip_reason_counts[reason] = (
+            self.stats.skip_reason_counts.get(reason, 0) + 1
+        )
         self.stats.skipped_rows.append(
             SkippedRow(
                 source_file=source_file,
@@ -485,6 +537,11 @@ class ClientDataImportService:
             )
             self.existing_deposit_keys.add(import_key)
             self.stats.deposits_created += 1
+            self.stats.needs_review_created += 1
+            for reason in reasons:
+                self.stats.incomplete_reason_counts[reason] = (
+                    self.stats.incomplete_reason_counts.get(reason, 0) + 1
+                )
             counts["deposits"] = counts.get("deposits", 0) + 1
             counts["needs_review"] = counts.get("needs_review", 0) + 1
             if is_rental:
@@ -585,6 +642,11 @@ class ClientDataImportService:
             )
             self.existing_expense_keys.add(import_key)
             self.stats.expenses_created += 1
+            self.stats.needs_review_created += 1
+            for reason in reasons:
+                self.stats.incomplete_reason_counts[reason] = (
+                    self.stats.incomplete_reason_counts.get(reason, 0) + 1
+                )
             counts["expenses"] = counts.get("expenses", 0) + 1
             counts["needs_review"] = counts.get("needs_review", 0) + 1
 
@@ -697,6 +759,7 @@ class ClientDataImportService:
             owners_by_name: dict[str, Owner] = {
                 o.name: o for o in self.db.scalars(select(Owner)).all()
             }
+            self.current_client_ids = set()
 
             def upsert_row(row_values: list[Any], *, status: str) -> None:
                 if not row_values:
@@ -774,6 +837,8 @@ class ClientDataImportService:
 
                 self.properties_by_id[canonical] = existing
                 self._register_aliases(canonical, prop_raw)
+                if status == "active":
+                    self.current_client_ids.add(canonical)
 
             for i, row in enumerate(current.iter_rows(values_only=True), 1):
                 if i == 1:
@@ -834,7 +899,7 @@ class ClientDataImportService:
                         owner_id=company.id,
                         client_prop_id=canonical,
                         name=f"Property {canonical} (from ledger)",
-                        status="active",
+                        status="inactive",
                     )
                     self.db.add(prop)
                     self.db.flush()
@@ -1677,12 +1742,17 @@ def build_skip_report_excel(stats: ImportStats) -> bytes:
         ("rows_seen", stats.rows_seen),
         ("skipped_rows_detailed", len(stats.skipped_rows)),
         ("rows_skipped_empty", stats.rows_skipped_empty),
+        ("needs_review_created", stats.needs_review_created),
         ("expenses_created", stats.expenses_created),
         ("expenses_skipped_duplicates", stats.expenses_skipped),
         ("deposits_created", stats.deposits_created),
         ("deposits_skipped_duplicates", stats.deposits_skipped),
         ("owners_created", stats.owners_created),
         ("properties_created", stats.properties_created),
+        ("properties_active", stats.properties_active),
+        ("properties_inactive", stats.properties_inactive),
+        ("properties_marked_active", stats.properties_marked_active),
+        ("properties_marked_inactive", stats.properties_marked_inactive),
         ("warnings", len(stats.warnings)),
         ("errors", len(stats.errors)),
     ]
@@ -1728,6 +1798,26 @@ def build_skip_report_excel(stats: ImportStats) -> bytes:
     for row in stats.skipped_rows:
         data = row.to_dict()
         detail.append([data.get(h) for h in headers])
+
+    # Property active/inactive status (from current client list sync)
+    status_sheet = wb.create_sheet("Property status")
+    status_sheet.append(["Prop ID", "Status"])
+    status_sheet["A1"].font = Font(bold=True)
+    status_sheet["B1"].font = Font(bold=True)
+    status_sheet.append(["properties_active", stats.properties_active])
+    status_sheet.append(["properties_inactive", stats.properties_inactive])
+    status_sheet.append(["properties_marked_active_this_import", stats.properties_marked_active])
+    status_sheet.append(
+        ["properties_marked_inactive_this_import", stats.properties_marked_inactive]
+    )
+    status_sheet.append([])
+    status_sheet.append(["Prop ID", "Status"])
+    status_sheet[f"A{status_sheet.max_row}"].font = Font(bold=True)
+    status_sheet[f"B{status_sheet.max_row}"].font = Font(bold=True)
+    for prop_id in stats.properties_active_ids:
+        status_sheet.append([prop_id, "active"])
+    for prop_id in stats.properties_inactive_ids:
+        status_sheet.append([prop_id, "inactive"])
 
     # Reason legend
     legend = wb.create_sheet("Reason legend")

@@ -75,9 +75,16 @@ def test_client_data_status(client):
     assert any("client_list" in item for item in body["expected_files"])
 
 
-def test_client_data_import_requires_confirm_reset(client):
+def test_client_data_import_requires_confirm_reset(client, monkeypatch):
     if not HAS_CLIENT_DATA:
         pytest.skip("ClientData Excel files not present")
+
+    from app.core.admin_auth import create_admin_token
+    from app.core.config import get_settings
+
+    monkeypatch.setenv("ADMIN_PASSWORD", "test-admin-secret")
+    get_settings.cache_clear()
+    token, _ = create_admin_token()
 
     response = client.post(
         "/api/v1/imports/client-data",
@@ -94,9 +101,11 @@ def test_client_data_import_requires_confirm_reset(client):
                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             ),
         },
+        headers={"Authorization": f"Bearer {token}"},
     )
     assert response.status_code == 400
     assert "confirm_reset" in response.text
+    get_settings.cache_clear()
 
 
 def test_client_data_import_requires_files(client):

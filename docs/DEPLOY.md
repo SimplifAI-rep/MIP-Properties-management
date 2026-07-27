@@ -24,6 +24,7 @@ Deploy **frontend on Vercel** and **backend on Render**. The API cannot run on V
 | `CORS_ORIGINS` | `http://localhost:5173,https://your-app.vercel.app` |
 | `CORS_ORIGIN_REGEX` | `https://.*\.vercel\.app` |
 | `LLM_API_KEY` | (optional) your OpenAI key |
+| `ADMIN_PASSWORD` | (required for admin login / DB reset) a strong password |
 
 6. Deploy and copy the service URL, e.g. `https://simplifai-api.onrender.com`
 

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
 import { TransactionTable } from '../components/TransactionTable';
 import {
@@ -8,6 +8,7 @@ import {
   EmptyState,
   ErrorState,
   formatCurrency,
+  InlineError,
   LoadingState,
 } from '../components/ui/States';
 import { Tooltip } from '../components/ui/Tooltip';
@@ -18,6 +19,7 @@ import {
   propertyTransactionsState,
 } from '../utils/transactionsNav';
 import { depositToUnified } from '../utils/unifiedTransaction';
+import { getUserErrorMessage } from '../utils/errors';
 
 function formatPropertyFeedback(property: Property): string {
   return [
@@ -49,10 +51,46 @@ const feedbackIcon = (
   </svg>
 );
 
+function statusBadgeClass(status: string) {
+  return status === 'active' ? 'badge-deposit' : 'badge-neutral';
+}
+
+function PropertyStatusSelect({
+  property,
+  disabled,
+  onChange,
+}: {
+  property: Pick<Property, 'id' | 'status'>;
+  disabled?: boolean;
+  onChange: (status: 'active' | 'inactive') => void;
+}) {
+  const value = property.status === 'active' ? 'active' : 'inactive';
+  return (
+    <label className="inline-flex items-center gap-2" onClick={(event) => event.stopPropagation()}>
+      <span className={`${statusBadgeClass(value)} pointer-events-none`}>
+        {value === 'active' ? 'Active' : 'Inactive'}
+      </span>
+      <select
+        className="field py-1 text-xs"
+        value={value}
+        disabled={disabled}
+        aria-label="Property status"
+        onChange={(event) => onChange(event.target.value as 'active' | 'inactive')}
+        onClick={(event) => event.stopPropagation()}
+      >
+        <option value="active">Active</option>
+        <option value="inactive">Inactive</option>
+      </select>
+    </label>
+  );
+}
+
 export function PropertiesPage() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const { openFeedback } = useFeedback();
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [statusError, setStatusError] = useState<unknown>(null);
 
   const propertiesQuery = useQuery({
     queryKey: ['properties'],
@@ -64,6 +102,28 @@ export function PropertiesPage() {
     queryFn: () => api.getProperty(selectedId!),
     enabled: !!selectedId,
   });
+
+  const statusMutation = useMutation({
+    mutationFn: ({ id, status }: { id: string; status: 'active' | 'inactive' }) =>
+      api.updatePropertyStatus(id, status),
+    onSuccess: (updated) => {
+      setStatusError(null);
+      queryClient.setQueryData<Property[]>(['properties'], (current) =>
+        (current ?? []).map((item) => (item.id === updated.id ? { ...item, ...updated } : item)),
+      );
+      queryClient.setQueryData(['property', updated.id], (current: Property | undefined) =>
+        current ? { ...current, status: updated.status } : current,
+      );
+      queryClient.invalidateQueries({ queryKey: ['property', updated.id] });
+      queryClient.invalidateQueries({ queryKey: ['owners'] });
+    },
+    onError: (error) => setStatusError(error),
+  });
+
+  function setStatus(property: Pick<Property, 'id' | 'status'>, status: 'active' | 'inactive') {
+    if (property.status === status) return;
+    statusMutation.mutate({ id: property.id, status });
+  }
 
   if (propertiesQuery.isLoading) return <LoadingState />;
   if (propertiesQuery.isError) {
@@ -112,7 +172,7 @@ export function PropertiesPage() {
                     <Tooltip content="Incoming minus outgoing.">Net</Tooltip>
                   </th>
                   <th className="px-5 py-3 font-medium">
-                    <Tooltip content="Active or inactive in the imported client data.">
+                    <Tooltip content="Set active or inactive. Data import also refreshes this from the current client list.">
                       Status
                     </Tooltip>
                   </th>
@@ -167,12 +227,18 @@ export function PropertiesPage() {
                     >
                       {formatCurrency(property.net_balance ?? '0')}
                     </td>
-                    <td className="px-5 py-3 capitalize">{property.status}</td>
+                    <td className="px-5 py-3" onClick={(event) => event.stopPropagation()}>
+                      <PropertyStatusSelect
+                        property={property}
+                        disabled={statusMutation.isPending}
+                        onChange={(status) => setStatus(property, status)}
+                      />
+                    </td>
                     <td className="px-5 py-3">
-                      <div className="flex flex-wrap items-center gap-1">
+                      <div className="flex flex-nowrap items-center gap-1.5 whitespace-nowrap">
                         <button
                           type="button"
-                          className="btn-secondary text-xs"
+                          className="btn-secondary shrink-0 text-xs"
                           onClick={(event) => {
                             event.stopPropagation();
                             setSelectedId(property.id);
@@ -180,7 +246,7 @@ export function PropertiesPage() {
                         >
                           Details
                         </button>
-                        <Tooltip content="Feedback" hideHint>
+                        <Tooltip content="Feedback" hideHint className="inline-flex shrink-0">
                           <button
                             type="button"
                             className="btn-icon"
@@ -230,7 +296,26 @@ export function PropertiesPage() {
                 <p className="mt-1 font-mono text-xs text-muted">
                   Prop ID: {detailQuery.data.client_prop_id}
                 </p>
+                <div className="mt-2">
+                  <span className="label-text">Status</span>
+                  <div className="mt-1">
+                    <PropertyStatusSelect
+                      property={detailQuery.data}
+                      disabled={statusMutation.isPending}
+                      onChange={(status) => setStatus(detailQuery.data, status)}
+                    />
+                  </div>
+                </div>
               </div>
+              {statusError ? (
+                <InlineError
+                  message={getUserErrorMessage(
+                    statusError,
+                    'Could not update property status. Please try again.',
+                  )}
+                  error={statusError}
+                />
+              ) : null}
               <div className="flex flex-wrap gap-2">
                 <Link
                   to="/transactions"

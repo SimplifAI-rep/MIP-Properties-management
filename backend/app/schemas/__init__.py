@@ -102,6 +102,10 @@ class PropertyDetail(PropertyRead):
     recent_deposits: list[DepositRead] = Field(default_factory=list)
 
 
+class PropertyUpdate(BaseModel):
+    status: Literal["active", "inactive"]
+
+
 class DepositListResponse(BaseModel):
     items: list[DepositRead]
     total: int
@@ -161,6 +165,8 @@ class ImportResultRead(BaseModel):
 class ClientDataImportCounts(BaseModel):
     owners: int = 0
     properties: int = 0
+    properties_active: int = 0
+    properties_inactive: int = 0
     bank_accounts: int = 0
     expenses: int = 0
     deposits: int = 0
@@ -178,7 +184,16 @@ class ClientDataImportResponse(BaseModel):
     deposits_skipped: int = 0
     rows_seen: int = 0
     rows_skipped_empty: int = 0
+    needs_review_created: int = 0
+    properties_marked_active: int = 0
+    properties_marked_inactive: int = 0
+    properties_active: int = 0
+    properties_inactive: int = 0
+    properties_active_ids: list[str] = Field(default_factory=list)
+    properties_inactive_ids: list[str] = Field(default_factory=list)
     skipped_row_count: int = 0
+    skip_reason_counts: dict[str, int] = Field(default_factory=dict)
+    incomplete_reason_counts: dict[str, int] = Field(default_factory=dict)
     skip_report_id: str | None = None
     skip_report_url: str | None = None
     warnings: list[str] = Field(default_factory=list)

@@ -10,7 +10,7 @@ from app.models.bank_account import BankAccount
 from app.models.deposit import Deposit
 from app.models.owner import Owner
 from app.models.property import Property
-from app.schemas import PropertyDetail, PropertyRead
+from app.schemas import PropertyDetail, PropertyRead, PropertyUpdate
 from app.services.deposit_query import list_deposits
 from app.services.running_balance import property_float_totals
 
@@ -19,6 +19,33 @@ router = APIRouter(prefix="/properties", tags=["properties"])
 
 def _zero() -> Decimal:
     return Decimal("0.00")
+
+
+def _property_read(
+    prop: Property,
+    owner_name: str,
+    deposit_count: int,
+    total_deposits: Decimal,
+    *,
+    incoming: Decimal,
+    outgoing: Decimal,
+    net: Decimal,
+) -> PropertyRead:
+    return PropertyRead(
+        id=prop.id,
+        client_prop_id=prop.client_prop_id,
+        name=prop.name,
+        address=prop.address,
+        city=prop.city,
+        status=prop.status,
+        owner_id=prop.owner_id,
+        owner_name=owner_name,
+        deposit_count=deposit_count or 0,
+        total_deposits=total_deposits or 0,
+        total_incoming=incoming,
+        total_outgoing=outgoing,
+        net_balance=net,
+    )
 
 
 @router.get("", response_model=list[PropertyRead])
@@ -39,23 +66,54 @@ def list_properties(db: Session = Depends(get_db)) -> list[PropertyRead]:
     floats = property_float_totals(db, [prop.id for prop, *_ in rows])
 
     return [
-        PropertyRead(
-            id=prop.id,
-            client_prop_id=prop.client_prop_id,
-            name=prop.name,
-            address=prop.address,
-            city=prop.city,
-            status=prop.status,
-            owner_id=prop.owner_id,
-            owner_name=owner_name,
-            deposit_count=deposit_count or 0,
-            total_deposits=total_deposits or 0,
-            total_incoming=(floats.get(prop.id).incoming if prop.id in floats else _zero()),
-            total_outgoing=(floats.get(prop.id).outgoing if prop.id in floats else _zero()),
-            net_balance=(floats.get(prop.id).net if prop.id in floats else _zero()),
+        _property_read(
+            prop,
+            owner_name,
+            deposit_count or 0,
+            total_deposits or _zero(),
+            incoming=(floats.get(prop.id).incoming if prop.id in floats else _zero()),
+            outgoing=(floats.get(prop.id).outgoing if prop.id in floats else _zero()),
+            net=(floats.get(prop.id).net if prop.id in floats else _zero()),
         )
         for prop, owner_name, deposit_count, total_deposits in rows
     ]
+
+
+@router.patch("/{property_id}", response_model=PropertyRead)
+def update_property(
+    property_id: UUID,
+    payload: PropertyUpdate,
+    db: Session = Depends(get_db),
+) -> PropertyRead:
+    prop = db.get(Property, property_id)
+    if not prop:
+        raise HTTPException(status_code=404, detail="Property not found")
+
+    prop.status = payload.status
+    db.commit()
+    db.refresh(prop)
+
+    owner = db.get(Owner, prop.owner_id)
+    deposit_count = db.scalar(
+        select(func.count(Deposit.id)).where(Deposit.property_id == property_id)
+    ) or 0
+    total_deposits = db.scalar(
+        select(func.coalesce(func.sum(Deposit.amount), 0)).where(
+            Deposit.property_id == property_id
+        )
+    ) or _zero()
+    floats = property_float_totals(db, [property_id])
+    totals = floats.get(property_id)
+
+    return _property_read(
+        prop,
+        owner.name if owner else "",
+        int(deposit_count),
+        total_deposits if isinstance(total_deposits, Decimal) else _zero(),
+        incoming=totals.incoming if totals else _zero(),
+        outgoing=totals.outgoing if totals else _zero(),
+        net=totals.net if totals else _zero(),
+    )
 
 
 @router.get("/{property_id}", response_model=PropertyDetail)

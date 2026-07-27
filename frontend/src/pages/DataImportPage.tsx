@@ -1,9 +1,11 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
 import type { ClientDataImportResponse } from '../types';
 import { ErrorState, InlineError, LoadingState } from '../components/ui/States';
 import { Tooltip } from '../components/ui/Tooltip';
+import { useAuth } from '../context/AuthContext';
 import { validationError, AppError } from '../utils/errors';
 
 type FileRole =
@@ -60,14 +62,41 @@ const FILE_FIELDS: {
 const POLL_MS = 1500;
 const POLL_TIMEOUT_MS = 30 * 60 * 1000;
 
+const SKIP_REASON_LABELS: Record<string, string> = {
+  duplicate_expense: 'Duplicate expense (already in database)',
+  duplicate_deposit: 'Duplicate deposit (already in database)',
+  starting_balance: 'Starting-balance / opening row',
+  unresolved_property: 'Unresolved Prop ID',
+  empty_prop_id: 'Empty Prop ID',
+  imported_needs_review: 'Incomplete row (imported for review)',
+};
+
+const INCOMPLETE_REASON_LABELS: Record<string, string> = {
+  missing_date: 'Missing date',
+  no_money_columns: 'Missing amount (no money columns)',
+  missing_amount: 'Missing amount',
+};
+
+function reasonLabel(map: Record<string, string>, key: string): string {
+  return map[key] ?? key.replace(/_/g, ' ');
+}
+
 export function DataImportPage() {
   const queryClient = useQueryClient();
+  const { isAdmin } = useAuth();
   const [files, setFiles] = useState<Partial<Record<FileRole, File | null>>>({});
   const [reset, setReset] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
   const [result, setResult] = useState<ClientDataImportResponse | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [progressMessage, setProgressMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isAdmin) {
+      setReset(false);
+      setConfirmReset(false);
+    }
+  }, [isAdmin]);
 
   const statusQuery = useQuery({
     queryKey: ['client-data-status'],
@@ -79,6 +108,9 @@ export function DataImportPage() {
       if (!files.client_list || !files.management) {
         throw validationError('Please choose both the client list and management ledger files.');
       }
+      if (reset && !isAdmin) {
+        throw validationError('Admin login is required to reset the database.');
+      }
       if (reset && !confirmReset) {
         throw validationError('Please confirm the database reset before importing.');
       }
@@ -89,8 +121,8 @@ export function DataImportPage() {
         bank: files.bank ?? undefined,
         creditCard1: files.credit_card_1 ?? undefined,
         creditCard2: files.credit_card_2 ?? undefined,
-        reset,
-        confirmReset,
+        reset: isAdmin ? reset : false,
+        confirmReset: isAdmin ? confirmReset : false,
       });
       setProgressMessage(accepted.message || 'Import queued…');
 
@@ -131,14 +163,23 @@ export function DataImportPage() {
     },
   });
 
-  const ready = Boolean(files.client_list && files.management && (!reset || confirmReset));
+  const effectiveReset = isAdmin && reset;
+  const ready = Boolean(
+    files.client_list && files.management && (!effectiveReset || confirmReset),
+  );
 
   const counts = statusQuery.data?.database_counts;
   const countSummary = useMemo(() => {
     if (!counts) return null;
+    const active = counts.properties_active;
+    const inactive = counts.properties_inactive;
+    const propertyPart =
+      active != null && inactive != null
+        ? `${counts.properties} properties (${active} active · ${inactive} inactive)`
+        : `${counts.properties} properties`;
     return [
       `${counts.owners} owners`,
-      `${counts.properties} properties`,
+      propertyPart,
       `${counts.bank_accounts} bank accounts`,
       `${counts.expenses} expenses`,
       `${counts.deposits} deposits`,
@@ -206,43 +247,45 @@ export function DataImportPage() {
             ))}
           </div>
 
-          <div className="rounded-lg border border-border p-3 space-y-2">
-            <label className="flex items-start gap-2 text-sm">
-              <input
-                type="checkbox"
-                className="mt-1"
-                checked={reset}
-                onChange={(event) => {
-                  setReset(event.target.checked);
-                  if (!event.target.checked) setConfirmReset(false);
-                }}
-              />
-              <span>
-                <strong>
-                  <Tooltip content="Deletes current data, then reloads from the files above.">
-                    Reset database before import
-                  </Tooltip>
-                </strong>
-                <span className="block text-muted">
-                  Wipes all owners, properties, expenses, deposits, and uploads, then imports from
-                  the files above. Use this for a clean reload matching seed data.
-                </span>
-              </span>
-            </label>
-            {reset ? (
-              <label className="flex items-start gap-2 text-sm pl-6">
+          {isAdmin ? (
+            <div className="rounded-lg border border-border p-3 space-y-2">
+              <label className="flex items-start gap-2 text-sm">
                 <input
                   type="checkbox"
                   className="mt-1"
-                  checked={confirmReset}
-                  onChange={(event) => setConfirmReset(event.target.checked)}
+                  checked={reset}
+                  onChange={(event) => {
+                    setReset(event.target.checked);
+                    if (!event.target.checked) setConfirmReset(false);
+                  }}
                 />
-                <span className="text-negative">
-                  I understand this permanently deletes the current database contents.
+                <span>
+                  <strong>
+                    <Tooltip content="Deletes current data, then reloads from the files above.">
+                      Reset database before import
+                    </Tooltip>
+                  </strong>
+                  <span className="block text-muted">
+                    Wipes all owners, properties, expenses, deposits, and uploads, then imports from
+                    the files above. Use this for a clean reload matching seed data.
+                  </span>
                 </span>
               </label>
-            ) : null}
-          </div>
+              {reset ? (
+                <label className="flex items-start gap-2 text-sm pl-6">
+                  <input
+                    type="checkbox"
+                    className="mt-1"
+                    checked={confirmReset}
+                    onChange={(event) => setConfirmReset(event.target.checked)}
+                  />
+                  <span className="text-negative">
+                    I understand this permanently deletes the current database contents.
+                  </span>
+                </label>
+              ) : null}
+            </div>
+          ) : null}
 
           <div className="flex flex-wrap gap-2">
             <button
@@ -253,7 +296,7 @@ export function DataImportPage() {
             >
               {importMutation.isPending
                 ? 'Importing…'
-                : reset
+                : effectiveReset
                   ? 'Reset & import'
                   : 'Import into current database'}
             </button>
@@ -273,35 +316,173 @@ export function DataImportPage() {
           <p className="mt-2 text-sm text-muted">
             {result.reset ? 'Database was reset, then imported.' : 'Imported into existing database.'}
           </p>
-          <ul className="mt-3 grid gap-2 text-sm sm:grid-cols-2">
-            <li>Owners created: {result.owners_created}</li>
-            <li>Properties created: {result.properties_created}</li>
-            <li>Bank accounts created: {result.bank_accounts_created}</li>
-            <li>Expenses created: {result.expenses_created}</li>
-            <li>Expenses skipped (duplicates): {result.expenses_skipped}</li>
-            <li>Deposits created: {result.deposits_created}</li>
-            <li>Deposits skipped (duplicates): {result.deposits_skipped}</li>
-            <li>Rows seen: {result.rows_seen}</li>
-            <li>
-              <Tooltip content="Blank or invalid rows ignored during import.">
-                Rows skipped (empty/unusable)
-              </Tooltip>
-              : {result.rows_skipped_empty}
-            </li>
-            <li>
-              <Tooltip content="Rows excluded with a reportable reason.">
-                Detailed skipped rows
-              </Tooltip>
-              : {result.skipped_row_count}
-            </li>
-          </ul>
+
+          <div className="mt-4 grid gap-4 lg:grid-cols-2">
+            <div>
+              <h4 className="text-sm font-medium">Created</h4>
+              <ul className="mt-2 space-y-1 text-sm">
+                <li>Owners: {result.owners_created}</li>
+                <li>Properties: {result.properties_created}</li>
+                <li>Bank accounts: {result.bank_accounts_created}</li>
+                <li>
+                  <Tooltip content="Expense transactions inserted (one Excel row can create several).">
+                    Expenses
+                  </Tooltip>
+                  : {result.expenses_created}
+                </li>
+                <li>
+                  <Tooltip content="Deposit / inflow transactions inserted.">
+                    Deposits
+                  </Tooltip>
+                  : {result.deposits_created}
+                </li>
+              </ul>
+            </div>
+
+            <div>
+              <h4 className="text-sm font-medium">Ledger scan</h4>
+              <ul className="mt-2 space-y-1 text-sm">
+                <li>
+                  <Tooltip content="Non-empty management-ledger rows after the header (not bank/credit-card rows).">
+                    Management ledger rows seen
+                  </Tooltip>
+                  : {result.rows_seen}
+                </li>
+                <li>
+                  <Tooltip content="Already in the database — not imported again.">
+                    Expenses skipped (duplicates)
+                  </Tooltip>
+                  : {result.expenses_skipped}
+                </li>
+                <li>
+                  <Tooltip content="Already in the database — not imported again.">
+                    Deposits skipped (duplicates)
+                  </Tooltip>
+                  : {result.deposits_skipped}
+                </li>
+                <li>
+                  <Tooltip content="Management rows whose Prop ID could not be matched to a property.">
+                    Unresolved Prop ID rows
+                  </Tooltip>
+                  : {result.rows_skipped_empty}
+                </li>
+                <li>
+                  <Tooltip content="Total rows logged in the skip report (duplicates, starting balance, unresolved Prop ID, incomplete imports, etc.). Not the same as duplicates alone.">
+                    Rows in skip report
+                  </Tooltip>
+                  : {result.skipped_row_count}
+                </li>
+              </ul>
+            </div>
+          </div>
+
+          <div className="mt-4 rounded-lg border border-border p-3">
+            <h4 className="text-sm font-medium">Property status</h4>
+            <p className="mt-1 text-sm text-muted">
+              From the current client list: only those properties are active. Others (past clients,
+              ledger-only, or removed) are inactive.
+            </p>
+            <ul className="mt-2 grid gap-1 text-sm sm:grid-cols-2">
+              <li>
+                <Tooltip content="Properties on the current clients sheet (plus BUFFER).">
+                  Active now
+                </Tooltip>
+                : {result.properties_active ?? result.database_counts.properties_active ?? 0}
+              </li>
+              <li>
+                <Tooltip content="Properties not on the current clients sheet.">
+                  Inactive now
+                </Tooltip>
+                : {result.properties_inactive ?? result.database_counts.properties_inactive ?? 0}
+              </li>
+              <li>
+                <Tooltip content="Status changed to active during this import.">
+                  Marked active this import
+                </Tooltip>
+                : {result.properties_marked_active ?? 0}
+              </li>
+              <li>
+                <Tooltip content="Status changed to inactive during this import.">
+                  Marked inactive this import
+                </Tooltip>
+                : {result.properties_marked_inactive ?? 0}
+              </li>
+            </ul>
+            {(result.properties_inactive_ids?.length ?? 0) > 0 ? (
+              <details className="mt-2 text-sm">
+                <summary className="cursor-pointer text-muted">
+                  Inactive Prop IDs ({result.properties_inactive_ids!.length})
+                </summary>
+                <p className="mt-1 font-mono text-xs break-all">
+                  {result.properties_inactive_ids!.join(', ')}
+                </p>
+              </details>
+            ) : null}
+            {(result.properties_active_ids?.length ?? 0) > 0 ? (
+              <details className="mt-2 text-sm">
+                <summary className="cursor-pointer text-muted">
+                  Active Prop IDs ({result.properties_active_ids!.length})
+                </summary>
+                <p className="mt-1 font-mono text-xs break-all">
+                  {result.properties_active_ids!.join(', ')}
+                </p>
+              </details>
+            ) : null}
+          </div>
+
+          {(result.needs_review_created ?? 0) > 0 ||
+          Object.keys(result.incomplete_reason_counts ?? {}).length > 0 ? (
+            <div className="mt-4 rounded-lg border border-amber-300/60 bg-amber-50/60 p-3 dark:border-amber-700/50 dark:bg-amber-950/30">
+              <h4 className="text-sm font-medium">
+                Incomplete imports → Alerts
+              </h4>
+              <p className="mt-1 text-sm text-muted">
+                {result.needs_review_created ?? 0} incomplete transaction
+                {(result.needs_review_created ?? 0) === 1 ? '' : 's'} imported and added to{' '}
+                <Link to="/alerts" className="underline">
+                  Alerts
+                </Link>{' '}
+                for review.
+              </p>
+              {Object.keys(result.incomplete_reason_counts ?? {}).length > 0 ? (
+                <ul className="mt-2 space-y-1 text-sm">
+                  {Object.entries(result.incomplete_reason_counts ?? {})
+                    .sort((a, b) => b[1] - a[1])
+                    .map(([reason, count]) => (
+                      <li key={reason}>
+                        {reasonLabel(INCOMPLETE_REASON_LABELS, reason)}: {count}
+                      </li>
+                    ))}
+                </ul>
+              ) : null}
+            </div>
+          ) : null}
+
+          {Object.keys(result.skip_reason_counts ?? {}).length > 0 ? (
+            <div className="mt-4">
+              <h4 className="text-sm font-medium">Skip report by reason</h4>
+              <ul className="mt-2 grid gap-1 text-sm sm:grid-cols-2">
+                {Object.entries(result.skip_reason_counts ?? {})
+                  .sort((a, b) => b[1] - a[1])
+                  .map(([reason, count]) => (
+                    <li key={reason}>
+                      {reasonLabel(SKIP_REASON_LABELS, reason)}: {count}
+                    </li>
+                  ))}
+              </ul>
+            </div>
+          ) : null}
+
           <p className="mt-3 text-sm">
             <span className="text-muted">Files used:</span> {result.files_used.join(', ')}
           </p>
           <p className="mt-2 text-sm">
             <span className="text-muted">Database now:</span>{' '}
-            {result.database_counts.owners} owners · {result.database_counts.properties} properties ·{' '}
-            {result.database_counts.expenses} expenses · {result.database_counts.deposits} deposits
+            {result.database_counts.owners} owners · {result.database_counts.properties} properties
+            {result.database_counts.properties_active != null
+              ? ` (${result.database_counts.properties_active} active · ${result.database_counts.properties_inactive ?? 0} inactive)`
+              : ''}{' '}
+            · {result.database_counts.expenses} expenses · {result.database_counts.deposits} deposits
           </p>
           {result.skip_report_id ? (
             <div className="mt-4">
@@ -310,10 +491,10 @@ export function DataImportPage() {
                 href={api.getClientDataSkipReportUrl(result.skip_report_id)}
                 download
               >
-                Download skipped-rows Excel ({result.skipped_row_count} rows)
+                Download skip-report Excel ({result.skipped_row_count} rows)
               </a>
               <p className="mt-2 text-xs text-muted">
-                Includes Summary, Skipped rows detail, and a reason legend for testing.
+                Includes Summary, Property status, row detail, and a reason legend.
               </p>
             </div>
           ) : null}

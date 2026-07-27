@@ -901,24 +901,16 @@ export function TransactionsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <h2 className="page-heading">Transactions</h2>
-          <p className="page-desc">
-            Same ledger as your Excel: Prop ID, Date, Section, Notes, Amount, and Balance — plus
-            Property and Owner for easier browsing. Newest dates first; rows without a date appear
-            at the end. Incomplete imports (missing date/amount) stay in Alerts until fixed or
-            dismissed. He/She paid and rental income are marked like in the spreadsheet.
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-2">
+      <div className="flex flex-nowrap items-center justify-between gap-3">
+        <h2 className="page-heading shrink-0">Transactions</h2>
+        <div className="flex flex-nowrap items-center justify-end gap-2 overflow-x-auto">
           <button
             type="button"
             onClick={() => {
               setShowUpload((current) => !current);
               if (!showUpload) setShowForm(false);
             }}
-            className="btn-secondary"
+            className="btn-secondary shrink-0"
           >
             {showUpload ? 'Cancel upload' : 'Import from file'}
           </button>
@@ -935,7 +927,7 @@ export function TransactionsPage() {
                 return next;
               });
             }}
-            className="btn-primary"
+            className="btn-primary shrink-0"
           >
             {showForm ? 'Cancel' : 'Add expense'}
           </button>
@@ -963,7 +955,7 @@ export function TransactionsPage() {
                 'transactions.csv',
               )
             }
-            className="btn-secondary"
+            className="btn-secondary shrink-0"
           >
             Export CSV
           </button>

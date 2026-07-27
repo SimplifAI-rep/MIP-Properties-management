@@ -330,6 +330,8 @@ export interface UploadConfirmResponse {
 export interface ClientDataImportCounts {
   owners: number;
   properties: number;
+  properties_active?: number;
+  properties_inactive?: number;
   bank_accounts: number;
   expenses: number;
   deposits: number;
@@ -352,7 +354,16 @@ export interface ClientDataImportResponse {
   deposits_skipped: number;
   rows_seen: number;
   rows_skipped_empty: number;
+  needs_review_created?: number;
+  properties_marked_active?: number;
+  properties_marked_inactive?: number;
+  properties_active?: number;
+  properties_inactive?: number;
+  properties_active_ids?: string[];
+  properties_inactive_ids?: string[];
   skipped_row_count: number;
+  skip_reason_counts?: Record<string, number>;
+  incomplete_reason_counts?: Record<string, number>;
   skip_report_id?: string | null;
   skip_report_url?: string | null;
   warnings: string[];

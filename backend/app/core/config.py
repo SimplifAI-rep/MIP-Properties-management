@@ -39,6 +39,10 @@ class Settings(BaseSettings):
     smtp_from_email: str = ""
     smtp_use_tls: bool = True
 
+    # Admin login (optional). When set, database reset requires this password.
+    admin_password: str = ""
+    admin_token_hours: float = 12.0
+
 
 @lru_cache
 def get_settings() -> Settings:

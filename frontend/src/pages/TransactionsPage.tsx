@@ -181,8 +181,11 @@ export function TransactionsPage() {
       showUpload?: boolean;
       showForm?: boolean;
       propertyId?: string;
+      propertyIds?: string[];
       clientPropId?: string;
+      clientPropIds?: string[];
       ownerId?: string;
+      ownerIds?: string[];
       dateFrom?: string;
       dateTo?: string;
       typeFilter?: TypeFilter;
@@ -202,15 +205,35 @@ export function TransactionsPage() {
       setShowForm(true);
       setShowUpload(false);
     }
-    if (state.propertyId || state.clientPropId) {
-      setPropertyIds(state.propertyId ? [state.propertyId] : []);
-      setClientPropIds(state.clientPropId ? [state.clientPropId] : []);
-      if (!state.ownerId) setOwnerIds([]);
+
+    const nextPropertyIds =
+      state.propertyIds && state.propertyIds.length > 0
+        ? state.propertyIds
+        : state.propertyId
+          ? [state.propertyId]
+          : null;
+    const nextClientPropIds =
+      state.clientPropIds && state.clientPropIds.length > 0
+        ? state.clientPropIds
+        : state.clientPropId
+          ? [state.clientPropId]
+          : null;
+    const nextOwnerIds =
+      state.ownerIds && state.ownerIds.length > 0
+        ? state.ownerIds
+        : state.ownerId
+          ? [state.ownerId]
+          : null;
+
+    if (nextPropertyIds || nextClientPropIds) {
+      setPropertyIds(nextPropertyIds ?? []);
+      setClientPropIds(nextClientPropIds ?? []);
+      if (!nextOwnerIds) setOwnerIds([]);
       setPage(1);
     }
-    if (state.ownerId) {
-      setOwnerIds([state.ownerId]);
-      if (!state.propertyId && !state.clientPropId) {
+    if (nextOwnerIds) {
+      setOwnerIds(nextOwnerIds);
+      if (!nextPropertyIds && !nextClientPropIds) {
         setPropertyIds([]);
         setClientPropIds([]);
       }
@@ -230,7 +253,7 @@ export function TransactionsPage() {
     } else if (state.typeFilter === 'expense') {
       setKinds(['expense']);
       setPage(1);
-    } else if (state.propertyId || state.clientPropId || state.ownerId) {
+    } else if (nextPropertyIds || nextClientPropIds || nextOwnerIds) {
       setKinds(['deposit', 'expense']);
     }
     if (state.sections) {

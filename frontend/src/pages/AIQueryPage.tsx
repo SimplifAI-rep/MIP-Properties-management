@@ -1,9 +1,11 @@
 import { useMemo, useState } from 'react';
-import { useMutation } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
-import type { AIQueryResponse } from '../types';
+import type { AIQueryFilters, AIQueryResponse } from '../types';
 import { TransactionTable } from '../components/TransactionTable';
+import { DateInputDMY } from '../components/ui/DateInputDMY';
+import { SearchableMultiSelect } from '../components/ui/SearchableMultiSelect';
 import { ErrorState, formatCurrency, formatDate, LoadingState } from '../components/ui/States';
 import { Tooltip } from '../components/ui/Tooltip';
 import { downloadAIQueryExcel } from '../utils/exportExcel';
@@ -91,26 +93,144 @@ function canOpenInTransactions(result: AIQueryResponse): boolean {
   return true;
 }
 
+function buildFiltersPayload(input: {
+  ownerIds: string[];
+  propertyIds: string[];
+  clientPropIds: string[];
+  dateFrom?: string;
+  dateTo?: string;
+  minAmount: string;
+  maxAmount: string;
+}): AIQueryFilters | undefined {
+  const filters: AIQueryFilters = {};
+  if (input.ownerIds.length) filters.owner_ids = input.ownerIds;
+  if (input.propertyIds.length) filters.property_ids = input.propertyIds;
+  if (input.clientPropIds.length) filters.client_prop_ids = input.clientPropIds;
+  if (input.dateFrom) filters.date_from = input.dateFrom;
+  if (input.dateTo) filters.date_to = input.dateTo;
+  const min = input.minAmount.trim();
+  const max = input.maxAmount.trim();
+  if (min) filters.min_amount = min;
+  if (max) filters.max_amount = max;
+  return Object.keys(filters).length ? filters : undefined;
+}
+
 export function AIQueryPage() {
   const navigate = useNavigate();
   const [question, setQuestion] = useState('');
   const [result, setResult] = useState<AIQueryResponse | null>(null);
+  const [ownerIds, setOwnerIds] = useState<string[]>([]);
+  const [propertyIds, setPropertyIds] = useState<string[]>([]);
+  const [clientPropIds, setClientPropIds] = useState<string[]>([]);
+  const [dateFrom, setDateFrom] = useState<string | undefined>();
+  const [dateTo, setDateTo] = useState<string | undefined>();
+  const [minAmount, setMinAmount] = useState('');
+  const [maxAmount, setMaxAmount] = useState('');
+
+  const ownersQuery = useQuery({
+    queryKey: ['owners'],
+    queryFn: api.getOwners,
+  });
+  const propertiesQuery = useQuery({
+    queryKey: ['properties'],
+    queryFn: api.getProperties,
+  });
 
   const mutation = useMutation({
     mutationFn: api.postAIQuery,
     onSuccess: (data) => setResult(data),
   });
 
+  const propIdOptions = useMemo(
+    () =>
+      (propertiesQuery.data ?? []).map((property) => ({
+        value: property.client_prop_id,
+        label:
+          property.status !== 'active'
+            ? `${property.client_prop_id} (inactive)`
+            : property.client_prop_id,
+      })),
+    [propertiesQuery.data],
+  );
+
+  const propertyOptions = useMemo(
+    () =>
+      (propertiesQuery.data ?? []).map((property) => ({
+        value: property.id,
+        label: `${property.client_prop_id} — ${property.name}`,
+      })),
+    [propertiesQuery.data],
+  );
+
+  const ownerOptions = useMemo(
+    () =>
+      (ownersQuery.data ?? []).map((owner) => ({
+        value: owner.id,
+        label: owner.name,
+      })),
+    [ownersQuery.data],
+  );
+
+  const filtersPayload = useMemo(
+    () =>
+      buildFiltersPayload({
+        ownerIds,
+        propertyIds,
+        clientPropIds,
+        dateFrom,
+        dateTo,
+        minAmount,
+        maxAmount,
+      }),
+    [ownerIds, propertyIds, clientPropIds, dateFrom, dateTo, minAmount, maxAmount],
+  );
+
+  const hasFilters = Boolean(filtersPayload);
+  const canAsk = Boolean(question.trim() || hasFilters);
+
   const transactionRows = useMemo(
     () => (result ? mapResultToTransactions(result) : null),
     [result],
   );
 
+  function syncPropIdsFromProperties(nextPropertyIds: string[]) {
+    setPropertyIds(nextPropertyIds);
+    const props = propertiesQuery.data ?? [];
+    setClientPropIds(
+      nextPropertyIds
+        .map((id) => props.find((property) => property.id === id)?.client_prop_id)
+        .filter((value): value is string => Boolean(value)),
+    );
+  }
+
+  function syncPropertiesFromPropIds(nextPropIds: string[]) {
+    setClientPropIds(nextPropIds);
+    const props = propertiesQuery.data ?? [];
+    setPropertyIds(
+      nextPropIds
+        .map((propId) => props.find((property) => property.client_prop_id === propId)?.id)
+        .filter((value): value is string => Boolean(value)),
+    );
+  }
+
+  function clearFilters() {
+    setOwnerIds([]);
+    setPropertyIds([]);
+    setClientPropIds([]);
+    setDateFrom(undefined);
+    setDateTo(undefined);
+    setMinAmount('');
+    setMaxAmount('');
+  }
+
   const handleSubmit = (value: string) => {
     const trimmed = value.trim();
-    if (!trimmed) return;
+    if (!trimmed && !filtersPayload) return;
     setQuestion(trimmed);
-    mutation.mutate(trimmed);
+    mutation.mutate({
+      question: trimmed,
+      filters: filtersPayload,
+    });
   };
 
   const openInTransactions = () => {
@@ -129,13 +249,83 @@ export function AIQueryPage() {
           </Tooltip>
         </h2>
         <p className="page-desc">
-          Ask about deposits, expenses, or mixed transactions using the same filters as
-          Transactions — dates, Prop ID, source file, incomplete imports, rental income,
-          He/She paid, and more. Open matching rows in Transactions after an answer.
+          Combine a question with structured filters — owners, properties, dates, and
+          amounts. Filters override the question when both are set. You can also Ask with
+          filters alone.
         </p>
       </div>
 
-      <section className="panel-padded">
+      <section className="panel-padded space-y-4">
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-sm font-medium text-slate-600 dark:text-slate-300">Filters</p>
+          <button
+            type="button"
+            className="btn-secondary text-xs"
+            disabled={!hasFilters}
+            onClick={clearFilters}
+          >
+            Clear
+          </button>
+        </div>
+
+        <div className="filter-panel md:grid-cols-2 xl:grid-cols-4">
+          <SearchableMultiSelect
+            label="Owner"
+            tip="Limit results to one or more owners. Combines with other filters."
+            options={ownerOptions}
+            selected={ownerIds}
+            onChange={setOwnerIds}
+            placeholder="All owners"
+            searchPlaceholder="Search owner…"
+          />
+          <SearchableMultiSelect
+            label="Property"
+            tip="Select one or more properties. Syncs with Prop ID."
+            options={propertyOptions}
+            selected={propertyIds}
+            onChange={syncPropIdsFromProperties}
+            placeholder="All properties"
+            searchPlaceholder="Search property…"
+          />
+          <SearchableMultiSelect
+            label="Prop ID"
+            tip="Excel Prop ID — select one or more. Syncs with Property."
+            options={propIdOptions}
+            selected={clientPropIds}
+            onChange={syncPropertiesFromPropIds}
+            placeholder="All Prop IDs"
+            searchPlaceholder="Search Prop ID…"
+          />
+          <DateInputDMY label="From date" value={dateFrom} onChange={setDateFrom} />
+          <DateInputDMY label="To date" value={dateTo} onChange={setDateTo} />
+          <label className="block space-y-1 text-sm">
+            <span className="label-text">Min amount</span>
+            <input
+              type="number"
+              inputMode="decimal"
+              step="any"
+              min="0"
+              value={minAmount}
+              onChange={(event) => setMinAmount(event.target.value)}
+              placeholder="Any"
+              className="field w-full text-sm"
+            />
+          </label>
+          <label className="block space-y-1 text-sm">
+            <span className="label-text">Max amount</span>
+            <input
+              type="number"
+              inputMode="decimal"
+              step="any"
+              min="0"
+              value={maxAmount}
+              onChange={(event) => setMaxAmount(event.target.value)}
+              placeholder="Any"
+              className="field w-full text-sm"
+            />
+          </label>
+        </div>
+
         <div className="flex flex-wrap gap-2">
           {EXAMPLE_PROMPTS.map((prompt) => (
             <button
@@ -153,7 +343,7 @@ export function AIQueryPage() {
         </div>
 
         <form
-          className="mt-4 flex gap-2"
+          className="flex gap-2"
           onSubmit={(event) => {
             event.preventDefault();
             handleSubmit(question);
@@ -163,10 +353,14 @@ export function AIQueryPage() {
             type="text"
             value={question}
             onChange={(event) => setQuestion(event.target.value)}
-            placeholder="Ask about deposits, expenses, or transactions…"
+            placeholder="Ask about deposits, expenses, or transactions (optional if filters are set)…"
             className="field flex-1 text-sm"
           />
-          <button type="submit" disabled={mutation.isPending} className="btn-primary">
+          <button
+            type="submit"
+            disabled={mutation.isPending || !canAsk}
+            className="btn-primary"
+          >
             {mutation.isPending ? 'Thinking...' : 'Ask'}
           </button>
         </form>

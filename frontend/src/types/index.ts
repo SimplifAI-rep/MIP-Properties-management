@@ -117,15 +117,20 @@ export interface DepositQueryIntent {
   query_type: string;
   domain?: string;
   property_id?: string | null;
+  property_ids?: string[];
   property_name?: string | null;
   client_prop_id?: string | null;
+  client_prop_ids?: string[];
   owner_id?: string | null;
+  owner_ids?: string[];
   owner_name?: string | null;
   date_from?: string | null;
   date_to?: string | null;
   group_by?: string | null;
   year?: number | null;
   month?: number | null;
+  min_amount?: string | null;
+  max_amount?: string | null;
   category?: string | null;
   source?: string | null;
   payment_method?: string | null;
@@ -137,6 +142,21 @@ export interface DepositQueryIntent {
   paid_by_owner?: boolean | null;
   paid_by_company?: boolean | null;
   ledger_column?: string | null;
+}
+
+export interface AIQueryFilters {
+  owner_ids?: string[];
+  property_ids?: string[];
+  client_prop_ids?: string[];
+  date_from?: string | null;
+  date_to?: string | null;
+  min_amount?: string | null;
+  max_amount?: string | null;
+}
+
+export interface AIQueryRequest {
+  question?: string;
+  filters?: AIQueryFilters | null;
 }
 
 export interface AIQueryResponse {

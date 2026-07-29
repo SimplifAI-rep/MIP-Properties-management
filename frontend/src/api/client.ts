@@ -215,12 +215,20 @@ export const api = {
         date_to: filters.date_to,
       })}`,
     ),
-  postAIQuery: (question: string) =>
-    request<import('../types').AIQueryResponse>('/ai/query', {
+  postAIQuery: (payload: import('../types').AIQueryRequest | string) => {
+    const body =
+      typeof payload === 'string'
+        ? { question: payload }
+        : {
+            question: payload.question ?? '',
+            ...(payload.filters ? { filters: payload.filters } : {}),
+          };
+    return request<import('../types').AIQueryResponse>('/ai/query', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ question }),
-    }),
+      body: JSON.stringify(body),
+    });
+  },
   getExpenses: (filters: ExpenseFilters = {}) =>
     request<ExpenseListResponse>(
       `/expenses${toQuery({

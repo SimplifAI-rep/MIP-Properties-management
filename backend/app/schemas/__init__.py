@@ -243,9 +243,12 @@ class DepositQueryIntent(BaseModel):
     query_type: str
     domain: str = "deposits"
     property_id: UUID | None = None
+    property_ids: list[UUID] = Field(default_factory=list)
     property_name: str | None = None
     client_prop_id: str | None = None
+    client_prop_ids: list[str] = Field(default_factory=list)
     owner_id: UUID | None = None
+    owner_ids: list[UUID] = Field(default_factory=list)
     owner_name: str | None = None
     date_from: date | None = None
     date_to: date | None = None
@@ -269,8 +272,21 @@ class DepositQueryIntent(BaseModel):
     ledger_column: str | None = None
 
 
+class AIQueryFilters(BaseModel):
+    """Structured filters from the AI Query UI; override NL-parsed intent fields."""
+
+    owner_ids: list[UUID] = Field(default_factory=list)
+    property_ids: list[UUID] = Field(default_factory=list)
+    client_prop_ids: list[str] = Field(default_factory=list)
+    date_from: date | None = None
+    date_to: date | None = None
+    min_amount: Decimal | None = None
+    max_amount: Decimal | None = None
+
+
 class AIQueryRequest(BaseModel):
-    question: str = Field(min_length=1, max_length=500)
+    question: str = Field(default="", max_length=500)
+    filters: AIQueryFilters | None = None
 
 
 class AIQueryResponse(BaseModel):

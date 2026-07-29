@@ -14,7 +14,7 @@ const navItems = [
   { to: '/owners', label: 'Owners' },
   { to: '/transactions', label: 'Transactions' },
   { to: '/alerts', label: 'Alerts', showCount: true },
-  { to: '/data-import', label: 'Data import' },
+  { to: '/data-import', label: 'Data import', adminOnly: true },
   { to: '/ai', label: 'AI Query' },
 ];
 
@@ -29,6 +29,7 @@ function AppShellInner() {
     refetchInterval: 60_000,
   });
   const openAlerts = alertSummaryQuery.data?.open_count ?? 0;
+  const visibleNav = navItems.filter((item) => !item.adminOnly || isAdmin);
 
   return (
     <div className="min-h-screen lg:flex">
@@ -52,7 +53,7 @@ function AppShellInner() {
           </button>
         </div>
         <nav className="sidebar-nav">
-          {navItems.map((item) => (
+          {visibleNav.map((item) => (
             <NavLink
               key={item.to}
               to={item.to}

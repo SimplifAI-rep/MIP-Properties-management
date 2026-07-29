@@ -11,6 +11,8 @@ export interface OwnerSummary extends Owner {
   total_deposits: string;
   expense_count: number;
   total_expenses: string;
+  /** Company-float balance (Inflow − Expenses), summed across properties. */
+  balance: string;
 }
 
 export interface OwnerPropertySummary {
@@ -24,10 +26,13 @@ export interface OwnerPropertySummary {
   total_deposits: string;
   expense_count: number;
   total_expenses: string;
+  balance: string;
 }
 
 export interface OwnerDetail extends OwnerSummary {
   properties: OwnerPropertySummary[];
+  recent_deposits: Deposit[];
+  recent_expenses: Expense[];
 }
 
 export interface BankAccount {

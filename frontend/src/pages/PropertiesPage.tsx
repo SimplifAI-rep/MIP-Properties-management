@@ -1,10 +1,9 @@
-import { useState } from 'react';
+import { Fragment, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
 import { TransactionTable } from '../components/TransactionTable';
 import {
-  Card,
   EmptyState,
   ErrorState,
   formatCurrency,
@@ -13,13 +12,15 @@ import {
 } from '../components/ui/States';
 import { Tooltip } from '../components/ui/Tooltip';
 import { useFeedback } from '../context/FeedbackContext';
-import type { Property } from '../types';
+import type { Property, PropertyDetail } from '../types';
 import {
   ownerTransactionsState,
   propertyTransactionsState,
 } from '../utils/transactionsNav';
 import { depositToUnified } from '../utils/unifiedTransaction';
 import { getUserErrorMessage } from '../utils/errors';
+
+const PROPERTY_COL_COUNT = 8;
 
 function formatPropertyFeedback(property: Property): string {
   return [
@@ -31,7 +32,7 @@ function formatPropertyFeedback(property: Property): string {
     `Status: ${property.status}`,
     `Incoming: ${property.total_incoming ?? '0'}`,
     `Outgoing: ${property.total_outgoing ?? '0'}`,
-    `Net: ${property.net_balance ?? '0'}`,
+    `Balance: ${property.net_balance ?? '0'}`,
   ].join('\n');
 }
 
@@ -85,11 +86,158 @@ function PropertyStatusSelect({
   );
 }
 
+function PropertyExpandedDetails({
+  detail,
+  isLoading,
+  isError,
+  error,
+  statusError,
+  statusPending,
+  onStatusChange,
+  onNavigateTransactions,
+  onFeedback,
+}: {
+  detail: PropertyDetail | undefined;
+  isLoading: boolean;
+  isError: boolean;
+  error: unknown;
+  statusError: unknown;
+  statusPending: boolean;
+  onStatusChange: (status: 'active' | 'inactive') => void;
+  onNavigateTransactions: () => void;
+  onFeedback: (property: Property) => void;
+}) {
+  if (isLoading) {
+    return <LoadingState label="Loading property..." />;
+  }
+  if (isError || !detail) {
+    return (
+      <ErrorState
+        message="We couldn't load this property's details. Please try again."
+        error={error}
+        report={isError}
+      />
+    );
+  }
+
+  return (
+    <div className="space-y-4" onClick={(event) => event.stopPropagation()}>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-baseline gap-x-5 gap-y-1">
+            <h3 className="detail-title">{detail.name}</h3>
+            <span className="text-base text-slate-600 dark:text-slate-300">
+              Incoming:{' '}
+              <span className="amount-deposit text-lg font-semibold">
+                {formatCurrency(detail.total_incoming ?? '0')}
+              </span>
+            </span>
+            <span className="text-base text-slate-600 dark:text-slate-300">
+              Outgoing:{' '}
+              <span className="amount-expense text-lg font-semibold">
+                {formatCurrency(detail.total_outgoing ?? '0')}
+              </span>
+            </span>
+            <span
+              className={`text-lg font-semibold ${
+                Number(detail.net_balance ?? 0) >= 0 ? 'amount-deposit' : 'amount-expense'
+              }`}
+            >
+              Balance: {formatCurrency(detail.net_balance ?? '0')}
+            </span>
+          </div>
+          {detail.address ? <p className="muted-text">{detail.address}</p> : null}
+          <p className="mt-1 font-mono text-xs text-muted">Prop ID: {detail.client_prop_id}</p>
+          <div className="mt-2 flex flex-wrap items-center gap-3">
+            <Link
+              to="/transactions"
+              state={ownerTransactionsState(detail.owner_id)}
+              className="nav-text-link text-sm"
+            >
+              Owner: {detail.owner.name}
+            </Link>
+            <div>
+              <span className="label-text">Status</span>
+              <div className="mt-1">
+                <PropertyStatusSelect
+                  property={detail}
+                  disabled={statusPending}
+                  onChange={onStatusChange}
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Link
+            to="/transactions"
+            state={propertyTransactionsState(detail.id, detail.client_prop_id)}
+            className="btn-primary inline-flex"
+          >
+            View transactions
+          </Link>
+          <Tooltip content="Feedback" hideHint>
+            <button
+              type="button"
+              className="btn-icon"
+              onClick={() => onFeedback(detail)}
+              aria-label="Send feedback"
+            >
+              {feedbackIcon}
+            </button>
+          </Tooltip>
+        </div>
+      </div>
+
+      {statusError ? (
+        <InlineError
+          message={getUserErrorMessage(
+            statusError,
+            'Could not update property status. Please try again.',
+          )}
+          error={statusError}
+        />
+      ) : null}
+
+      <div>
+        <h4 className="subheading">
+          <Tooltip content="Bank accounts linked for deposit matching.">Bank accounts</Tooltip>
+        </h4>
+        <ul className="mt-2 flex flex-wrap gap-2 text-sm text-slate-600 dark:text-slate-300">
+          {detail.bank_accounts.length === 0 ? (
+            <li className="muted-text">No bank accounts linked.</li>
+          ) : (
+            detail.bank_accounts.map((account) => (
+              <li key={account.id} className="list-item-muted">
+                <p className="font-medium">{account.bank_name}</p>
+                <p>{account.account_number}</p>
+              </li>
+            ))
+          )}
+        </ul>
+      </div>
+
+      <div className="w-full min-w-0">
+        <h4 className="subheading">Recent deposits</h4>
+        <div className="mt-2 w-full min-w-0">
+          <TransactionTable
+            rows={(detail.recent_deposits ?? []).map(depositToUnified)}
+            emptyMessage="No recent deposits."
+            showActions={false}
+            onRowClick={onNavigateTransactions}
+            className="w-full overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-700"
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function PropertiesPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { openFeedback } = useFeedback();
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
   const [statusError, setStatusError] = useState<unknown>(null);
 
   const propertiesQuery = useQuery({
@@ -98,9 +246,9 @@ export function PropertiesPage() {
   });
 
   const detailQuery = useQuery({
-    queryKey: ['property', selectedId],
-    queryFn: () => api.getProperty(selectedId!),
-    enabled: !!selectedId,
+    queryKey: ['property', expandedId],
+    queryFn: () => api.getProperty(expandedId!),
+    enabled: !!expandedId,
   });
 
   const statusMutation = useMutation({
@@ -125,6 +273,11 @@ export function PropertiesPage() {
     statusMutation.mutate({ id: property.id, status });
   }
 
+  function toggleExpand(propertyId: string) {
+    setStatusError(null);
+    setExpandedId((current) => (current === propertyId ? null : propertyId));
+  }
+
   if (propertiesQuery.isLoading) return <LoadingState />;
   if (propertiesQuery.isError) {
     return (
@@ -142,302 +295,172 @@ export function PropertiesPage() {
       <div>
         <h2 className="page-heading">Properties</h2>
         <p className="page-desc">
-          View properties, company-float incoming/outgoing/net, and linked accounts. Click a row to
-          open filtered transactions.
+          View properties, company-float incoming/outgoing/balance, and linked accounts. Click a row
+          to open filtered transactions, or Details to expand under the row.
         </p>
       </div>
 
-      <div className="grid gap-6 xl:grid-cols-[2fr_1fr]">
-        <section className="panel overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="table-shell">
-              <thead className="table-head">
-                <tr>
-                  <th className="px-5 py-3 font-medium">
-                    <Tooltip content="Client property ID from the source files.">ID</Tooltip>
-                  </th>
-                  <th className="px-5 py-3 font-medium">Property</th>
-                  <th className="px-5 py-3 font-medium">Owner</th>
-                  <th className="px-5 py-3 font-medium">
-                    <Tooltip content="Company-float deposits (excludes rental income).">
-                      Incoming
-                    </Tooltip>
-                  </th>
-                  <th className="px-5 py-3 font-medium">
-                    <Tooltip content="Company-float expenses (excludes resident/owner paid).">
-                      Outgoing
-                    </Tooltip>
-                  </th>
-                  <th className="px-5 py-3 font-medium">
-                    <Tooltip content="Incoming minus outgoing.">Net</Tooltip>
-                  </th>
-                  <th className="px-5 py-3 font-medium">
-                    <Tooltip content="Set active or inactive. Data import also refreshes this from the current client list.">
-                      Status
-                    </Tooltip>
-                  </th>
-                  <th className="px-5 py-3 font-medium" />
-                </tr>
-              </thead>
-              <tbody>
-                {properties.map((property) => (
-                  <tr
-                    key={property.id}
-                    onClick={() =>
-                      navigate('/transactions', {
-                        state: propertyTransactionsState(property.id, property.client_prop_id),
-                      })
-                    }
-                    className={`table-row-link ${
-                      selectedId === property.id ? 'table-row-selected' : ''
-                    }`}
-                  >
-                    <td className="px-5 py-3 font-mono text-xs">{property.client_prop_id}</td>
-                    <td className="px-5 py-3 font-medium">
-                      {property.name}
-                      {property.city ? (
-                        <span className="mt-0.5 block text-xs font-normal opacity-70">
-                          {property.city}
-                        </span>
-                      ) : null}
-                    </td>
-                    <td
-                      className="px-5 py-3"
-                      onClick={(event) => {
-                        event.stopPropagation();
+      <section className="panel overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="table-shell">
+            <thead className="table-head">
+              <tr>
+                <th className="px-5 py-3 font-medium">
+                  <Tooltip content="Client property ID from the source files.">ID</Tooltip>
+                </th>
+                <th className="px-5 py-3 font-medium">Property</th>
+                <th className="px-5 py-3 font-medium">Owner</th>
+                <th className="px-5 py-3 font-medium">
+                  <Tooltip content="Company-float deposits (excludes rental income).">
+                    Incoming
+                  </Tooltip>
+                </th>
+                <th className="px-5 py-3 font-medium">
+                  <Tooltip content="Company-float expenses (excludes resident/owner paid).">
+                    Outgoing
+                  </Tooltip>
+                </th>
+                <th className="px-5 py-3 font-medium">
+                  <Tooltip content="Same as Transactions Balance: Inflow − Expenses. Rental income and He/She paid are excluded.">
+                    Balance
+                  </Tooltip>
+                </th>
+                <th className="px-5 py-3 font-medium">
+                  <Tooltip content="Set active or inactive. Data import also refreshes this from the current client list.">
+                    Status
+                  </Tooltip>
+                </th>
+                <th className="px-5 py-3 font-medium" />
+              </tr>
+            </thead>
+            <tbody>
+              {properties.map((property) => {
+                const expanded = expandedId === property.id;
+                return (
+                  <Fragment key={property.id}>
+                    <tr
+                      onClick={() =>
                         navigate('/transactions', {
-                          state: ownerTransactionsState(property.owner_id),
-                        });
-                      }}
+                          state: propertyTransactionsState(property.id, property.client_prop_id),
+                        })
+                      }
+                      className={`table-row-link ${expanded ? 'table-row-selected' : ''}`}
                     >
-                      <span className="nav-text-link">{property.owner_name}</span>
-                    </td>
-                    <td className="px-5 py-3 amount-deposit">
-                      {formatCurrency(property.total_incoming ?? '0')}
-                    </td>
-                    <td className="px-5 py-3 amount-expense">
-                      {formatCurrency(property.total_outgoing ?? '0')}
-                    </td>
-                    <td
-                      className={`px-5 py-3 font-medium ${
-                        Number(property.net_balance ?? 0) >= 0
-                          ? 'amount-deposit'
-                          : 'amount-expense'
-                      }`}
-                    >
-                      {formatCurrency(property.net_balance ?? '0')}
-                    </td>
-                    <td className="px-5 py-3" onClick={(event) => event.stopPropagation()}>
-                      <PropertyStatusSelect
-                        property={property}
-                        disabled={statusMutation.isPending}
-                        onChange={(status) => setStatus(property, status)}
-                      />
-                    </td>
-                    <td className="px-5 py-3">
-                      <div className="flex flex-nowrap items-center gap-1.5 whitespace-nowrap">
-                        <button
-                          type="button"
-                          className="btn-secondary shrink-0 text-xs"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            setSelectedId(property.id);
-                          }}
-                        >
-                          Details
-                        </button>
-                        <Tooltip content="Feedback" hideHint className="inline-flex shrink-0">
+                      <td className="px-5 py-3 font-mono text-xs">{property.client_prop_id}</td>
+                      <td className="px-5 py-3 font-medium">
+                        {property.name}
+                        {property.city ? (
+                          <span className="mt-0.5 block text-xs font-normal opacity-70">
+                            {property.city}
+                          </span>
+                        ) : null}
+                      </td>
+                      <td
+                        className="px-5 py-3"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          navigate('/transactions', {
+                            state: ownerTransactionsState(property.owner_id),
+                          });
+                        }}
+                      >
+                        <span className="nav-text-link">{property.owner_name}</span>
+                      </td>
+                      <td className="px-5 py-3 amount-deposit">
+                        {formatCurrency(property.total_incoming ?? '0')}
+                      </td>
+                      <td className="px-5 py-3 amount-expense">
+                        {formatCurrency(property.total_outgoing ?? '0')}
+                      </td>
+                      <td
+                        className={`px-5 py-3 font-medium ${
+                          Number(property.net_balance ?? 0) >= 0
+                            ? 'amount-deposit'
+                            : 'amount-expense'
+                        }`}
+                      >
+                        {formatCurrency(property.net_balance ?? '0')}
+                      </td>
+                      <td className="px-5 py-3" onClick={(event) => event.stopPropagation()}>
+                        <PropertyStatusSelect
+                          property={property}
+                          disabled={statusMutation.isPending}
+                          onChange={(status) => setStatus(property, status)}
+                        />
+                      </td>
+                      <td className="px-5 py-3">
+                        <div className="flex flex-nowrap items-center gap-1.5 whitespace-nowrap">
                           <button
                             type="button"
-                            className="btn-icon"
+                            className="btn-secondary shrink-0 text-xs"
+                            aria-expanded={expanded}
                             onClick={(event) => {
                               event.stopPropagation();
-                              openFeedback({
-                                initialMessage: formatPropertyFeedback(property),
-                              });
+                              toggleExpand(property.id);
                             }}
-                            aria-label="Send feedback"
                           >
-                            {feedbackIcon}
+                            {expanded ? 'Close' : 'Details'}
                           </button>
-                        </Tooltip>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                          <Tooltip content="Feedback" hideHint className="inline-flex shrink-0">
+                            <button
+                              type="button"
+                              className="btn-icon"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                openFeedback({
+                                  initialMessage: formatPropertyFeedback(property),
+                                });
+                              }}
+                              aria-label="Send feedback"
+                            >
+                              {feedbackIcon}
+                            </button>
+                          </Tooltip>
+                        </div>
+                      </td>
+                    </tr>
+                    {expanded ? (
+                      <tr className="bg-slate-50/80 dark:bg-slate-900/40">
+                        <td colSpan={PROPERTY_COL_COUNT} className="w-full px-5 py-4">
+                          <PropertyExpandedDetails
+                            detail={detailQuery.data}
+                            isLoading={detailQuery.isLoading}
+                            isError={detailQuery.isError}
+                            error={detailQuery.error}
+                            statusError={statusError}
+                            statusPending={statusMutation.isPending}
+                            onStatusChange={(status) => {
+                              if (detailQuery.data) setStatus(detailQuery.data, status);
+                            }}
+                            onNavigateTransactions={() =>
+                              navigate('/transactions', {
+                                state: propertyTransactionsState(
+                                  property.id,
+                                  property.client_prop_id,
+                                ),
+                              })
+                            }
+                            onFeedback={(item) =>
+                              openFeedback({
+                                initialMessage: formatPropertyFeedback(item),
+                              })
+                            }
+                          />
+                        </td>
+                      </tr>
+                    ) : null}
+                  </Fragment>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        {properties.length === 0 ? (
+          <div className="p-5">
+            <EmptyState message="No properties found. Import client Excel data from Data import." />
           </div>
-          {properties.length === 0 ? (
-            <div className="p-5">
-              <EmptyState message="No properties found. Import client Excel data from Data import." />
-            </div>
-          ) : null}
-        </section>
-
-        <aside className="panel-padded">
-          {!selectedId ? (
-            <p className="muted-text">
-              Click a row to open transactions, or Details to preview here.
-            </p>
-          ) : detailQuery.isLoading ? (
-            <LoadingState label="Loading property..." />
-          ) : detailQuery.isError || !detailQuery.data ? (
-            <ErrorState
-              message="We couldn't load this property's details. Please try again."
-              error={detailQuery.error}
-              report={detailQuery.isError}
-            />
-          ) : (
-            <div className="space-y-4">
-              <div>
-                <h3 className="detail-title">{detailQuery.data.name}</h3>
-                <p className="muted-text">{detailQuery.data.address}</p>
-                <p className="mt-1 font-mono text-xs text-muted">
-                  Prop ID: {detailQuery.data.client_prop_id}
-                </p>
-                <div className="mt-2">
-                  <span className="label-text">Status</span>
-                  <div className="mt-1">
-                    <PropertyStatusSelect
-                      property={detailQuery.data}
-                      disabled={statusMutation.isPending}
-                      onChange={(status) => setStatus(detailQuery.data, status)}
-                    />
-                  </div>
-                </div>
-              </div>
-              {statusError ? (
-                <InlineError
-                  message={getUserErrorMessage(
-                    statusError,
-                    'Could not update property status. Please try again.',
-                  )}
-                  error={statusError}
-                />
-              ) : null}
-              <div className="flex flex-wrap gap-2">
-                <Link
-                  to="/transactions"
-                  state={propertyTransactionsState(
-                    detailQuery.data.id,
-                    detailQuery.data.client_prop_id,
-                  )}
-                  className="btn-primary inline-flex"
-                >
-                  View transactions
-                </Link>
-                <Tooltip content="Feedback" hideHint>
-                  <button
-                    type="button"
-                    className="btn-icon"
-                    onClick={() =>
-                      openFeedback({
-                        initialMessage: formatPropertyFeedback(detailQuery.data),
-                      })
-                    }
-                    aria-label="Send feedback"
-                  >
-                    {feedbackIcon}
-                  </button>
-                </Tooltip>
-              </div>
-              <Link
-                to="/transactions"
-                state={ownerTransactionsState(detailQuery.data.owner_id)}
-                className="block"
-              >
-                <Card title="Owner" value={detailQuery.data.owner.name} />
-              </Link>
-              <div className="grid gap-3 sm:grid-cols-1">
-                <Link
-                  to="/transactions"
-                  state={propertyTransactionsState(
-                    detailQuery.data.id,
-                    detailQuery.data.client_prop_id,
-                    null,
-                    'deposit',
-                  )}
-                  className="block"
-                >
-                  <Card
-                    title="Incoming"
-                    value={formatCurrency(detailQuery.data.total_incoming ?? '0')}
-                    tooltip="Company-float deposits (excludes rental income)."
-                  />
-                </Link>
-                <Link
-                  to="/transactions"
-                  state={propertyTransactionsState(
-                    detailQuery.data.id,
-                    detailQuery.data.client_prop_id,
-                    null,
-                    'expense',
-                  )}
-                  className="block"
-                >
-                  <Card
-                    title="Outgoing"
-                    value={formatCurrency(detailQuery.data.total_outgoing ?? '0')}
-                    tooltip="Company-float expenses (excludes resident/owner paid)."
-                  />
-                </Link>
-                <Link
-                  to="/transactions"
-                  state={propertyTransactionsState(
-                    detailQuery.data.id,
-                    detailQuery.data.client_prop_id,
-                  )}
-                  className="block"
-                >
-                  <Card
-                    title="Net"
-                    value={formatCurrency(detailQuery.data.net_balance ?? '0')}
-                    tooltip="Incoming minus outgoing."
-                  />
-                </Link>
-              </div>
-              <div>
-                <h4 className="subheading">
-                  <Tooltip content="Bank accounts linked for deposit matching.">
-                    Bank Accounts
-                  </Tooltip>
-                </h4>
-                <ul className="mt-2 space-y-2 text-sm text-slate-600 dark:text-slate-300">
-                  {detailQuery.data.bank_accounts.length === 0 ? (
-                    <li className="muted-text">No bank accounts linked.</li>
-                  ) : (
-                    detailQuery.data.bank_accounts.map((account) => (
-                      <li key={account.id} className="list-item-muted">
-                        <p className="font-medium">{account.bank_name}</p>
-                        <p>{account.account_number}</p>
-                      </li>
-                    ))
-                  )}
-                </ul>
-              </div>
-              <div>
-                <h4 className="subheading">Recent Deposits</h4>
-                <div className="mt-2">
-                  <TransactionTable
-                    rows={detailQuery.data.recent_deposits.map(depositToUnified)}
-                    emptyMessage="No recent deposits."
-                    onRowClick={() =>
-                      navigate('/transactions', {
-                        state: propertyTransactionsState(
-                          detailQuery.data.id,
-                          detailQuery.data.client_prop_id,
-                        ),
-                      })
-                    }
-                    className="overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-700"
-                  />
-                </div>
-              </div>
-            </div>
-          )}
-        </aside>
-      </div>
+        ) : null}
+      </section>
     </div>
   );
 }

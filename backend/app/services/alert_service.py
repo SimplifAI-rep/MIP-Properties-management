@@ -48,16 +48,54 @@ def _incomplete_deposit_key(deposit_id: UUID) -> str:
     return f"incomplete_import:deposit:{deposit_id}"
 
 
-def _missing_fields_message(reasons: str | None, tx_date: date | None, amount: Decimal) -> str:
-    parts: list[str] = []
+def _incomplete_reason_keys(
+    reasons: str | None, tx_date: date | None, amount: Decimal
+) -> list[str]:
     reason_set = {r.strip() for r in (reasons or "").split(",") if r.strip()}
+    keys: list[str] = []
     if "missing_date" in reason_set or tx_date is None:
-        parts.append("missing date")
-    if "no_money_columns" in reason_set or amount <= 0:
-        parts.append("missing amount")
-    if not parts:
-        parts.append("needs review")
-    return "Incomplete import: " + " and ".join(parts)
+        keys.append("missing_date")
+    if (
+        "no_money_columns" in reason_set
+        or "missing_amount" in reason_set
+        or amount <= 0
+    ):
+        keys.append("missing_amount")
+    for reason in sorted(reason_set):
+        if reason in {"missing_date", "no_money_columns", "missing_amount"}:
+            continue
+        if reason not in keys:
+            keys.append(reason)
+    if not keys:
+        keys.append("needs_review")
+    return keys
+
+
+_REASON_LABELS = {
+    "missing_date": "Missing date",
+    "missing_amount": "Missing amount",
+    "needs_review": "Needs review",
+}
+
+
+def _reason_label(key: str) -> str:
+    return _REASON_LABELS.get(key, key.replace("_", " "))
+
+
+def _missing_fields_title(reasons: str | None, tx_date: date | None, amount: Decimal) -> str:
+    return " · ".join(
+        _reason_label(key) for key in _incomplete_reason_keys(reasons, tx_date, amount)
+    )
+
+
+def _missing_fields_message(
+    reasons: str | None, tx_date: date | None, amount: Decimal
+) -> str:
+    parts = [
+        _reason_label(key).lower()
+        for key in _incomplete_reason_keys(reasons, tx_date, amount)
+    ]
+    return "Imported row needs review: " + " and ".join(parts)
 
 
 def list_alerts(db: Session) -> AlertListResponse:
@@ -164,12 +202,16 @@ def list_alerts(db: Session) -> AlertListResponse:
         if alert_id in closed_keys:
             continue
         prop = expense.property
+        prop_label = prop.client_prop_id if prop else "Unknown"
+        reason_title = _missing_fields_title(
+            expense.review_reasons, expense.transaction_date, expense.amount
+        )
         alerts.append(
             AlertRead(
                 id=alert_id,
                 alert_type="incomplete_import",
                 severity="warning",
-                title=f"Incomplete expense — {prop.client_prop_id if prop else 'Unknown'}",
+                title=f"{reason_title} — {prop_label}",
                 message=_missing_fields_message(
                     expense.review_reasons, expense.transaction_date, expense.amount
                 ),
@@ -199,12 +241,16 @@ def list_alerts(db: Session) -> AlertListResponse:
         if alert_id in closed_keys:
             continue
         prop = deposit.property
+        prop_label = prop.client_prop_id if prop else "Unknown"
+        reason_title = _missing_fields_title(
+            deposit.review_reasons, deposit.transaction_date, deposit.amount
+        )
         alerts.append(
             AlertRead(
                 id=alert_id,
                 alert_type="incomplete_import",
                 severity="warning",
-                title=f"Incomplete deposit — {prop.client_prop_id if prop else 'Unknown'}",
+                title=f"{reason_title} — {prop_label}",
                 message=_missing_fields_message(
                     deposit.review_reasons, deposit.transaction_date, deposit.amount
                 ),

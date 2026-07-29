@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { AppShell } from './components/layout/AppShell';
+import { RequireAdmin } from './components/RequireAdmin';
 import { ThemeProvider } from './context/ThemeContext';
 import { AuthProvider } from './context/AuthContext';
 import { AIQueryPage } from './pages/AIQueryPage';
@@ -33,7 +34,14 @@ export default function App() {
                 <Route path="owners" element={<OwnersPage />} />
                 <Route path="transactions" element={<TransactionsPage />} />
                 <Route path="alerts" element={<AlertsPage />} />
-                <Route path="data-import" element={<DataImportPage />} />
+                <Route
+                  path="data-import"
+                  element={
+                    <RequireAdmin>
+                      <DataImportPage />
+                    </RequireAdmin>
+                  }
+                />
                 <Route path="ai" element={<AIQueryPage />} />
                 <Route path="*" element={<Navigate to="/" replace />} />
               </Route>

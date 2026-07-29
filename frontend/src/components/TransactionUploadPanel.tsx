@@ -8,6 +8,7 @@ import {
   PAYMENT_METHODS,
 } from '../constants/expenseOptions';
 import { DateInputDMY } from './ui/DateInputDMY';
+import { FileField } from './ui/FileField';
 import { formatCurrency, formatDate, InlineError } from './ui/States';
 import { Tooltip } from './ui/Tooltip';
 import { validationError } from '../utils/errors';
@@ -361,16 +362,14 @@ export function TransactionUploadPanel({ properties, onClose }: TransactionUploa
               className={`text-sm ${statementMode ? 'md:col-span-2' : 'md:col-span-2 xl:col-span-1'}`}
             >
               <span className="label-text">File</span>
-              <input
-                type="file"
+              <FileField
                 accept={
                   statementMode
                     ? '.xlsx,.xls'
                     : '.xlsx,.xls,.csv,.pdf,.png,.jpg,.jpeg,.webp'
                 }
-                className="field"
-                onChange={(event) => {
-                  const next = event.target.files?.[0] ?? null;
+                file={file}
+                onChange={(next) => {
                   setFile(next);
                   if (
                     next &&

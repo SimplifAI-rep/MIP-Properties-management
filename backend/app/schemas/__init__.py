@@ -21,6 +21,8 @@ class OwnerSummary(OwnerRead):
     total_deposits: Decimal = Decimal("0")
     expense_count: int = 0
     total_expenses: Decimal = Decimal("0")
+    # Company-float balance (Inflow − Expenses), summed across properties
+    balance: Decimal = Decimal("0")
 
 
 class OwnerPropertySummary(BaseModel):
@@ -36,10 +38,13 @@ class OwnerPropertySummary(BaseModel):
     total_deposits: Decimal = Decimal("0")
     expense_count: int = 0
     total_expenses: Decimal = Decimal("0")
+    balance: Decimal = Decimal("0")
 
 
 class OwnerDetail(OwnerSummary):
     properties: list[OwnerPropertySummary] = Field(default_factory=list)
+    recent_deposits: list["DepositRead"] = Field(default_factory=list)
+    recent_expenses: list["ExpenseRead"] = Field(default_factory=list)
 
 
 class BankAccountRead(BaseModel):

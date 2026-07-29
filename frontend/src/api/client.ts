@@ -20,6 +20,9 @@ import type {
   AlertSummary,
   AlertResolveRequest,
   AlertItem,
+  AlertRule,
+  AlertRuleCreate,
+  AlertRuleUpdate,
   FixIncompletePayload,
   FixIncompleteResponse,
   ClientDataStatusResponse,
@@ -368,6 +371,23 @@ export const api = {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
+    }),
+  getAlertRules: () => request<AlertRule[]>('/alert-rules'),
+  createAlertRule: (payload: AlertRuleCreate) =>
+    request<AlertRule>('/alert-rules', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }),
+  updateAlertRule: (ruleId: string, payload: AlertRuleUpdate) =>
+    request<AlertRule>(`/alert-rules/${ruleId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }),
+  deleteAlertRule: (ruleId: string) =>
+    request<void>(`/alert-rules/${ruleId}`, {
+      method: 'DELETE',
     }),
   getClientDataStatus: () => request<ClientDataStatusResponse>('/imports/client-data/status'),
   getClientDataSkipReportUrl: (reportId: string) =>

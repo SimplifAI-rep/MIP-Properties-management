@@ -15,6 +15,7 @@ const navItems = [
   { to: '/transactions', label: 'Transactions' },
   { to: '/alerts', label: 'Alerts', showCount: true },
   { to: '/data-import', label: 'Data import', adminOnly: true },
+  { to: '/admin/alert-rules', label: 'Alert rules', adminOnly: true },
   { to: '/ai', label: 'AI Query' },
 ];
 

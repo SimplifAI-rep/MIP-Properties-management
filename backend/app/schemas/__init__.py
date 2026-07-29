@@ -434,6 +434,7 @@ class AlertRead(BaseModel):
         "upload_pending",
         "duplicate_deposit",
         "incomplete_import",
+        "low_balance",
     ]
     severity: Literal["error", "warning", "info"]
     title: str
@@ -447,6 +448,7 @@ class AlertRead(BaseModel):
     deposit_id: UUID | None = None
     transaction_date: date | None = None
     amount: Decimal | None = None
+    threshold_amount: Decimal | None = None
     section: str | None = None
     notes: str | None = None
     review_reasons: str | None = None
@@ -480,4 +482,41 @@ class AlertResolveRequest(BaseModel):
     deposit: DepositCreate | None = None
     drafts: list[TransactionDraft] | None = None
     fix_incomplete: FixIncompletePayload | None = None
+
+
+class AlertRuleRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    rule_type: Literal["low_balance"]
+    name: str
+    enabled: bool
+    severity: Literal["error", "warning", "info"]
+    scope_type: Literal["global", "property"]
+    property_id: UUID | None = None
+    property_name: str | None = None
+    client_prop_id: str | None = None
+    threshold_amount: Decimal
+    currency: str
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+class AlertRuleCreate(BaseModel):
+    rule_type: Literal["low_balance"] = "low_balance"
+    name: str = Field(min_length=1, max_length=255)
+    enabled: bool = True
+    severity: Literal["error", "warning", "info"] = "warning"
+    scope_type: Literal["global", "property"]
+    property_id: UUID | None = None
+    threshold_amount: Decimal
+    currency: str = "ILS"
+
+
+class AlertRuleUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    enabled: bool | None = None
+    severity: Literal["error", "warning", "info"] | None = None
+    threshold_amount: Decimal | None = None
+    currency: str | None = None
 

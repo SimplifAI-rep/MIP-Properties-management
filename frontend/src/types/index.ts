@@ -406,7 +406,12 @@ export interface DepositCreate {
 
 export interface AlertItem {
   id: string;
-  alert_type: 'missing_deposit' | 'upload_pending' | 'duplicate_deposit' | 'incomplete_import';
+  alert_type:
+    | 'missing_deposit'
+    | 'upload_pending'
+    | 'duplicate_deposit'
+    | 'incomplete_import'
+    | 'low_balance';
   severity: 'error' | 'warning' | 'info';
   title: string;
   message: string;
@@ -419,6 +424,7 @@ export interface AlertItem {
   deposit_id?: string | null;
   transaction_date?: string | null;
   amount?: string | null;
+  threshold_amount?: string | null;
   section?: string | null;
   notes?: string | null;
   review_reasons?: string | null;
@@ -438,6 +444,41 @@ export interface AlertSummary {
   open_count: number;
   error_count: number;
   warning_count: number;
+}
+
+export interface AlertRule {
+  id: string;
+  rule_type: 'low_balance';
+  name: string;
+  enabled: boolean;
+  severity: 'error' | 'warning' | 'info';
+  scope_type: 'global' | 'property';
+  property_id?: string | null;
+  property_name?: string | null;
+  client_prop_id?: string | null;
+  threshold_amount: string;
+  currency: string;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface AlertRuleCreate {
+  rule_type?: 'low_balance';
+  name: string;
+  enabled?: boolean;
+  severity?: 'error' | 'warning' | 'info';
+  scope_type: 'global' | 'property';
+  property_id?: string | null;
+  threshold_amount: string;
+  currency?: string;
+}
+
+export interface AlertRuleUpdate {
+  name?: string;
+  enabled?: boolean;
+  severity?: 'error' | 'warning' | 'info';
+  threshold_amount?: string;
+  currency?: string;
 }
 
 export interface FixIncompletePayload {

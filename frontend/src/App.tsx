@@ -5,6 +5,7 @@ import { RequireAdmin } from './components/RequireAdmin';
 import { ThemeProvider } from './context/ThemeContext';
 import { AuthProvider } from './context/AuthContext';
 import { AIQueryPage } from './pages/AIQueryPage';
+import { AlertRulesPage } from './pages/AlertRulesPage';
 import { AlertsPage } from './pages/AlertsPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { DataImportPage } from './pages/DataImportPage';
@@ -39,6 +40,14 @@ export default function App() {
                   element={
                     <RequireAdmin>
                       <DataImportPage />
+                    </RequireAdmin>
+                  }
+                />
+                <Route
+                  path="admin/alert-rules"
+                  element={
+                    <RequireAdmin>
+                      <AlertRulesPage />
                     </RequireAdmin>
                   }
                 />

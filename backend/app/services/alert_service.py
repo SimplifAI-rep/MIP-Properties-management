@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
 
 from app.models.alert_action import AlertAction
+from app.models.alert_rule import AlertRule
 from app.models.deposit import Deposit
 from app.models.expense import Expense
 from app.models.owner import Owner
@@ -25,6 +26,7 @@ from app.schemas import (
 )
 from app.services.deposit_query import create_deposit, find_deposit_gaps
 from app.services.document_import import DocumentImportService
+from app.services.running_balance import property_float_totals
 
 
 def _load_closed_keys(db: Session) -> set[str]:
@@ -46,6 +48,96 @@ def _incomplete_expense_key(expense_id: UUID) -> str:
 
 def _incomplete_deposit_key(deposit_id: UUID) -> str:
     return f"incomplete_import:deposit:{deposit_id}"
+
+
+def _low_balance_key(property_id: UUID) -> str:
+    return f"low_balance:{property_id}"
+
+
+def _clear_recovered_low_balance_dismissals(
+    db: Session,
+    *,
+    property_ids_above: list[UUID],
+) -> None:
+    """If balance recovered above threshold, allow the alert to fire again later."""
+    if not property_ids_above:
+        return
+    keys = [_low_balance_key(pid) for pid in property_ids_above]
+    rows = db.scalars(select(AlertAction).where(AlertAction.alert_key.in_(keys))).all()
+    if not rows:
+        return
+    for row in rows:
+        db.delete(row)
+    db.commit()
+
+
+def _append_low_balance_alerts(
+    db: Session,
+    alerts: list[AlertRead],
+    closed_keys: set[str],
+) -> None:
+    rules = db.scalars(
+        select(AlertRule).where(
+            AlertRule.rule_type == "low_balance",
+            AlertRule.enabled.is_(True),
+        )
+    ).all()
+    if not rules:
+        return
+
+    global_rule = next((r for r in rules if r.scope_type == "global"), None)
+    property_rules = {
+        r.property_id: r for r in rules if r.scope_type == "property" and r.property_id
+    }
+    if not global_rule and not property_rules:
+        return
+
+    props = db.scalars(
+        select(Property).options(joinedload(Property.owner)).order_by(Property.client_prop_id)
+    ).unique().all()
+    if not props:
+        return
+
+    floats = property_float_totals(db, [p.id for p in props])
+    recovered: list[UUID] = []
+
+    for prop in props:
+        rule = property_rules.get(prop.id) or global_rule
+        if rule is None:
+            continue
+        totals = floats.get(prop.id)
+        balance = totals.net if totals else Decimal("0.00")
+        threshold = Decimal(str(rule.threshold_amount)).quantize(Decimal("0.01"))
+        if balance >= threshold:
+            recovered.append(prop.id)
+            continue
+
+        alert_id = _low_balance_key(prop.id)
+        if alert_id in closed_keys:
+            continue
+
+        alerts.append(
+            AlertRead(
+                id=alert_id,
+                alert_type="low_balance",
+                severity=rule.severity,  # type: ignore[arg-type]
+                title=f"Low balance — {prop.client_prop_id}",
+                message=(
+                    f"Company-float balance {balance} {rule.currency} is under the "
+                    f"threshold of {threshold} {rule.currency}."
+                ),
+                property_id=prop.id,
+                property_name=prop.name,
+                owner_name=prop.owner.name if prop.owner else None,
+                amount=balance,
+                threshold_amount=threshold,
+                created_at=None,
+            )
+        )
+
+    _clear_recovered_low_balance_dismissals(db, property_ids_above=recovered)
+    # Refresh closed keys after cleanup is not needed for this pass; recovered
+    # properties were already skipped for alert creation.
 
 
 def _incomplete_reason_keys(
@@ -267,6 +359,8 @@ def list_alerts(db: Session) -> AlertListResponse:
                 created_at=deposit.created_at,
             )
         )
+
+    _append_low_balance_alerts(db, alerts, closed_keys)
 
     alerts.sort(
         key=lambda alert: (

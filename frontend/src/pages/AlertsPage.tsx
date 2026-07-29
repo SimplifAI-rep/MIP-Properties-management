@@ -33,6 +33,7 @@ const REASON_LABELS: Record<string, string> = {
 
 const ALERT_TYPE_OPTIONS: { value: AlertTypeFilter; label: string }[] = [
   { value: 'missing_deposit', label: 'Missing deposit' },
+  { value: 'low_balance', label: 'Low balance' },
   { value: 'missing_date', label: 'Missing date' },
   { value: 'missing_amount', label: 'Missing amount' },
   { value: 'needs_review', label: 'Needs review' },
@@ -105,6 +106,7 @@ function typeLabel(alert: AlertItem): string {
     return incompleteReasonKeys(alert).map(reasonLabel).join(' · ');
   }
   if (alert.alert_type === 'missing_deposit') return 'Missing deposit';
+  if (alert.alert_type === 'low_balance') return 'Low balance';
   if (alert.alert_type === 'duplicate_deposit') return 'Possible duplicate';
   return 'Upload review';
 }
@@ -497,7 +499,7 @@ export function AlertsPage() {
       <section className="filter-panel shrink-0 md:grid-cols-2 xl:grid-cols-3">
         <SearchableMultiSelect
           label="Type"
-          tip="Missing deposit, missing date/amount, duplicate, or upload review."
+          tip="Missing deposit, low balance, missing date/amount, duplicate, or upload review."
           options={ALERT_TYPE_OPTIONS}
           selected={types}
           onChange={(next) => setTypes(next as AlertTypeFilter[])}
@@ -582,7 +584,7 @@ export function AlertsPage() {
                       </Tooltip>
                     </th>
                     <th className="px-3 py-3 font-medium">
-                      <Tooltip content="Missing deposit, missing date/amount, duplicate, or upload review.">
+                      <Tooltip content="Missing deposit, low balance, missing date/amount, duplicate, or upload review.">
                         Type
                       </Tooltip>
                     </th>
@@ -655,7 +657,50 @@ export function AlertsPage() {
                 <p className="mt-1 text-sm text-muted">{selectedAlert.message}</p>
               </div>
 
-              {selectedAlert.alert_type === 'incomplete_import' ? (
+              {selectedAlert.alert_type === 'low_balance' ? (
+                <div className="space-y-4">
+                  <dl className="grid gap-2 text-sm sm:grid-cols-2">
+                    <div>
+                      <dt className="label-text">Property</dt>
+                      <dd>{selectedAlert.property_name ?? '—'}</dd>
+                    </div>
+                    <div>
+                      <dt className="label-text">Owner</dt>
+                      <dd>{selectedAlert.owner_name ?? '—'}</dd>
+                    </div>
+                    <div>
+                      <dt className="label-text">Current balance</dt>
+                      <dd
+                        className={
+                          Number(selectedAlert.amount ?? 0) >= 0
+                            ? 'amount-deposit font-medium'
+                            : 'amount-expense font-medium'
+                        }
+                      >
+                        {formatCurrency(selectedAlert.amount ?? '0')}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="label-text">Threshold</dt>
+                      <dd className="font-medium">
+                        {formatCurrency(selectedAlert.threshold_amount ?? '0')}
+                      </dd>
+                    </div>
+                  </dl>
+                  <p className="text-sm text-muted">
+                    Dismiss hides this alert until the balance recovers above the threshold (or the
+                    rule changes).
+                  </p>
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    disabled={dismissMutation.isPending}
+                    onClick={() => dismissMutation.mutate(selectedAlert.id)}
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              ) : selectedAlert.alert_type === 'incomplete_import' ? (
                 <form
                   className="grid gap-3"
                   onSubmit={(event) => {

@@ -12,6 +12,7 @@ import { DataImportPage } from './pages/DataImportPage';
 import { TransactionsPage } from './pages/TransactionsPage';
 import { OwnersPage } from './pages/OwnersPage';
 import { PropertiesPage } from './pages/PropertiesPage';
+import { ReportsPage } from './pages/ReportsPage';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -35,6 +36,7 @@ export default function App() {
                 <Route path="owners" element={<OwnersPage />} />
                 <Route path="transactions" element={<TransactionsPage />} />
                 <Route path="alerts" element={<AlertsPage />} />
+                <Route path="reports" element={<ReportsPage />} />
                 <Route
                   path="data-import"
                   element={

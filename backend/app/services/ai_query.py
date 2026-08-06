@@ -21,6 +21,7 @@ from app.models.property import Property
 from app.schemas import AIQueryFilters, AIQueryResponse, DepositQueryIntent, PeriodRange
 from app.services.deposit_query import find_deposit_gaps, list_deposits
 from app.services.expense_query import list_expenses
+from app.services.transaction_view import normalize_transaction_row
 
 logger = logging.getLogger(__name__)
 
@@ -514,51 +515,7 @@ class AIQueryService:
         )
 
     def _normalize_transaction_row(self, kind: str, item: dict) -> dict:
-        source = item.get("source")
-        if kind == "expense":
-            section = item.get("category") or "other"
-            notes = item.get("notes")
-            if notes is None:
-                desc = (item.get("description") or "").strip()
-                section_str = str(section).strip()
-                if desc and section_str and desc.lower().startswith(section_str.lower()):
-                    rest = desc[len(section_str) :].lstrip(" |").strip()
-                    notes = rest or None
-                else:
-                    notes = desc or None
-        else:
-            if item.get("is_rental_income"):
-                section = "Rental income"
-            else:
-                section = (source or "Inflow").replace("_", " ")
-            notes = item.get("description") or item.get("notes")
-        return {
-            "kind": kind,
-            "id": item.get("id"),
-            "property_id": item.get("property_id"),
-            "transaction_date": item.get("transaction_date"),
-            "amount": item.get("amount"),
-            "currency": item.get("currency") or "ILS",
-            "client_prop_id": item.get("client_prop_id"),
-            "property_name": item.get("property_name"),
-            "owner_name": item.get("owner_name"),
-            "section": section,
-            "notes": notes,
-            "company": item.get("vendor_name") or item.get("company"),
-            "payment_method": item.get("payment_method"),
-            "source": source,
-            "receipt_ref": item.get("receipt_ref"),
-            "source_file": item.get("source_file"),
-            "balance_after": item.get("balance_after"),
-            "needs_review": item.get("needs_review"),
-            "review_reasons": item.get("review_reasons"),
-            "is_rental_income": item.get("is_rental_income"),
-            "paid_by_resident": item.get("paid_by_resident"),
-            "paid_by_owner": item.get("paid_by_owner"),
-            "paid_by_company": item.get("paid_by_company"),
-            "ledger_column": item.get("ledger_column"),
-            "from_bank_statement": source == "bank_statement",
-        }
+        return normalize_transaction_row(kind, item)
 
     def _execute_transactions_list(self, intent: DepositQueryIntent) -> list[dict]:
         deposits = self._execute_list(intent)

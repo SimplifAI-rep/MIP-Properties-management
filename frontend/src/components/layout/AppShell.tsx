@@ -1,12 +1,13 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../api/client';
 import { AdminLoginModal } from '../AdminLoginModal';
 import { useAuth } from '../../context/AuthContext';
 import { FeedbackProvider, useFeedback } from '../../context/FeedbackContext';
 import { useTheme } from '../../context/ThemeContext';
 import { Tooltip } from '../ui/Tooltip';
+import { prefetchTransactionsData } from '../../utils/prefetchTransactions';
 
 const navItems = [
   { to: '/', label: 'Dashboard', end: true },
@@ -24,6 +25,7 @@ function AppShellInner() {
   const { theme, toggleTheme } = useTheme();
   const { openFeedback } = useFeedback();
   const { isAdmin } = useAuth();
+  const queryClient = useQueryClient();
   const [adminOpen, setAdminOpen] = useState(false);
   const alertSummaryQuery = useQuery({
     queryKey: ['alert-summary'],
@@ -32,6 +34,10 @@ function AppShellInner() {
   });
   const openAlerts = alertSummaryQuery.data?.open_count ?? 0;
   const visibleNav = navItems.filter((item) => !item.adminOnly || isAdmin);
+
+  useEffect(() => {
+    prefetchTransactionsData(queryClient);
+  }, [queryClient]);
 
   return (
     <div className="min-h-screen lg:flex">

@@ -8,6 +8,7 @@ import {
   formatCurrency,
   LoadingState,
 } from '../components/ui/States';
+import { MoneyValue } from '../components/ui/MoneyValue';
 import { Tooltip } from '../components/ui/Tooltip';
 
 type ReportView = 'owners' | 'properties';
@@ -122,11 +123,9 @@ export function ReportsPage() {
                         <span className="ml-1 muted-text">({owner.expense_count})</span>
                       </td>
                       <td
-                        className={`px-4 py-2 ${
-                          Number(owner.balance) >= 0 ? 'amount-deposit' : 'amount-expense'
-                        }`}
+                        className="px-4 py-2"
                       >
-                        {formatCurrency(owner.balance)}
+                        <MoneyValue amount={owner.balance} />
                       </td>
                     </tr>
                   ))}
@@ -171,14 +170,8 @@ export function ReportsPage() {
                       <td className="px-4 py-2 amount-expense">
                         {formatCurrency(property.total_outgoing ?? '0')}
                       </td>
-                      <td
-                        className={`px-4 py-2 ${
-                          Number(property.net_balance ?? 0) >= 0
-                            ? 'amount-deposit'
-                            : 'amount-expense'
-                        }`}
-                      >
-                        {formatCurrency(property.net_balance ?? '0')}
+                      <td className="px-4 py-2">
+                        <MoneyValue amount={property.net_balance ?? '0'} />
                       </td>
                     </tr>
                   ))}

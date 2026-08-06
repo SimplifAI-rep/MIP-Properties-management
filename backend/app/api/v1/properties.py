@@ -12,6 +12,7 @@ from app.models.owner import Owner
 from app.models.property import Property
 from app.schemas import PropertyDetail, PropertyRead, PropertyUpdate
 from app.services.deposit_query import list_deposits
+from app.services.expense_query import list_expenses
 from app.services.running_balance import property_float_totals
 
 router = APIRouter(prefix="/properties", tags=["properties"])
@@ -136,6 +137,7 @@ def get_property(property_id: UUID, db: Session = Depends(get_db)) -> PropertyDe
         ).all()
     )
     recent, _ = list_deposits(db, property_id=property_id, page=1, page_size=10)
+    recent_expenses, _ = list_expenses(db, property_id=property_id, page=1, page_size=10)
     floats = property_float_totals(db, [property_id])
     totals = floats.get(property_id)
 
@@ -156,4 +158,5 @@ def get_property(property_id: UUID, db: Session = Depends(get_db)) -> PropertyDe
         owner=owner,
         bank_accounts=accounts,
         recent_deposits=recent,
+        recent_expenses=recent_expenses,
     )

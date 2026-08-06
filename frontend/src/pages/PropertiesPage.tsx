@@ -3,6 +3,8 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
 import { TransactionTable } from '../components/TransactionTable';
+import { EntityFeedbackButton } from '../components/ui/EntityFeedbackButton';
+import { MoneyValue } from '../components/ui/MoneyValue';
 import {
   EmptyState,
   ErrorState,
@@ -11,13 +13,12 @@ import {
   LoadingState,
 } from '../components/ui/States';
 import { Tooltip } from '../components/ui/Tooltip';
-import { useFeedback } from '../context/FeedbackContext';
 import type { Property, PropertyDetail } from '../types';
 import {
   ownerTransactionsState,
   propertyTransactionsState,
 } from '../utils/transactionsNav';
-import { depositToUnified } from '../utils/unifiedTransaction';
+import { mergeAndSortTransactions } from '../utils/unifiedTransaction';
 import { getUserErrorMessage } from '../utils/errors';
 
 const PROPERTY_COL_COUNT = 8;
@@ -36,21 +37,13 @@ function formatPropertyFeedback(property: Property): string {
   ].join('\n');
 }
 
-const feedbackIcon = (
-  <svg
-    xmlns="http://www.w3.org/2000/svg"
-    viewBox="0 0 20 20"
-    fill="currentColor"
-    className="h-4 w-4"
-    aria-hidden="true"
-  >
-    <path
-      fillRule="evenodd"
-      d="M10 2c-2.236 0-4.43.18-6.512.512C2.35 2.718 1.5 3.958 1.5 5.373v4.254c0 1.415.85 2.655 1.988 2.86 1.113.178 2.259.3 3.418.364V16.5a.75.75 0 0 0 1.28.53l2.754-2.753A32.978 32.978 0 0 0 10 14c2.236 0 4.43-.18 6.512-.512 1.138-.205 1.988-1.445 1.988-2.86V5.373c0-1.415-.85-2.655-1.988-2.86A33.001 33.001 0 0 0 10 2Zm0 5a1 1 0 1 0 0 2 1 1 0 0 0 0-2ZM7 8a1 1 0 1 1-2 0 1 1 0 0 1 2 0Zm6 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0Z"
-      clipRule="evenodd"
-    />
-  </svg>
-);
+function recentPropertyTransactions(detail: PropertyDetail) {
+  return mergeAndSortTransactions(
+    detail.recent_deposits ?? [],
+    detail.recent_expenses ?? [],
+    10,
+  );
+}
 
 function statusBadgeClass(status: string) {
   return status === 'active' ? 'badge-deposit' : 'badge-neutral';
@@ -95,7 +88,6 @@ function PropertyExpandedDetails({
   statusPending,
   onStatusChange,
   onNavigateTransactions,
-  onFeedback,
 }: {
   detail: PropertyDetail | undefined;
   isLoading: boolean;
@@ -105,7 +97,6 @@ function PropertyExpandedDetails({
   statusPending: boolean;
   onStatusChange: (status: 'active' | 'inactive') => void;
   onNavigateTransactions: () => void;
-  onFeedback: (property: Property) => void;
 }) {
   if (isLoading) {
     return <LoadingState label="Loading property..." />;
@@ -138,12 +129,8 @@ function PropertyExpandedDetails({
                 {formatCurrency(detail.total_outgoing ?? '0')}
               </span>
             </span>
-            <span
-              className={`text-lg font-semibold ${
-                Number(detail.net_balance ?? 0) >= 0 ? 'amount-deposit' : 'amount-expense'
-              }`}
-            >
-              Balance: {formatCurrency(detail.net_balance ?? '0')}
+            <span className="text-lg font-semibold">
+              Balance: <MoneyValue amount={detail.net_balance ?? '0'} />
             </span>
           </div>
           {detail.address ? <p className="muted-text">{detail.address}</p> : null}
@@ -176,16 +163,7 @@ function PropertyExpandedDetails({
           >
             View transactions
           </Link>
-          <Tooltip content="Feedback" hideHint>
-            <button
-              type="button"
-              className="btn-icon"
-              onClick={() => onFeedback(detail)}
-              aria-label="Send feedback"
-            >
-              {feedbackIcon}
-            </button>
-          </Tooltip>
+          <EntityFeedbackButton message={formatPropertyFeedback(detail)} />
         </div>
       </div>
 
@@ -218,11 +196,11 @@ function PropertyExpandedDetails({
       </div>
 
       <div className="w-full min-w-0">
-        <h4 className="subheading">Recent deposits</h4>
+        <h4 className="subheading">Recent transactions</h4>
         <div className="mt-2 w-full min-w-0">
           <TransactionTable
-            rows={(detail.recent_deposits ?? []).map(depositToUnified)}
-            emptyMessage="No recent deposits."
+            rows={recentPropertyTransactions(detail)}
+            emptyMessage="No recent transactions."
             showActions={false}
             onRowClick={onNavigateTransactions}
             className="w-full overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-700"
@@ -236,7 +214,6 @@ function PropertyExpandedDetails({
 export function PropertiesPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { openFeedback } = useFeedback();
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [statusError, setStatusError] = useState<unknown>(null);
 
@@ -372,14 +349,8 @@ export function PropertiesPage() {
                       <td className="px-5 py-3 amount-expense">
                         {formatCurrency(property.total_outgoing ?? '0')}
                       </td>
-                      <td
-                        className={`px-5 py-3 font-medium ${
-                          Number(property.net_balance ?? 0) >= 0
-                            ? 'amount-deposit'
-                            : 'amount-expense'
-                        }`}
-                      >
-                        {formatCurrency(property.net_balance ?? '0')}
+                      <td className="px-5 py-3 font-medium">
+                        <MoneyValue amount={property.net_balance ?? '0'} />
                       </td>
                       <td className="px-5 py-3" onClick={(event) => event.stopPropagation()}>
                         <PropertyStatusSelect
@@ -389,33 +360,19 @@ export function PropertiesPage() {
                         />
                       </td>
                       <td className="px-5 py-3">
-                        <div className="flex flex-nowrap items-center gap-1.5 whitespace-nowrap">
+                        <div
+                          className="flex flex-nowrap items-center gap-1.5 whitespace-nowrap"
+                          onClick={(event) => event.stopPropagation()}
+                        >
                           <button
                             type="button"
                             className="btn-secondary shrink-0 text-xs"
                             aria-expanded={expanded}
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              toggleExpand(property.id);
-                            }}
+                            onClick={() => toggleExpand(property.id)}
                           >
                             {expanded ? 'Close' : 'Details'}
                           </button>
-                          <Tooltip content="Feedback" hideHint className="inline-flex shrink-0">
-                            <button
-                              type="button"
-                              className="btn-icon"
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                openFeedback({
-                                  initialMessage: formatPropertyFeedback(property),
-                                });
-                              }}
-                              aria-label="Send feedback"
-                            >
-                              {feedbackIcon}
-                            </button>
-                          </Tooltip>
+                          <EntityFeedbackButton message={formatPropertyFeedback(property)} />
                         </div>
                       </td>
                     </tr>
@@ -438,11 +395,6 @@ export function PropertiesPage() {
                                   property.id,
                                   property.client_prop_id,
                                 ),
-                              })
-                            }
-                            onFeedback={(item) =>
-                              openFeedback({
-                                initialMessage: formatPropertyFeedback(item),
                               })
                             }
                           />

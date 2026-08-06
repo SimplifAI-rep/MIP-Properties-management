@@ -1,46 +1,12 @@
-import type { Deposit, Expense } from '../types';
+import type { Deposit, Expense, TransactionKind, UnifiedTransaction } from '../types';
+import { formatLabel } from './formatLabel';
 
-export type TransactionKind = 'deposit' | 'expense';
-
-export interface UnifiedTransaction {
-  id: string;
-  kind: TransactionKind;
-  property_id: string;
-  transaction_date: string | null;
-  client_prop_id: string;
-  property_name: string;
-  owner_name: string;
-  amount: string;
-  currency: string;
-  /** Excel "Section" (expense category / deposit account cue). */
-  section: string;
-  /** Excel "Notes". */
-  notes: string | null;
-  /** Excel "Company" when present. */
-  company: string | null;
-  payment_method?: string | null;
-  source?: string | null;
-  receipt_ref?: string | null;
-  source_file?: string | null;
-  balance_after?: string | null;
-  paid_by_resident?: boolean;
-  paid_by_company?: boolean;
-  paid_by_owner?: boolean;
-  ledger_column?: string | null;
-  is_rental_income?: boolean;
-  from_bank_statement?: boolean;
-  needs_review?: boolean;
-  review_reasons?: string | null;
-}
+export type { TransactionKind, UnifiedTransaction };
 
 const UPLOAD_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export function isUploadReceiptRef(ref: string | null | undefined): ref is string {
   return Boolean(ref && UPLOAD_ID_RE.test(ref));
-}
-
-function label(value: string) {
-  return value.replace(/_/g, ' ');
 }
 
 export function expenseNotes(expense: Expense): string | null {
@@ -68,7 +34,7 @@ export function depositToUnified(deposit: Deposit): UnifiedTransaction {
     currency: deposit.currency,
     section: deposit.is_rental_income
       ? 'Rental income'
-      : label(deposit.source || 'Inflow'),
+      : formatLabel(deposit.source || 'Inflow'),
     notes: deposit.description,
     company: null,
     source: deposit.source,
@@ -125,11 +91,61 @@ function asBool(value: unknown): boolean {
   return Boolean(value);
 }
 
+/** True when the row is already in the shared TransactionRead / UnifiedTransaction shape. */
+export function isUnifiedTransactionRow(
+  row: Record<string, unknown>,
+): boolean {
+  return (
+    (row.kind === 'deposit' || row.kind === 'expense') &&
+    row.section != null &&
+    row.id != null &&
+    row.amount != null
+  );
+}
+
+/** Map a backend TransactionRead (or already-unified row) without re-deriving fields. */
+export function unifiedFromRecord(row: Record<string, unknown>): UnifiedTransaction {
+  const kind: TransactionKind = row.kind === 'expense' ? 'expense' : 'deposit';
+  const source = asNullableString(row.source);
+  return {
+    id: asString(row.id),
+    kind,
+    property_id: asString(row.property_id),
+    transaction_date: asNullableString(row.transaction_date),
+    client_prop_id: asString(row.client_prop_id),
+    property_name: asString(row.property_name),
+    owner_name: asString(row.owner_name),
+    amount: asString(row.amount, '0'),
+    currency: asString(row.currency, 'ILS'),
+    section: asString(row.section, kind === 'expense' ? 'other' : 'Inflow'),
+    notes: asNullableString(row.notes),
+    company: asNullableString(row.company),
+    payment_method: asNullableString(row.payment_method),
+    source,
+    receipt_ref: asNullableString(row.receipt_ref),
+    source_file: asNullableString(row.source_file),
+    balance_after: asNullableString(row.balance_after),
+    paid_by_resident: asBool(row.paid_by_resident),
+    paid_by_company: asBool(row.paid_by_company),
+    paid_by_owner: asBool(row.paid_by_owner),
+    ledger_column: asNullableString(row.ledger_column),
+    is_rental_income: asBool(row.is_rental_income),
+    from_bank_statement:
+      asBool(row.from_bank_statement) || source === 'bank_statement',
+    needs_review: asBool(row.needs_review),
+    review_reasons: asNullableString(row.review_reasons),
+  };
+}
+
 /** Map AI / API list rows (normalized or raw deposit/expense dumps) into UnifiedTransaction. */
 export function recordToUnified(
   row: Record<string, unknown>,
   fallbackKind?: TransactionKind,
 ): UnifiedTransaction {
+  if (isUnifiedTransactionRow(row)) {
+    return unifiedFromRecord(row);
+  }
+
   const explicitKind = row.kind === 'deposit' || row.kind === 'expense' ? row.kind : null;
   const kind: TransactionKind =
     explicitKind ??
@@ -152,11 +168,9 @@ export function recordToUnified(
       ? asString(row.category, 'other')
       : asBool(row.is_rental_income)
         ? 'Rental income'
-        : label(source || 'Inflow'));
+        : formatLabel(source || 'Inflow'));
 
-  const notes =
-    asNullableString(row.notes) ??
-    asNullableString(row.description);
+  const notes = asNullableString(row.notes) ?? asNullableString(row.description);
 
   return {
     id: asString(row.id),
@@ -204,6 +218,63 @@ export function looksLikeTransactionList(data: Record<string, unknown>[]): boole
     !('transaction_date' in sample) &&
     sample.kind == null;
   return hasId && hasAmount && hasTxnShape && !isAggregate;
+}
+
+/** Company-float inflow: deposits excluding rental income. */
+export function isCompanyFloatDeposit(row: UnifiedTransaction): boolean {
+  return row.kind === 'deposit' && !row.is_rental_income;
+}
+
+/** Company-float outflow: expenses excluding He/She paid and owner paid. */
+export function isCompanyFloatExpense(row: UnifiedTransaction): boolean {
+  return (
+    row.kind === 'expense' && !row.paid_by_resident && !row.paid_by_owner
+  );
+}
+
+export function isCompanyFloatRow(row: UnifiedTransaction): boolean {
+  return isCompanyFloatDeposit(row) || isCompanyFloatExpense(row);
+}
+
+export function sumAmounts(rows: UnifiedTransaction[]): number {
+  return rows.reduce((sum, row) => sum + Number(row.amount || 0), 0);
+}
+
+export function companyFloatTotals(rows: UnifiedTransaction[]): {
+  inflow: number;
+  expenses: number;
+  balance: number;
+} {
+  const inflow = sumAmounts(rows.filter(isCompanyFloatDeposit));
+  const expenses = sumAmounts(rows.filter(isCompanyFloatExpense));
+  return { inflow, expenses, balance: inflow - expenses };
+}
+
+/** Newest dated rows first; undated rows last. */
+export function sortTransactionsNewestFirst(
+  rows: UnifiedTransaction[],
+): UnifiedTransaction[] {
+  return [...rows].sort((a, b) => {
+    const aHasDate = Boolean(a.transaction_date);
+    const bHasDate = Boolean(b.transaction_date);
+    if (aHasDate !== bHasDate) return aHasDate ? -1 : 1;
+    const aDate = a.transaction_date || '';
+    const bDate = b.transaction_date || '';
+    return bDate.localeCompare(aDate);
+  });
+}
+
+export function mergeAndSortTransactions(
+  deposits: Deposit[],
+  expenses: Expense[],
+  limit?: number,
+): UnifiedTransaction[] {
+  const rows = [
+    ...deposits.map(depositToUnified),
+    ...expenses.map(expenseToUnified),
+  ];
+  const sorted = sortTransactionsNewestFirst(rows);
+  return limit != null ? sorted.slice(0, limit) : sorted;
 }
 
 export function transactionRowClassName(row: UnifiedTransaction): string {

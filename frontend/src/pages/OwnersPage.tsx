@@ -1,8 +1,11 @@
-import { Fragment, useState } from 'react';
+import { Fragment, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
 import { TransactionTable } from '../components/TransactionTable';
+import { EntityFeedbackButton } from '../components/ui/EntityFeedbackButton';
+import { MoneyValue } from '../components/ui/MoneyValue';
+import { SearchableMultiSelect } from '../components/ui/SearchableMultiSelect';
 import {
   EmptyState,
   ErrorState,
@@ -10,13 +13,12 @@ import {
   LoadingState,
 } from '../components/ui/States';
 import { Tooltip } from '../components/ui/Tooltip';
-import { useFeedback } from '../context/FeedbackContext';
 import type { OwnerDetail, OwnerSummary } from '../types';
 import {
   ownerTransactionsState,
   propertyTransactionsState,
 } from '../utils/transactionsNav';
-import { depositToUnified, expenseToUnified } from '../utils/unifiedTransaction';
+import { mergeAndSortTransactions } from '../utils/unifiedTransaction';
 
 const OWNER_COL_COUNT = 6;
 
@@ -33,35 +35,12 @@ function formatOwnerFeedback(owner: OwnerSummary): string {
 }
 
 function recentOwnerTransactions(detail: OwnerDetail) {
-  const deposits = detail.recent_deposits ?? [];
-  const expenses = detail.recent_expenses ?? [];
-  return [...deposits.map(depositToUnified), ...expenses.map(expenseToUnified)]
-    .sort((a, b) => {
-      const aHasDate = Boolean(a.transaction_date);
-      const bHasDate = Boolean(b.transaction_date);
-      if (aHasDate !== bHasDate) return aHasDate ? -1 : 1;
-      const aTime = a.transaction_date ? new Date(a.transaction_date).getTime() : 0;
-      const bTime = b.transaction_date ? new Date(b.transaction_date).getTime() : 0;
-      return bTime - aTime;
-    })
-    .slice(0, 5);
+  return mergeAndSortTransactions(
+    detail.recent_deposits ?? [],
+    detail.recent_expenses ?? [],
+    5,
+  );
 }
-
-const feedbackIcon = (
-  <svg
-    xmlns="http://www.w3.org/2000/svg"
-    viewBox="0 0 20 20"
-    fill="currentColor"
-    className="h-4 w-4"
-    aria-hidden="true"
-  >
-    <path
-      fillRule="evenodd"
-      d="M10 2c-2.236 0-4.43.18-6.512.512C2.35 2.718 1.5 3.958 1.5 5.373v4.254c0 1.415.85 2.655 1.988 2.86 1.113.178 2.259.3 3.418.364V16.5a.75.75 0 0 0 1.28.53l2.754-2.753A32.978 32.978 0 0 0 10 14c2.236 0 4.43-.18 6.512-.512 1.138-.205 1.988-1.445 1.988-2.86V5.373c0-1.415-.85-2.655-1.988-2.86A33.001 33.001 0 0 0 10 2Zm0 5a1 1 0 1 0 0 2 1 1 0 0 0 0-2ZM7 8a1 1 0 1 1-2 0 1 1 0 0 1 2 0Zm6 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0Z"
-      clipRule="evenodd"
-    />
-  </svg>
-);
 
 function OwnerExpandedDetails({
   detail,
@@ -69,14 +48,12 @@ function OwnerExpandedDetails({
   isError,
   error,
   onNavigateTransactions,
-  onFeedback,
 }: {
   detail: OwnerDetail | undefined;
   isLoading: boolean;
   isError: boolean;
   error: unknown;
   onNavigateTransactions: () => void;
-  onFeedback: (owner: OwnerSummary) => void;
 }) {
   if (isLoading) {
     return <LoadingState label="Loading owner..." />;
@@ -109,12 +86,8 @@ function OwnerExpandedDetails({
                 {formatCurrency(detail.total_expenses)}
               </span>
             </span>
-            <span
-              className={`text-lg font-semibold ${
-                Number(detail.balance ?? 0) >= 0 ? 'amount-deposit' : 'amount-expense'
-              }`}
-            >
-              Balance: {formatCurrency(detail.balance ?? '0')}
+            <span className="text-lg font-semibold">
+              Balance: <MoneyValue amount={detail.balance ?? '0'} />
             </span>
           </div>
           {detail.contact_email ? <p className="muted-text">{detail.contact_email}</p> : null}
@@ -128,16 +101,7 @@ function OwnerExpandedDetails({
           >
             View transactions
           </Link>
-          <Tooltip content="Feedback" hideHint>
-            <button
-              type="button"
-              className="btn-icon"
-              onClick={() => onFeedback(detail)}
-              aria-label="Send feedback"
-            >
-              {feedbackIcon}
-            </button>
-          </Tooltip>
+          <EntityFeedbackButton message={formatOwnerFeedback(detail)} />
         </div>
       </div>
 
@@ -159,7 +123,7 @@ function OwnerExpandedDetails({
                   </p>
                   {property.address ? <p className="muted-text">{property.address}</p> : null}
                   <p className="mt-1 text-slate-600 dark:text-slate-300">
-                    Balance: {formatCurrency(property.balance ?? '0')} · Deposits:{' '}
+                    Balance: <MoneyValue amount={property.balance ?? '0'} /> · Deposits:{' '}
                     {formatCurrency(property.total_deposits)} ({property.deposit_count}) ·
                     Expenses: {formatCurrency(property.total_expenses)} ({property.expense_count})
                   </p>
@@ -188,8 +152,8 @@ function OwnerExpandedDetails({
 
 export function OwnersPage() {
   const navigate = useNavigate();
-  const { openFeedback } = useFeedback();
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [ownerFilterIds, setOwnerFilterIds] = useState<string[]>([]);
 
   const ownersQuery = useQuery({
     queryKey: ['owners'],
@@ -202,6 +166,17 @@ export function OwnersPage() {
     enabled: !!expandedId,
   });
 
+  const allOwners = ownersQuery.data ?? [];
+  const ownerOptions = useMemo(
+    () => allOwners.map((owner) => ({ value: owner.id, label: owner.name })),
+    [allOwners],
+  );
+  const owners = useMemo(() => {
+    if (!ownerFilterIds.length) return allOwners;
+    const selected = new Set(ownerFilterIds);
+    return allOwners.filter((owner) => selected.has(owner.id));
+  }, [allOwners, ownerFilterIds]);
+
   if (ownersQuery.isLoading) return <LoadingState />;
   if (ownersQuery.isError) {
     return (
@@ -211,8 +186,6 @@ export function OwnersPage() {
       />
     );
   }
-
-  const owners = ownersQuery.data ?? [];
 
   function toggleExpand(ownerId: string) {
     setExpandedId((current) => (current === ownerId ? null : ownerId));
@@ -226,6 +199,18 @@ export function OwnersPage() {
           View owners, their properties, and aggregated deposit and expense totals. Click a row to
           open filtered transactions, or Details to expand under the row.
         </p>
+      </div>
+
+      <div className="filter-panel max-w-md md:grid-cols-1">
+        <SearchableMultiSelect
+          label="Filter owners"
+          tip="Show only selected owners in the table."
+          options={ownerOptions}
+          selected={ownerFilterIds}
+          onChange={setOwnerFilterIds}
+          placeholder="All owners"
+          searchPlaceholder="Search owner…"
+        />
       </div>
 
       <section className="panel overflow-hidden">
@@ -253,7 +238,6 @@ export function OwnersPage() {
             </thead>
             <tbody>
               {owners.map((owner) => {
-                const balance = Number(owner.balance ?? 0);
                 const expanded = expandedId === owner.id;
                 return (
                   <Fragment key={owner.id}>
@@ -279,41 +263,23 @@ export function OwnersPage() {
                           ({owner.expense_count})
                         </span>
                       </td>
-                      <td
-                        className={`px-5 py-3 font-medium ${
-                          balance >= 0 ? 'text-positive' : 'text-negative'
-                        }`}
-                      >
-                        {formatCurrency(owner.balance ?? '0')}
+                      <td className="px-5 py-3 font-medium">
+                        <MoneyValue amount={owner.balance ?? '0'} />
                       </td>
                       <td className="px-5 py-3">
-                        <div className="flex flex-wrap items-center gap-1">
+                        <div
+                          className="flex flex-wrap items-center gap-1"
+                          onClick={(event) => event.stopPropagation()}
+                        >
                           <button
                             type="button"
                             className="btn-secondary text-xs"
                             aria-expanded={expanded}
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              toggleExpand(owner.id);
-                            }}
+                            onClick={() => toggleExpand(owner.id)}
                           >
                             {expanded ? 'Close' : 'Details'}
                           </button>
-                          <Tooltip content="Feedback" hideHint>
-                            <button
-                              type="button"
-                              className="btn-icon"
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                openFeedback({
-                                  initialMessage: formatOwnerFeedback(owner),
-                                });
-                              }}
-                              aria-label="Send feedback"
-                            >
-                              {feedbackIcon}
-                            </button>
-                          </Tooltip>
+                          <EntityFeedbackButton message={formatOwnerFeedback(owner)} />
                         </div>
                       </td>
                     </tr>
@@ -328,11 +294,6 @@ export function OwnersPage() {
                             onNavigateTransactions={() =>
                               navigate('/transactions', {
                                 state: ownerTransactionsState(owner.id),
-                              })
-                            }
-                            onFeedback={(item) =>
-                              openFeedback({
-                                initialMessage: formatOwnerFeedback(item),
                               })
                             }
                           />

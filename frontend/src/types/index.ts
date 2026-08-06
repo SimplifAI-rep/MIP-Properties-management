@@ -86,6 +86,7 @@ export interface PropertyDetail extends Property {
   owner: Owner;
   bank_accounts: BankAccount[];
   recent_deposits: Deposit[];
+  recent_expenses?: Expense[];
 }
 
 export interface DepositListResponse {
@@ -522,3 +523,6 @@ export interface FixIncompleteResponse {
   transaction_date: string | null;
   amount: string;
 }
+
+export type { TransactionKind, UnifiedTransaction } from './transaction';
+

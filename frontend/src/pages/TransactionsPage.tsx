@@ -36,6 +36,12 @@ import {
 } from '../constants/expenseOptions';
 import { todayISO } from '../utils/dateFormat';
 import { validationError } from '../utils/errors';
+import { formatLabel } from '../utils/formatLabel';
+import {
+  buildTxnListFilters,
+  buildTxnSharedFilters,
+} from '../utils/prefetchTransactions';
+import { parseTransactionsLocationState } from '../utils/transactionsNav';
 
 /** Filters that match Excel money lanes + Deposit/Expense. */
 type TypeFilterKind =
@@ -50,7 +56,7 @@ type AlertFilterKind = 'incomplete_import';
 type TypeFilter = 'all' | TransactionKind;
 
 function label(value: string) {
-  return value.replace(/_/g, ' ');
+  return formatLabel(value);
 }
 
 interface TransactionEditForm {
@@ -177,24 +183,7 @@ export function TransactionsPage() {
   const [editError, setEditError] = useState<unknown>(null);
 
   useEffect(() => {
-    const state = location.state as {
-      showUpload?: boolean;
-      showForm?: boolean;
-      propertyId?: string;
-      propertyIds?: string[];
-      clientPropId?: string;
-      clientPropIds?: string[];
-      ownerId?: string;
-      ownerIds?: string[];
-      dateFrom?: string;
-      dateTo?: string;
-      typeFilter?: TypeFilter;
-      kinds?: TypeFilterKind[];
-      sections?: string[];
-      sources?: string[];
-      sourceFiles?: string[];
-      alertFilters?: AlertFilterKind[];
-    } | null;
+    const state = parseTransactionsLocationState(location.state);
     if (!state) return;
 
     if (state.showUpload) {
@@ -206,24 +195,9 @@ export function TransactionsPage() {
       setShowUpload(false);
     }
 
-    const nextPropertyIds =
-      state.propertyIds && state.propertyIds.length > 0
-        ? state.propertyIds
-        : state.propertyId
-          ? [state.propertyId]
-          : null;
-    const nextClientPropIds =
-      state.clientPropIds && state.clientPropIds.length > 0
-        ? state.clientPropIds
-        : state.clientPropId
-          ? [state.clientPropId]
-          : null;
-    const nextOwnerIds =
-      state.ownerIds && state.ownerIds.length > 0
-        ? state.ownerIds
-        : state.ownerId
-          ? [state.ownerId]
-          : null;
+    const nextPropertyIds = state.propertyIds?.length ? state.propertyIds : null;
+    const nextClientPropIds = state.clientPropIds?.length ? state.clientPropIds : null;
+    const nextOwnerIds = state.ownerIds?.length ? state.ownerIds : null;
 
     if (nextPropertyIds || nextClientPropIds) {
       setPropertyIds(nextPropertyIds ?? []);
@@ -245,7 +219,7 @@ export function TransactionsPage() {
       setPage(1);
     }
     if (state.kinds && state.kinds.length > 0) {
-      setKinds(state.kinds);
+      setKinds(state.kinds as TypeFilterKind[]);
       setPage(1);
     } else if (state.typeFilter === 'deposit') {
       setKinds(['deposit']);
@@ -269,7 +243,7 @@ export function TransactionsPage() {
       setPage(1);
     }
     if (state.alertFilters) {
-      setAlertFilters(state.alertFilters);
+      setAlertFilters(state.alertFilters as AlertFilterKind[]);
       setPage(1);
     }
   }, [location.state]);
@@ -280,13 +254,13 @@ export function TransactionsPage() {
   const apiSection = sections.length === 1 ? sections[0] : undefined;
   const apiSource = sources.length === 1 ? sources[0] : undefined;
 
-  const sharedFilters = {
+  const sharedFilters = buildTxnSharedFilters({
     property_id: apiPropertyId,
     client_prop_id: apiClientPropId,
     owner_id: apiOwnerId,
     date_from: dateFrom,
     date_to: dateTo,
-  };
+  });
 
   const includeDeposits =
     kinds.length === 0 ||
@@ -326,11 +300,11 @@ export function TransactionsPage() {
         ? false
         : undefined;
 
-  const listFilters = {
+  const listFilters = buildTxnListFilters({
     ...sharedFilters,
     source_file: singleSourceFile,
     needs_review: needsReviewOnly,
-  };
+  });
 
   const propertiesQuery = useQuery({
     queryKey: ['properties'],

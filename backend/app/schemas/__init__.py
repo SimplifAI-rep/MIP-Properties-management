@@ -105,6 +105,7 @@ class PropertyDetail(PropertyRead):
     owner: OwnerRead
     bank_accounts: list[BankAccountRead] = Field(default_factory=list)
     recent_deposits: list[DepositRead] = Field(default_factory=list)
+    recent_expenses: list["ExpenseRead"] = Field(default_factory=list)
 
 
 class PropertyUpdate(BaseModel):
@@ -294,6 +295,36 @@ class AIQueryResponse(BaseModel):
     data: list[dict]
     query_used: DepositQueryIntent
     parser: str = "rules"
+
+
+class TransactionRead(BaseModel):
+    """Shared deposit/expense display row (view model — not a DB table)."""
+
+    kind: Literal["deposit", "expense"]
+    id: UUID
+    property_id: UUID
+    transaction_date: date | None = None
+    amount: Decimal
+    currency: str = "ILS"
+    client_prop_id: str
+    property_name: str
+    owner_name: str
+    section: str
+    notes: str | None = None
+    company: str | None = None
+    payment_method: str | None = None
+    source: str | None = None
+    receipt_ref: str | None = None
+    source_file: str | None = None
+    balance_after: Decimal | None = None
+    needs_review: bool = False
+    review_reasons: str | None = None
+    is_rental_income: bool | None = None
+    paid_by_resident: bool | None = None
+    paid_by_owner: bool | None = None
+    paid_by_company: bool | None = None
+    ledger_column: str | None = None
+    from_bank_statement: bool = False
 
 
 class ExpenseRead(BaseModel):

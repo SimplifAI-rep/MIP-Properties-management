@@ -35,6 +35,7 @@ import {
 } from '../utils/dashboardPeriod';
 
 const RECENT_LIMIT = 10;
+const DEFAULT_EXPENSE_BREAKDOWN_MIN = 1000;
 
 
 interface PropertyHealth {
@@ -96,6 +97,14 @@ export function DashboardPage() {
   const [periodType, setPeriodType] = useState<PeriodType>('month');
   const [year, setYear] = useState(defaults.year);
   const [month, setMonth] = useState(defaults.month);
+  const [showAllExpenseCategories, setShowAllExpenseCategories] = useState(false);
+  const [expenseBreakdownMinInput, setExpenseBreakdownMinInput] = useState(
+    String(DEFAULT_EXPENSE_BREAKDOWN_MIN),
+  );
+  const expenseBreakdownMinAmount = useMemo(() => {
+    const parsed = Number(expenseBreakdownMinInput);
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : DEFAULT_EXPENSE_BREAKDOWN_MIN;
+  }, [expenseBreakdownMinInput]);
 
   const yearsQuery = useQuery({
     queryKey: ['transaction-years'],
@@ -169,9 +178,43 @@ export function DashboardPage() {
     ) ?? [];
 
   const expenseCategories = expenseSummaryQuery.data?.by_category ?? [];
-  const maxCategoryTotal = Math.max(
-    ...expenseCategories.map((item) => Number(item.total_amount)),
-    1,
+  const expenseBreakdownRows = useMemo(() => {
+    const sorted = expenseCategories
+      .slice()
+      .sort((a, b) => Number(b.total_amount) - Number(a.total_amount));
+    if (showAllExpenseCategories) {
+      return sorted.map((item) => ({
+        key: item.category,
+        label: formatLabel(item.category),
+        total: Number(item.total_amount),
+        count: item.expense_count,
+      }));
+    }
+    const above = sorted.filter(
+      (item) => Number(item.total_amount) >= expenseBreakdownMinAmount,
+    );
+    const below = sorted.filter(
+      (item) => Number(item.total_amount) < expenseBreakdownMinAmount,
+    );
+    const rows = above.map((item) => ({
+      key: item.category,
+      label: formatLabel(item.category),
+      total: Number(item.total_amount),
+      count: item.expense_count,
+    }));
+    if (below.length > 0) {
+      rows.push({
+        key: '__other_below_min__',
+        label: `Other (under ${formatCurrency(expenseBreakdownMinAmount)})`,
+        total: below.reduce((sum, item) => sum + Number(item.total_amount), 0),
+        count: below.reduce((sum, item) => sum + item.expense_count, 0),
+      });
+    }
+    return rows;
+  }, [expenseCategories, expenseBreakdownMinAmount, showAllExpenseCategories]);
+  const maxCategoryTotal = Math.max(...expenseBreakdownRows.map((item) => item.total), 1);
+  const hasSmallExpenseCategories = expenseCategories.some(
+    (item) => Number(item.total_amount) < expenseBreakdownMinAmount,
   );
 
   const periodTransactions = useMemo(
@@ -680,35 +723,68 @@ export function DashboardPage() {
 
       {/* Expense breakdown */}
       <section className="panel">
-        <div className="section-header">
-          <h3 className="section-title">Expense breakdown — {period.label}</h3>
-          <p className="section-subtitle">Totals by category for the selected period.</p>
+        <div className="section-header flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h3 className="section-title">Expense breakdown — {period.label}</h3>
+            <p className="section-subtitle">
+              {showAllExpenseCategories
+                ? 'Totals by category for the selected period.'
+                : `Categories from ${formatCurrency(expenseBreakdownMinAmount)}; smaller totals are grouped.`}
+            </p>
+          </div>
+          <div className="flex flex-wrap items-end gap-2 shrink-0">
+            <label className="block space-y-1 text-sm">
+              <span className="label-text">Min amount</span>
+              <input
+                type="number"
+                inputMode="decimal"
+                step="any"
+                min="0"
+                value={expenseBreakdownMinInput}
+                onChange={(event) => {
+                  setExpenseBreakdownMinInput(event.target.value);
+                  setShowAllExpenseCategories(false);
+                }}
+                disabled={showAllExpenseCategories}
+                className="field w-28 text-sm"
+                aria-label="Minimum category amount"
+              />
+            </label>
+            {hasSmallExpenseCategories || showAllExpenseCategories ? (
+              <button
+                type="button"
+                className="btn-secondary text-sm"
+                onClick={() => setShowAllExpenseCategories((open) => !open)}
+              >
+                {showAllExpenseCategories
+                  ? `Group under ${formatCurrency(expenseBreakdownMinAmount)}`
+                  : 'Show all'}
+              </button>
+            ) : null}
+          </div>
         </div>
-        {expenseCategories.length > 0 ? (
+        {expenseBreakdownRows.length > 0 ? (
           <ul className="space-y-4 p-5">
-            {expenseCategories
-              .slice()
-              .sort((a, b) => Number(b.total_amount) - Number(a.total_amount))
-              .map((item) => {
-                const width = Math.round((Number(item.total_amount) / maxCategoryTotal) * 100);
-                return (
-                  <li key={item.category}>
-                    <div className="mb-1 flex items-center justify-between text-sm">
-                      <span className="font-medium capitalize">{formatLabel(item.category)}</span>
-                      <span>
-                        {formatCurrency(item.total_amount)}
-                        <span className="ml-2 text-xs text-muted">({item.expense_count})</span>
-                      </span>
-                    </div>
-                    <div className="h-2 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
-                      <div
-                        className="h-full rounded-full bg-rose-500 dark:bg-rose-600"
-                        style={{ width: `${width}%` }}
-                      />
-                    </div>
-                  </li>
-                );
-              })}
+            {expenseBreakdownRows.map((item) => {
+              const width = Math.round((item.total / maxCategoryTotal) * 100);
+              return (
+                <li key={item.key}>
+                  <div className="mb-1 flex items-center justify-between text-sm">
+                    <span className="font-medium capitalize">{item.label}</span>
+                    <span>
+                      {formatCurrency(item.total)}
+                      <span className="ml-2 text-xs text-muted">({item.count})</span>
+                    </span>
+                  </div>
+                  <div className="h-2 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
+                    <div
+                      className="h-full rounded-full bg-rose-500 dark:bg-rose-600"
+                      style={{ width: `${width}%` }}
+                    />
+                  </div>
+                </li>
+              );
+            })}
           </ul>
         ) : (
           <div className="p-5">

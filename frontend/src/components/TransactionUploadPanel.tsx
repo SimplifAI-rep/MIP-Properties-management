@@ -12,13 +12,15 @@ import { FileField } from './ui/FileField';
 import { formatCurrency, formatDate, InlineError } from './ui/States';
 import { Tooltip } from './ui/Tooltip';
 import { validationError } from '../utils/errors';
+import { formatLabel } from '../utils/formatLabel';
+import { invalidateTransactionData } from '../utils/invalidateQueries';
 
 type TransactionTypeOption = 'auto' | 'deposit' | 'expense';
 type UploadKindOption = 'receipt' | 'bank_statement' | 'credit_card';
 type Step = 'upload' | 'confirm';
 
 function label(value: string) {
-  return value.replace(/_/g, ' ');
+  return formatLabel(value);
 }
 
 function confidenceClass(confidence: TransactionDraft['match_confidence']) {
@@ -183,15 +185,8 @@ export function TransactionUploadPanel({ properties, onClose }: TransactionUploa
       return api.confirmUpload(uploadId, prepared);
     },
     onSuccess: (result) => {
-      queryClient.invalidateQueries({ queryKey: ['deposits'] });
-      queryClient.invalidateQueries({ queryKey: ['expenses'] });
-      queryClient.invalidateQueries({ queryKey: ['deposit-summary'] });
-      queryClient.invalidateQueries({ queryKey: ['expense-summary'] });
-      queryClient.invalidateQueries({ queryKey: ['deposit-summary-rental'] });
-      queryClient.invalidateQueries({ queryKey: ['expense-summary-heshe'] });
-      queryClient.invalidateQueries({ queryKey: ['expense-summary-owner'] });
-      queryClient.invalidateQueries({ queryKey: ['alerts'] });
-      queryClient.invalidateQueries({ queryKey: ['alert-summary'] });
+      invalidateTransactionData(queryClient);
+      queryClient.invalidateQueries({ queryKey: ['properties'] });
       const parts = [
         result.imported_deposit_count
           ? `${result.imported_deposit_count} deposit(s)`

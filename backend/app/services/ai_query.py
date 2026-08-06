@@ -514,9 +514,6 @@ class AIQueryService:
             detail=f"Query type '{intent.query_type}' is not supported for transactions.",
         )
 
-    def _normalize_transaction_row(self, kind: str, item: dict) -> dict:
-        return normalize_transaction_row(kind, item)
-
     def _execute_transactions_list(self, intent: DepositQueryIntent) -> list[dict]:
         deposits = self._execute_list(intent)
         expenses = self._execute_expense_list(intent)
@@ -629,7 +626,7 @@ class AIQueryService:
             page_size=200,
         )
         return [
-            self._normalize_transaction_row("expense", item.model_dump(mode="json"))
+            normalize_transaction_row("expense", item.model_dump(mode="json"))
             for item in items
         ]
 
@@ -756,7 +753,7 @@ class AIQueryService:
             page_size=200,
         )
         return [
-            self._normalize_transaction_row("deposit", item.model_dump(mode="json"))
+            normalize_transaction_row("deposit", item.model_dump(mode="json"))
             for item in items
         ]
 

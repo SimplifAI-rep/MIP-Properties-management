@@ -7,6 +7,7 @@ import { FileField } from '../components/ui/FileField';
 import { ErrorState, InlineError, LoadingState } from '../components/ui/States';
 import { Tooltip } from '../components/ui/Tooltip';
 import { validationError, AppError } from '../utils/errors';
+import { formatLabel } from '../utils/formatLabel';
 
 type FileRole = 'client_list' | 'management';
 
@@ -52,7 +53,7 @@ const INCOMPLETE_REASON_LABELS: Record<string, string> = {
 };
 
 function reasonLabel(map: Record<string, string>, key: string): string {
-  return map[key] ?? key.replace(/_/g, ' ');
+  return map[key] ?? formatLabel(key);
 }
 
 export function DataImportPage() {

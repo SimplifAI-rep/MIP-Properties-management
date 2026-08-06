@@ -16,6 +16,11 @@ import { DateInputDMY } from '../components/ui/DateInputDMY';
 import { SearchableMultiSelect } from '../components/ui/SearchableMultiSelect';
 import { EXPENSE_CATEGORIES as CATEGORIES } from '../constants/expenseOptions';
 import { validationError } from '../utils/errors';
+import { formatLabel } from '../utils/formatLabel';
+import {
+  invalidateAlertData,
+  invalidateTransactionData,
+} from '../utils/invalidateQueries';
 
 type AlertTypeFilter =
   | AlertItem['alert_type']
@@ -48,7 +53,7 @@ const SEVERITY_OPTIONS: { value: SeverityFilter; label: string }[] = [
 ];
 
 function label(value: string) {
-  return value.replace(/_/g, ' ');
+  return formatLabel(value);
 }
 
 function severityBadge(severity: AlertItem['severity']) {
@@ -275,8 +280,7 @@ export function AlertsPage() {
   const dismissMutation = useMutation({
     mutationFn: (alertId: string) => api.dismissAlert(alertId),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['alerts'] });
-      queryClient.invalidateQueries({ queryKey: ['alert-summary'] });
+      invalidateAlertData(queryClient);
       setSelectedId(null);
       setActionError(null);
     },
@@ -297,8 +301,7 @@ export function AlertsPage() {
       return { total: alertIds.length, failed };
     },
     onSuccess: (result) => {
-      queryClient.invalidateQueries({ queryKey: ['alerts'] });
-      queryClient.invalidateQueries({ queryKey: ['alert-summary'] });
+      invalidateAlertData(queryClient);
       setCheckedIds([]);
       setSelectedId(null);
       setActionError(
@@ -316,15 +319,7 @@ export function AlertsPage() {
     mutationFn: (payload: { alertId: string; body: Parameters<typeof api.resolveAlert>[1] }) =>
       api.resolveAlert(payload.alertId, payload.body),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['alerts'] });
-      queryClient.invalidateQueries({ queryKey: ['alert-summary'] });
-      queryClient.invalidateQueries({ queryKey: ['deposits'] });
-      queryClient.invalidateQueries({ queryKey: ['expenses'] });
-      queryClient.invalidateQueries({ queryKey: ['deposit-summary'] });
-      queryClient.invalidateQueries({ queryKey: ['expense-summary'] });
-      queryClient.invalidateQueries({ queryKey: ['deposit-summary-rental'] });
-      queryClient.invalidateQueries({ queryKey: ['expense-summary-heshe'] });
-      queryClient.invalidateQueries({ queryKey: ['expense-summary-owner'] });
+      invalidateTransactionData(queryClient);
       setSelectedId(null);
       setDepositForm(null);
       setDrafts([]);
@@ -336,15 +331,7 @@ export function AlertsPage() {
   const fixIncompleteMutation = useMutation({
     mutationFn: api.fixIncompleteTransaction,
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['alerts'] });
-      queryClient.invalidateQueries({ queryKey: ['alert-summary'] });
-      queryClient.invalidateQueries({ queryKey: ['deposits'] });
-      queryClient.invalidateQueries({ queryKey: ['expenses'] });
-      queryClient.invalidateQueries({ queryKey: ['deposit-summary'] });
-      queryClient.invalidateQueries({ queryKey: ['expense-summary'] });
-      queryClient.invalidateQueries({ queryKey: ['deposit-summary-rental'] });
-      queryClient.invalidateQueries({ queryKey: ['expense-summary-heshe'] });
-      queryClient.invalidateQueries({ queryKey: ['expense-summary-owner'] });
+      invalidateTransactionData(queryClient);
       setSelectedId(null);
       setActionError(null);
     },

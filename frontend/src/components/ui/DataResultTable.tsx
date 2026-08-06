@@ -1,4 +1,5 @@
 import { formatCurrency, formatDate } from './States';
+import { formatLabel } from '../../utils/formatLabel';
 
 function renderCell(value: unknown): string {
   if (value == null) return '';
@@ -29,7 +30,7 @@ export function DataResultTable({
           <tr>
             {columns.map((column) => (
               <th key={column} className="px-4 py-2 font-medium">
-                {column.replace(/_/g, ' ')}
+                {formatLabel(column)}
               </th>
             ))}
           </tr>

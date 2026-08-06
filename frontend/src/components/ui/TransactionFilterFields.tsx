@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { DateInputDMY } from './DateInputDMY';
 import { SearchableMultiSelect } from './SearchableMultiSelect';
 import type { FilterOption } from '../../hooks/useOwnerPropertyFilterOptions';
@@ -18,9 +19,11 @@ type TransactionFilterFieldsProps = {
   ownerOptions: FilterOption[];
   propertyOptions: FilterOption[];
   propIdOptions: FilterOption[];
-  /** When true, changing Property syncs Prop ID and vice versa. Default true. */
-  syncPropIds?: boolean;
   showAmounts?: boolean;
+  /** Rendered before entity fields (e.g. Type / Alerts). */
+  prepend?: ReactNode;
+  /** Rendered after entity fields (e.g. Section / Source). */
+  append?: ReactNode;
   onSyncFromProperties?: (propertyIds: string[]) => {
     propertyIds: string[];
     clientPropIds: string[];
@@ -31,6 +34,7 @@ type TransactionFilterFieldsProps = {
   };
 };
 
+/** Entity filter fields only — wrap in `.filter-panel` in the parent. */
 export function TransactionFilterFields({
   value,
   onChange,
@@ -38,6 +42,8 @@ export function TransactionFilterFields({
   propertyOptions,
   propIdOptions,
   showAmounts = true,
+  prepend,
+  append,
   onSyncFromProperties,
   onSyncFromPropIds,
 }: TransactionFilterFieldsProps) {
@@ -45,15 +51,22 @@ export function TransactionFilterFields({
     onChange({ ...value, ...partial });
 
   return (
-    <div className="filter-panel md:grid-cols-2 xl:grid-cols-4">
+    <>
+      {prepend}
       <SearchableMultiSelect
-        label="Owner"
-        tip="Limit results to one or more owners. Combines with other filters."
-        options={ownerOptions}
-        selected={value.ownerIds}
-        onChange={(ownerIds) => patch({ ownerIds })}
-        placeholder="All owners"
-        searchPlaceholder="Search owner…"
+        label="Prop ID"
+        tip="Excel Prop ID — select one or more. Syncs with Property."
+        options={propIdOptions}
+        selected={value.clientPropIds}
+        onChange={(clientPropIds) => {
+          if (onSyncFromPropIds) {
+            patch(onSyncFromPropIds(clientPropIds));
+            return;
+          }
+          patch({ clientPropIds });
+        }}
+        placeholder="All Prop IDs"
+        searchPlaceholder="Search Prop ID…"
       />
       <SearchableMultiSelect
         label="Property"
@@ -62,8 +75,7 @@ export function TransactionFilterFields({
         selected={value.propertyIds}
         onChange={(propertyIds) => {
           if (onSyncFromProperties) {
-            const synced = onSyncFromProperties(propertyIds);
-            patch(synced);
+            patch(onSyncFromProperties(propertyIds));
             return;
           }
           patch({ propertyIds });
@@ -72,20 +84,13 @@ export function TransactionFilterFields({
         searchPlaceholder="Search property…"
       />
       <SearchableMultiSelect
-        label="Prop ID"
-        tip="Excel Prop ID — select one or more. Syncs with Property."
-        options={propIdOptions}
-        selected={value.clientPropIds}
-        onChange={(clientPropIds) => {
-          if (onSyncFromPropIds) {
-            const synced = onSyncFromPropIds(clientPropIds);
-            patch(synced);
-            return;
-          }
-          patch({ clientPropIds });
-        }}
-        placeholder="All Prop IDs"
-        searchPlaceholder="Search Prop ID…"
+        label="Owner"
+        tip="Limit results to one or more owners. Combines with other filters."
+        options={ownerOptions}
+        selected={value.ownerIds}
+        onChange={(ownerIds) => patch({ ownerIds })}
+        placeholder="All owners"
+        searchPlaceholder="Search owner…"
       />
       <DateInputDMY
         label="From date"
@@ -127,7 +132,8 @@ export function TransactionFilterFields({
           </label>
         </>
       ) : null}
-    </div>
+      {append}
+    </>
   );
 }
 

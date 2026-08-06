@@ -10,7 +10,7 @@ from uuid import UUID
 
 import httpx
 from fastapi import HTTPException
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
@@ -21,6 +21,10 @@ from app.models.property import Property
 from app.schemas import AIQueryFilters, AIQueryResponse, DepositQueryIntent, PeriodRange
 from app.services.deposit_query import find_deposit_gaps, list_deposits
 from app.services.expense_query import list_expenses
+from app.services.transaction_filters import (
+    apply_deposit_list_filters,
+    apply_expense_list_filters,
+)
 from app.services.transaction_view import normalize_transaction_row
 
 logger = logging.getLogger(__name__)
@@ -1037,59 +1041,25 @@ class AIQueryService:
         max_amount: Decimal | None = None,
         intent: DepositQueryIntent | None = None,
     ):
-        if date_from:
-            stmt = stmt.where(Deposit.transaction_date >= date_from)
-        if date_to:
-            stmt = stmt.where(Deposit.transaction_date <= date_to)
-
-        property_ids = list(intent.property_ids) if intent and intent.property_ids else []
-        if property_id and property_id not in property_ids:
-            property_ids.append(property_id)
-        if len(property_ids) == 1:
-            stmt = stmt.where(Deposit.property_id == property_ids[0])
-        elif len(property_ids) > 1:
-            stmt = stmt.where(Deposit.property_id.in_(property_ids))
-
-        owner_ids = list(intent.owner_ids) if intent and intent.owner_ids else []
-        if owner_id and owner_id not in owner_ids:
-            owner_ids.append(owner_id)
-        if len(owner_ids) == 1:
-            stmt = stmt.where(Property.owner_id == owner_ids[0])
-        elif len(owner_ids) > 1:
-            stmt = stmt.where(Property.owner_id.in_(owner_ids))
-
-        if min_amount is not None:
-            stmt = stmt.where(Deposit.amount >= min_amount)
-        if max_amount is not None:
-            stmt = stmt.where(Deposit.amount <= max_amount)
-        if intent is not None:
-            client_prop_ids = [
-                value.strip().upper()
-                for value in (intent.client_prop_ids or [])
-                if value and value.strip()
-            ]
-            if intent.client_prop_id and not property_ids:
-                client_prop_ids.append(intent.client_prop_id.strip().upper())
-            seen: set[str] = set()
-            client_prop_ids = [
-                value for value in client_prop_ids if not (value in seen or seen.add(value))
-            ]
-            if len(client_prop_ids) == 1 and not property_ids:
-                stmt = stmt.where(func.upper(Property.client_prop_id) == client_prop_ids[0])
-            elif len(client_prop_ids) > 1 and not property_ids:
-                stmt = stmt.where(func.upper(Property.client_prop_id).in_(client_prop_ids))
-            if intent.source_file:
-                stmt = stmt.where(Deposit.source_file.ilike(f"%{intent.source_file.strip()}%"))
-            if intent.needs_review is not None:
-                stmt = stmt.where(Deposit.needs_review.is_(intent.needs_review))
-            if intent.is_rental_income is not None:
-                stmt = stmt.where(Deposit.is_rental_income.is_(intent.is_rental_income))
-            else:
-                # Default to Excel Inflow (company float) — exclude rental unless asked.
-                stmt = stmt.where(Deposit.is_rental_income.is_(False))
-            if intent.source:
-                stmt = stmt.where(Deposit.source == intent.source)
-        return stmt
+        return apply_deposit_list_filters(
+            stmt,
+            property_id=property_id or (intent.property_id if intent else None),
+            property_ids=list(intent.property_ids) if intent and intent.property_ids else None,
+            client_prop_id=intent.client_prop_id if intent else None,
+            client_prop_ids=list(intent.client_prop_ids) if intent and intent.client_prop_ids else None,
+            owner_id=owner_id or (intent.owner_id if intent else None),
+            owner_ids=list(intent.owner_ids) if intent and intent.owner_ids else None,
+            date_from=date_from,
+            date_to=date_to,
+            min_amount=min_amount if min_amount is not None else (intent.min_amount if intent else None),
+            max_amount=max_amount if max_amount is not None else (intent.max_amount if intent else None),
+            source_file=intent.source_file if intent else None,
+            needs_review=intent.needs_review if intent else None,
+            is_rental_income=intent.is_rental_income if intent else None,
+            source=intent.source if intent else None,
+            source_file_match="contains",
+            apply_company_float_default=True,
+        )
 
     def _apply_expense_filters(
         self,
@@ -1098,85 +1068,31 @@ class AIQueryService:
         date_to: date | None,
         intent: DepositQueryIntent,
     ):
-        if date_from:
-            stmt = stmt.where(Expense.transaction_date >= date_from)
-        if date_to:
-            stmt = stmt.where(Expense.transaction_date <= date_to)
-
-        property_ids = list(intent.property_ids or [])
-        if intent.property_id and intent.property_id not in property_ids:
-            property_ids.append(intent.property_id)
-        if len(property_ids) == 1:
-            stmt = stmt.where(Expense.property_id == property_ids[0])
-        elif len(property_ids) > 1:
-            stmt = stmt.where(Expense.property_id.in_(property_ids))
-
-        client_prop_ids = [
-            value.strip().upper()
-            for value in (intent.client_prop_ids or [])
-            if value and value.strip()
-        ]
-        if intent.client_prop_id and not property_ids:
-            client_prop_ids.append(intent.client_prop_id.strip().upper())
-        seen: set[str] = set()
-        client_prop_ids = [
-            value for value in client_prop_ids if not (value in seen or seen.add(value))
-        ]
-        if len(client_prop_ids) == 1 and not property_ids:
-            stmt = stmt.where(func.upper(Property.client_prop_id) == client_prop_ids[0])
-        elif len(client_prop_ids) > 1 and not property_ids:
-            stmt = stmt.where(func.upper(Property.client_prop_id).in_(client_prop_ids))
-
-        owner_ids = list(intent.owner_ids or [])
-        if intent.owner_id and intent.owner_id not in owner_ids:
-            owner_ids.append(intent.owner_id)
-        if len(owner_ids) == 1:
-            stmt = stmt.where(Property.owner_id == owner_ids[0])
-        elif len(owner_ids) > 1:
-            stmt = stmt.where(Property.owner_id.in_(owner_ids))
-
-        if intent.category:
-            stmt = stmt.where(Expense.category == intent.category)
-        if intent.source:
-            stmt = stmt.where(Expense.source == intent.source)
-        if intent.payment_method:
-            stmt = stmt.where(Expense.payment_method == intent.payment_method)
-        if intent.search_text:
-            pattern = f"%{intent.search_text}%"
-            stmt = stmt.where(
-                or_(
-                    Expense.description.ilike(pattern),
-                    Expense.vendor_name.ilike(pattern),
-                )
-            )
-        if intent.min_amount is not None:
-            stmt = stmt.where(Expense.amount >= intent.min_amount)
-        if intent.max_amount is not None:
-            stmt = stmt.where(Expense.amount <= intent.max_amount)
-        if intent.source_file:
-            stmt = stmt.where(Expense.source_file.ilike(f"%{intent.source_file.strip()}%"))
-        if intent.needs_review is not None:
-            stmt = stmt.where(Expense.needs_review.is_(intent.needs_review))
-        explicit_payer = (
-            intent.paid_by_resident is not None
-            or intent.paid_by_owner is not None
-            or intent.paid_by_company is not None
+        return apply_expense_list_filters(
+            stmt,
+            property_id=intent.property_id,
+            property_ids=list(intent.property_ids) if intent.property_ids else None,
+            client_prop_id=intent.client_prop_id,
+            client_prop_ids=list(intent.client_prop_ids) if intent.client_prop_ids else None,
+            owner_id=intent.owner_id,
+            owner_ids=list(intent.owner_ids) if intent.owner_ids else None,
+            category=intent.category,
+            source=intent.source,
+            payment_method=intent.payment_method,
+            search_text=intent.search_text,
+            date_from=date_from,
+            date_to=date_to,
+            min_amount=intent.min_amount,
+            max_amount=intent.max_amount,
+            source_file=intent.source_file,
+            needs_review=intent.needs_review,
+            paid_by_resident=intent.paid_by_resident,
+            paid_by_owner=intent.paid_by_owner,
+            paid_by_company=intent.paid_by_company,
+            ledger_column=intent.ledger_column,
+            source_file_match="contains",
+            apply_company_float_default=True,
         )
-        if intent.paid_by_resident is not None:
-            stmt = stmt.where(Expense.paid_by_resident.is_(intent.paid_by_resident))
-        if intent.paid_by_owner is not None:
-            stmt = stmt.where(Expense.paid_by_owner.is_(intent.paid_by_owner))
-        if intent.paid_by_company is not None:
-            stmt = stmt.where(Expense.paid_by_company.is_(intent.paid_by_company))
-        elif not explicit_payer:
-            # Default to Excel Amount (company float) — exclude He/She and Owner paid.
-            stmt = stmt.where(
-                Expense.paid_by_resident.is_(False),
-                Expense.paid_by_owner.is_(False),
-            )
-        if intent.ledger_column:
-            stmt = stmt.where(Expense.ledger_column == intent.ledger_column)
-        return stmt
 
     def _extract_year(self, text: str) -> int | None:
         match = re.search(r"\b(20\d{2})\b", text)

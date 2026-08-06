@@ -19,6 +19,12 @@ from sqlalchemy.orm import Session
 
 from app.models.deposit import Deposit
 from app.models.expense import Expense
+from app.services.transaction_filters import (
+    deposit_company_float_clause,
+    deposit_counts_in_company_float,
+    expense_company_float_clauses,
+    expense_counts_in_company_float,
+)
 
 
 @dataclass(frozen=True)
@@ -41,7 +47,7 @@ def property_float_totals(
             Deposit.property_id,
             func.coalesce(func.sum(Deposit.amount), 0),
         )
-        .where(Deposit.is_rental_income.is_(False))
+        .where(deposit_company_float_clause())
         .group_by(Deposit.property_id)
     )
     expense_stmt = (
@@ -49,12 +55,7 @@ def property_float_totals(
             Expense.property_id,
             func.coalesce(func.sum(Expense.amount), 0),
         )
-        .where(
-            and_(
-                Expense.paid_by_resident.is_(False),
-                Expense.paid_by_owner.is_(False),
-            )
-        )
+        .where(and_(*expense_company_float_clauses()))
         .group_by(Expense.property_id)
     )
     if property_ids is not None:
@@ -118,7 +119,7 @@ def compute_running_balances(
 
     events: list[_LedgerEvent] = []
     for deposit in deposits:
-        counts = not bool(deposit.is_rental_income)
+        counts = deposit_counts_in_company_float(deposit)
         events.append(
             _LedgerEvent(
                 property_id=deposit.property_id,
@@ -130,7 +131,7 @@ def compute_running_balances(
             )
         )
     for expense in expenses:
-        counts = not bool(expense.paid_by_resident) and not bool(expense.paid_by_owner)
+        counts = expense_counts_in_company_float(expense)
         events.append(
             _LedgerEvent(
                 property_id=expense.property_id,

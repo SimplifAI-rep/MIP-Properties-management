@@ -18,8 +18,6 @@ from app.models.deposit import Deposit
 from app.models.import_batch import ImportBatch
 
 REQUIRED_COLUMNS = {"account_number", "transaction_date", "amount"}
-OPTIONAL_COLUMNS = {"currency", "reference", "description"}
-ALL_COLUMNS = REQUIRED_COLUMNS | OPTIONAL_COLUMNS
 
 
 @dataclass

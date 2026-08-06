@@ -1,7 +1,7 @@
 import type { QueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
 
-export type TxnSharedFilters = {
+type TxnSharedFilters = {
   property_id?: string;
   client_prop_id?: string;
   owner_id?: string;
@@ -9,7 +9,7 @@ export type TxnSharedFilters = {
   date_to?: string;
 };
 
-export type TxnListFilters = TxnSharedFilters & {
+type TxnListFilters = TxnSharedFilters & {
   source_file?: string;
   needs_review?: boolean;
 };
@@ -33,8 +33,8 @@ export function buildTxnListFilters(partial: TxnListFilters = {}): TxnListFilter
   };
 }
 
-export const DEFAULT_TXN_SHARED_FILTERS = buildTxnSharedFilters();
-export const DEFAULT_TXN_LIST_FILTERS = buildTxnListFilters();
+const DEFAULT_TXN_SHARED_FILTERS = buildTxnSharedFilters();
+const DEFAULT_TXN_LIST_FILTERS = buildTxnListFilters();
 
 /**
  * Warm React Query cache for the default Transactions view so navigation

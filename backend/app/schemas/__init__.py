@@ -158,16 +158,6 @@ class DepositUpdate(BaseModel):
     is_rental_income: bool | None = None
 
 
-class ImportResultRead(BaseModel):
-    filename: str
-    row_count: int
-    imported_count: int
-    skipped_count: int
-    error_count: int
-    errors: list[dict]
-    import_batch_id: str | None = None
-
-
 class ClientDataImportCounts(BaseModel):
     owners: int = 0
     properties: int = 0

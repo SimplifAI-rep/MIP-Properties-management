@@ -28,7 +28,8 @@ def main() -> None:
 
     if not DEFAULT_DB_PATH.exists():
         print("No database file found. Run this first:")
-        print("  python scripts/import_deposits.py data/seed/bank_deposits.xlsx --seed")
+        print("  python scripts/seed_database.py")
+        print("  python scripts/import_client_data.py")
         return
 
     init_db()
@@ -49,7 +50,7 @@ def main() -> None:
         if deposit_count == 0:
             print("Database exists but has no deposits.")
             print("Import data with:")
-            print("  python scripts/import_deposits.py data/seed/bank_deposits.xlsx --seed")
+            print("  python scripts/import_client_data.py")
             return
 
         print("Deposits by property:")
@@ -79,7 +80,7 @@ def main() -> None:
             )
 
         print()
-        print("March 2026 deposits for Dizengoff 45 (should be empty):")
+        print("March 2026 deposits for Dizengoff 45:")
         dizengoff = db.scalar(
             select(Property.id).where(Property.name == "Dizengoff 45")
         )

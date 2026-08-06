@@ -19,6 +19,11 @@ from app.services.source_file import (
     load_upload_filenames,
     resolve_source_file,
 )
+from app.services.transaction_filters import (
+    apply_deposit_list_filters,
+    collect_deposit_summary_filters,
+    deposit_company_float_clause,
+)
 
 
 def deposit_to_read(
@@ -100,51 +105,22 @@ def list_deposits(
         .outerjoin(BankAccount, Deposit.bank_account_id == BankAccount.id)
         .order_by(Deposit.transaction_date.desc())
     )
-
-    prop_ids = list(property_ids or [])
-    if property_id and property_id not in prop_ids:
-        prop_ids.append(property_id)
-    if len(prop_ids) == 1:
-        stmt = stmt.where(Deposit.property_id == prop_ids[0])
-    elif len(prop_ids) > 1:
-        stmt = stmt.where(Deposit.property_id.in_(prop_ids))
-
-    prop_codes = [
-        value.strip().upper()
-        for value in (client_prop_ids or [])
-        if value and value.strip()
-    ]
-    if client_prop_id and client_prop_id.strip():
-        prop_codes.append(client_prop_id.strip().upper())
-    seen_codes: set[str] = set()
-    prop_codes = [value for value in prop_codes if not (value in seen_codes or seen_codes.add(value))]
-    if len(prop_codes) == 1 and not prop_ids:
-        stmt = stmt.where(func.upper(Property.client_prop_id) == prop_codes[0])
-    elif len(prop_codes) > 1 and not prop_ids:
-        stmt = stmt.where(func.upper(Property.client_prop_id).in_(prop_codes))
-
-    own_ids = list(owner_ids or [])
-    if owner_id and owner_id not in own_ids:
-        own_ids.append(owner_id)
-    if len(own_ids) == 1:
-        stmt = stmt.where(Property.owner_id == own_ids[0])
-    elif len(own_ids) > 1:
-        stmt = stmt.where(Property.owner_id.in_(own_ids))
-
-    if date_from:
-        stmt = stmt.where(Deposit.transaction_date >= date_from)
-    if date_to:
-        stmt = stmt.where(Deposit.transaction_date <= date_to)
-    if min_amount is not None:
-        stmt = stmt.where(Deposit.amount >= min_amount)
-    if max_amount is not None:
-        stmt = stmt.where(Deposit.amount <= max_amount)
-    if source_file:
-        stmt = stmt.where(Deposit.source_file == source_file.strip())
-    if needs_review is not None:
-        stmt = stmt.where(Deposit.needs_review.is_(needs_review))
-    if is_rental_income is not None:
-        stmt = stmt.where(Deposit.is_rental_income.is_(is_rental_income))
+    stmt = apply_deposit_list_filters(
+        stmt,
+        property_id=property_id,
+        property_ids=property_ids,
+        client_prop_id=client_prop_id,
+        client_prop_ids=client_prop_ids,
+        owner_id=owner_id,
+        owner_ids=owner_ids,
+        date_from=date_from,
+        date_to=date_to,
+        min_amount=min_amount,
+        max_amount=max_amount,
+        source_file=source_file,
+        needs_review=needs_review,
+        is_rental_income=is_rental_income,
+    )
 
     count_stmt = select(func.count()).select_from(stmt.subquery())
     total = db.scalar(count_stmt) or 0
@@ -191,27 +167,19 @@ def get_deposit_summary(
 ) -> dict:
     # Default: rental-income rows are informational only — exclude from company float totals
     # Explicit is_rental_income overrides include_all default.
-    filters = []
-    if is_rental_income is not None:
-        filters.append(Deposit.is_rental_income.is_(is_rental_income))
-    elif not include_all:
-        filters.append(Deposit.is_rental_income.is_(False))
-
-    needs_property_join = bool(client_prop_id or owner_id)
-    if property_id:
-        filters.append(Deposit.property_id == property_id)
-    if date_from:
-        filters.append(Deposit.transaction_date >= date_from)
-    if date_to:
-        filters.append(Deposit.transaction_date <= date_to)
-    if min_amount is not None:
-        filters.append(Deposit.amount >= min_amount)
-    if max_amount is not None:
-        filters.append(Deposit.amount <= max_amount)
-    if source_file:
-        filters.append(Deposit.source_file == source_file.strip())
-    if needs_review is not None:
-        filters.append(Deposit.needs_review.is_(needs_review))
+    filters, needs_property_join = collect_deposit_summary_filters(
+        property_id=property_id,
+        client_prop_id=client_prop_id,
+        owner_id=owner_id,
+        date_from=date_from,
+        date_to=date_to,
+        min_amount=min_amount,
+        max_amount=max_amount,
+        source_file=source_file,
+        needs_review=needs_review,
+        is_rental_income=is_rental_income,
+        include_all=include_all,
+    )
 
     amount_stmt = select(func.coalesce(func.sum(Deposit.amount), 0))
     count_stmt = select(func.count()).select_from(Deposit)
@@ -225,12 +193,6 @@ def get_deposit_summary(
         )
         count_stmt = count_stmt.join(Property, Deposit.property_id == Property.id)
         property_stmt = property_stmt.join(Property, Deposit.property_id == Property.id)
-        if client_prop_id:
-            filters.append(
-                func.upper(Property.client_prop_id) == client_prop_id.strip().upper()
-            )
-        if owner_id:
-            filters.append(Property.owner_id == owner_id)
     elif filters:
         amount_stmt = amount_stmt.select_from(Deposit)
 
@@ -315,7 +277,7 @@ def find_deposit_gaps(
                     Deposit.property_id == prop.id,
                     Deposit.transaction_date >= period_start,
                     Deposit.transaction_date <= period_end,
-                    Deposit.is_rental_income.is_(False),
+                    deposit_company_float_clause(),
                 )
             )
         ).all()

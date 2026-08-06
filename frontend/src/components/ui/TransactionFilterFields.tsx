@@ -136,27 +136,3 @@ export function TransactionFilterFields({
     </>
   );
 }
-
-export function emptyTransactionEntityFilters(): TransactionEntityFilters {
-  return {
-    ownerIds: [],
-    propertyIds: [],
-    clientPropIds: [],
-    dateFrom: undefined,
-    dateTo: undefined,
-    minAmount: '',
-    maxAmount: '',
-  };
-}
-
-export function transactionFiltersActive(filters: TransactionEntityFilters): boolean {
-  return Boolean(
-    filters.ownerIds.length ||
-      filters.propertyIds.length ||
-      filters.clientPropIds.length ||
-      filters.dateFrom ||
-      filters.dateTo ||
-      filters.minAmount?.trim() ||
-      filters.maxAmount?.trim(),
-  );
-}

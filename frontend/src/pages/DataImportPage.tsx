@@ -1,19 +1,15 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
 import type { ClientDataImportResponse } from '../types';
+import { FileField } from '../components/ui/FileField';
 import { ErrorState, InlineError, LoadingState } from '../components/ui/States';
 import { Tooltip } from '../components/ui/Tooltip';
-import { useAuth } from '../context/AuthContext';
 import { validationError, AppError } from '../utils/errors';
+import { formatLabel } from '../utils/formatLabel';
 
-type FileRole =
-  | 'client_list'
-  | 'management'
-  | 'bank'
-  | 'credit_card_1'
-  | 'credit_card_2';
+type FileRole = 'client_list' | 'management';
 
 const FILE_FIELDS: {
   role: FileRole;
@@ -36,27 +32,6 @@ const FILE_FIELDS: {
     hint: 'Management expenses sheet.xlsx — expenses and inflows',
     tip: 'Main ledger for expenses and inflows.',
   },
-  {
-    role: 'bank',
-    label: 'Bank statement',
-    required: false,
-    hint: 'Bank Account example.xlsx — company bank rows',
-    tip: 'Optional company bank rows for matching.',
-  },
-  {
-    role: 'credit_card_1',
-    label: 'Credit card 1',
-    required: false,
-    hint: 'credit card 1 example.xlsx',
-    tip: 'Optional credit-card expense file.',
-  },
-  {
-    role: 'credit_card_2',
-    label: 'Credit card 2',
-    required: false,
-    hint: 'credit card 2 example.xlsx',
-    tip: 'Optional second credit-card expense file.',
-  },
 ];
 
 const POLL_MS = 1500;
@@ -78,25 +53,17 @@ const INCOMPLETE_REASON_LABELS: Record<string, string> = {
 };
 
 function reasonLabel(map: Record<string, string>, key: string): string {
-  return map[key] ?? key.replace(/_/g, ' ');
+  return map[key] ?? formatLabel(key);
 }
 
 export function DataImportPage() {
   const queryClient = useQueryClient();
-  const { isAdmin } = useAuth();
   const [files, setFiles] = useState<Partial<Record<FileRole, File | null>>>({});
   const [reset, setReset] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
   const [result, setResult] = useState<ClientDataImportResponse | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [progressMessage, setProgressMessage] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!isAdmin) {
-      setReset(false);
-      setConfirmReset(false);
-    }
-  }, [isAdmin]);
 
   const statusQuery = useQuery({
     queryKey: ['client-data-status'],
@@ -108,9 +75,6 @@ export function DataImportPage() {
       if (!files.client_list || !files.management) {
         throw validationError('Please choose both the client list and management ledger files.');
       }
-      if (reset && !isAdmin) {
-        throw validationError('Admin login is required to reset the database.');
-      }
       if (reset && !confirmReset) {
         throw validationError('Please confirm the database reset before importing.');
       }
@@ -118,11 +82,8 @@ export function DataImportPage() {
       const accepted = await api.importClientData({
         clientList: files.client_list,
         management: files.management,
-        bank: files.bank ?? undefined,
-        creditCard1: files.credit_card_1 ?? undefined,
-        creditCard2: files.credit_card_2 ?? undefined,
-        reset: isAdmin ? reset : false,
-        confirmReset: isAdmin ? confirmReset : false,
+        reset,
+        confirmReset,
       });
       setProgressMessage(accepted.message || 'Import queued…');
 
@@ -163,10 +124,7 @@ export function DataImportPage() {
     },
   });
 
-  const effectiveReset = isAdmin && reset;
-  const ready = Boolean(
-    files.client_list && files.management && (!effectiveReset || confirmReset),
-  );
+  const ready = Boolean(files.client_list && files.management && (!reset || confirmReset));
 
   const counts = statusQuery.data?.database_counts;
   const countSummary = useMemo(() => {
@@ -216,8 +174,8 @@ export function DataImportPage() {
         <div className="space-y-4">
           <h3 className="subheading">Upload files</h3>
           <p className="text-sm text-muted">
-            Required files rebuild the core ledger. Optional bank and credit-card files match the
-            full seed set.
+            Upload the client list and management ledger. Bank statements and credit-card files are
+            uploaded from the Transactions page.
           </p>
 
           <div className="grid gap-4 md:grid-cols-2">
@@ -227,65 +185,56 @@ export function DataImportPage() {
                   <Tooltip content={field.tip}>{field.label}</Tooltip>
                   {field.required ? ' (required)' : ' (optional)'}
                 </span>
-                <input
-                  type="file"
+                <FileField
                   accept=".xlsx,.xls"
-                  className="field"
-                  onChange={(event) => {
-                    const next = event.target.files?.[0] ?? null;
+                  file={files[field.role]}
+                  onChange={(next) => {
                     setFiles((current) => ({ ...current, [field.role]: next }));
                     setResult(null);
                   }}
                 />
                 <span className="mt-1 block text-xs text-muted">{field.hint}</span>
-                {files[field.role] ? (
-                  <span className="mt-1 block text-xs text-positive">
-                    Selected: {files[field.role]!.name}
-                  </span>
-                ) : null}
               </label>
             ))}
           </div>
 
-          {isAdmin ? (
-            <div className="rounded-lg border border-border p-3 space-y-2">
-              <label className="flex items-start gap-2 text-sm">
+          <div className="rounded-lg border border-border p-3 space-y-2">
+            <label className="flex items-start gap-2 text-sm">
+              <input
+                type="checkbox"
+                className="mt-1"
+                checked={reset}
+                onChange={(event) => {
+                  setReset(event.target.checked);
+                  if (!event.target.checked) setConfirmReset(false);
+                }}
+              />
+              <span>
+                <strong>
+                  <Tooltip content="Deletes current data, then reloads from the files above.">
+                    Reset database before import
+                  </Tooltip>
+                </strong>
+                <span className="block text-muted">
+                  Wipes all owners, properties, expenses, deposits, and uploads, then imports from
+                  the files above. Use this for a clean reload matching seed data.
+                </span>
+              </span>
+            </label>
+            {reset ? (
+              <label className="flex items-start gap-2 text-sm pl-6">
                 <input
                   type="checkbox"
                   className="mt-1"
-                  checked={reset}
-                  onChange={(event) => {
-                    setReset(event.target.checked);
-                    if (!event.target.checked) setConfirmReset(false);
-                  }}
+                  checked={confirmReset}
+                  onChange={(event) => setConfirmReset(event.target.checked)}
                 />
-                <span>
-                  <strong>
-                    <Tooltip content="Deletes current data, then reloads from the files above.">
-                      Reset database before import
-                    </Tooltip>
-                  </strong>
-                  <span className="block text-muted">
-                    Wipes all owners, properties, expenses, deposits, and uploads, then imports from
-                    the files above. Use this for a clean reload matching seed data.
-                  </span>
+                <span className="text-negative">
+                  I understand this permanently deletes the current database contents.
                 </span>
               </label>
-              {reset ? (
-                <label className="flex items-start gap-2 text-sm pl-6">
-                  <input
-                    type="checkbox"
-                    className="mt-1"
-                    checked={confirmReset}
-                    onChange={(event) => setConfirmReset(event.target.checked)}
-                  />
-                  <span className="text-negative">
-                    I understand this permanently deletes the current database contents.
-                  </span>
-                </label>
-              ) : null}
-            </div>
-          ) : null}
+            ) : null}
+          </div>
 
           <div className="flex flex-wrap gap-2">
             <button
@@ -296,7 +245,7 @@ export function DataImportPage() {
             >
               {importMutation.isPending
                 ? 'Importing…'
-                : effectiveReset
+                : reset
                   ? 'Reset & import'
                   : 'Import into current database'}
             </button>

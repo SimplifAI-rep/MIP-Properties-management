@@ -129,7 +129,7 @@ def test_list_utilities_expenses(client, db):
     assert body["query_used"]["search_text"] == "electric"
     assert body["query_used"]["category"] is None
     assert len(body["data"]) == 1
-    assert "electric" in body["data"][0]["description"].lower()
+    assert "electric" in (body["data"][0].get("notes") or body["data"][0].get("description") or "").lower()
 
 
 def test_electricity_expenses_q1_excludes_water(client, db):
@@ -141,7 +141,8 @@ def test_electricity_expenses_q1_excludes_water(client, db):
     body = response.json()
     assert body["query_used"]["search_text"] == "electric"
     assert len(body["data"]) == 1
-    assert body["data"][0]["vendor_name"] == "Israel Electric Corp"
+    vendor = body["data"][0].get("company") or body["data"][0].get("vendor_name")
+    assert vendor == "Israel Electric Corp"
 
 
 def test_sum_expenses_per_property(client, db):
@@ -259,3 +260,134 @@ def test_transactions_domain_list(client, db):
     assert "transaction" in body["answer"].lower()
     for row in body["data"]:
         assert row["kind"] in {"deposit", "expense"}
+
+
+def test_filters_only_without_question(client, db):
+    from app.services.seed import OWNER_DAVID_ID, PROPERTY_ROTHSCHILD_ID
+
+    response = client.post(
+        "/api/v1/ai/query",
+        json={
+            "question": "",
+            "filters": {
+                "owner_ids": [str(OWNER_DAVID_ID)],
+                "property_ids": [str(PROPERTY_ROTHSCHILD_ID)],
+                "date_from": "2026-01-01",
+                "date_to": "2026-03-31",
+            },
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["query_used"]["owner_ids"] == [str(OWNER_DAVID_ID)]
+    assert body["query_used"]["property_ids"] == [str(PROPERTY_ROTHSCHILD_ID)]
+    assert body["query_used"]["date_from"] == "2026-01-01"
+    assert body["query_used"]["date_to"] == "2026-03-31"
+    for row in body["data"]:
+        assert row["property_name"] == "Rothschild 12"
+
+
+def test_empty_question_and_filters_rejected(client):
+    response = client.post("/api/v1/ai/query", json={"question": ""})
+    assert response.status_code == 400
+    assert "filter" in response.json()["detail"].lower()
+
+
+def test_structured_filters_override_nl_property(client, db):
+    from app.services.seed import PROPERTY_HERZL_ID
+
+    response = client.post(
+        "/api/v1/ai/query",
+        json={
+            "question": "Show all deposits for Rothschild 12 in Q1 2026",
+            "filters": {"property_ids": [str(PROPERTY_HERZL_ID)]},
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["query_used"]["property_ids"] == [str(PROPERTY_HERZL_ID)]
+    assert body["query_used"]["property_id"] == str(PROPERTY_HERZL_ID)
+    for row in body["data"]:
+        assert row["property_name"] == "Herzl 8"
+
+
+def test_multi_property_and_amount_filters(client, db):
+    from decimal import Decimal
+
+    from app.services.seed import PROPERTY_DIZENGOFF_ID, PROPERTY_ROTHSCHILD_ID
+
+    response = client.post(
+        "/api/v1/ai/query",
+        json={
+            "question": "Show expenses",
+            "filters": {
+                "property_ids": [
+                    str(PROPERTY_ROTHSCHILD_ID),
+                    str(PROPERTY_DIZENGOFF_ID),
+                ],
+                "min_amount": "100",
+                "max_amount": "1000",
+            },
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert set(body["query_used"]["property_ids"]) == {
+        str(PROPERTY_ROTHSCHILD_ID),
+        str(PROPERTY_DIZENGOFF_ID),
+    }
+    assert Decimal(body["query_used"]["min_amount"]) == Decimal("100")
+    assert Decimal(body["query_used"]["max_amount"]) == Decimal("1000")
+    for row in body["data"]:
+        assert row["property_name"] in {"Rothschild 12", "Dizengoff 45"}
+        amount = Decimal(str(row["amount"]))
+        assert Decimal("100") <= amount <= Decimal("1000")
+
+
+def test_client_prop_id_filter_combination(client, db):
+    response = client.post(
+        "/api/v1/ai/query",
+        json={
+            "question": "List expenses",
+            "filters": {
+                "client_prop_ids": ["TEST-H8"],
+                "date_from": "2026-01-01",
+                "date_to": "2026-12-31",
+            },
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["query_used"]["client_prop_ids"] == ["TEST-H8"]
+    assert body["query_used"]["client_prop_id"] == "TEST-H8"
+    for row in body["data"]:
+        assert row["client_prop_id"] == "TEST-H8"
+
+
+def test_owner_partial_name_and_onward_date(db):
+    """Owner names with aliases like '(MIP)' should match partial mentions."""
+    from app.models.owner import Owner
+    from app.services.ai_query import AIQueryService
+    from app.services.seed import OWNER_DAVID_ID
+
+    david = db.get(Owner, OWNER_DAVID_ID)
+    assert david is not None
+    david.name = "My Israel Property (MIP)"
+    db.commit()
+
+    service = AIQueryService(db)
+    intent = service._parse_with_rules(
+        "show all deposits for the owner My Israel Property, above 5000, for February 2026 onward"
+    )
+    assert intent.owner_name == "My Israel Property (MIP)"
+    assert intent.min_amount == __import__("decimal").Decimal("5000")
+    assert intent.date_from.isoformat() == "2026-02-01"
+    assert intent.date_to is None
+
+    resolved = service._resolve_names(service._validate_intent(intent))
+    assert resolved.owner_id == OWNER_DAVID_ID
+
+    alias = service._parse_with_rules("show deposits for MIP in March 2026")
+    assert alias.owner_name == "My Israel Property (MIP)"
+    assert alias.date_from.isoformat() == "2026-03-01"
+    assert alias.date_to.isoformat() == "2026-03-31"

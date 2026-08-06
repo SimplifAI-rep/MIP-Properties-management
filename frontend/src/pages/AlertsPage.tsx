@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
 import type { AlertItem, DepositCreate, TransactionDraft } from '../types';
@@ -13,11 +13,47 @@ import {
 } from '../components/ui/States';
 import { Tooltip } from '../components/ui/Tooltip';
 import { DateInputDMY } from '../components/ui/DateInputDMY';
+import { SearchableMultiSelect } from '../components/ui/SearchableMultiSelect';
 import { EXPENSE_CATEGORIES as CATEGORIES } from '../constants/expenseOptions';
 import { validationError } from '../utils/errors';
+import { formatLabel } from '../utils/formatLabel';
+import {
+  invalidateAlertData,
+  invalidateTransactionData,
+} from '../utils/invalidateQueries';
+
+type AlertTypeFilter =
+  | AlertItem['alert_type']
+  | 'missing_date'
+  | 'missing_amount'
+  | 'needs_review';
+type SeverityFilter = AlertItem['severity'];
+
+const REASON_LABELS: Record<string, string> = {
+  missing_date: 'Missing date',
+  missing_amount: 'Missing amount',
+  no_money_columns: 'Missing amount',
+  needs_review: 'Needs review',
+};
+
+const ALERT_TYPE_OPTIONS: { value: AlertTypeFilter; label: string }[] = [
+  { value: 'missing_deposit', label: 'Missing deposit' },
+  { value: 'low_balance', label: 'Low balance' },
+  { value: 'missing_date', label: 'Missing date' },
+  { value: 'missing_amount', label: 'Missing amount' },
+  { value: 'needs_review', label: 'Needs review' },
+  { value: 'duplicate_deposit', label: 'Possible duplicate' },
+  { value: 'upload_pending', label: 'Upload review' },
+];
+
+const SEVERITY_OPTIONS: { value: SeverityFilter; label: string }[] = [
+  { value: 'error', label: 'Error' },
+  { value: 'warning', label: 'Warning' },
+  { value: 'info', label: 'Info' },
+];
 
 function label(value: string) {
-  return value.replace(/_/g, ' ');
+  return formatLabel(value);
 }
 
 function severityBadge(severity: AlertItem['severity']) {
@@ -26,11 +62,66 @@ function severityBadge(severity: AlertItem['severity']) {
   return 'badge-neutral';
 }
 
-function typeLabel(alertType: AlertItem['alert_type']) {
-  if (alertType === 'missing_deposit') return 'Missing deposit';
-  if (alertType === 'duplicate_deposit') return 'Possible duplicate';
-  if (alertType === 'incomplete_import') return 'Incomplete import';
+/** Incomplete-import reasons shown as the Type (normalized). */
+function incompleteReasonKeys(alert: AlertItem): string[] {
+  const reasonSet = new Set(
+    (alert.review_reasons || '')
+      .split(',')
+      .map((part) => part.trim())
+      .filter(Boolean),
+  );
+  const keys: string[] = [];
+  if (reasonSet.has('missing_date') || !alert.transaction_date) {
+    keys.push('missing_date');
+  }
+  if (
+    reasonSet.has('missing_amount') ||
+    reasonSet.has('no_money_columns') ||
+    Number(alert.amount ?? 0) <= 0
+  ) {
+    keys.push('missing_amount');
+  }
+  for (const reason of reasonSet) {
+    if (
+      reason !== 'missing_date' &&
+      reason !== 'missing_amount' &&
+      reason !== 'no_money_columns' &&
+      !keys.includes(reason)
+    ) {
+      keys.push(reason);
+    }
+  }
+  if (keys.length === 0) keys.push('needs_review');
+  return keys;
+}
+
+function reasonLabel(key: string): string {
+  return REASON_LABELS[key] ?? label(key);
+}
+
+function typeFilterKeys(alert: AlertItem): string[] {
+  if (alert.alert_type === 'incomplete_import') {
+    return incompleteReasonKeys(alert);
+  }
+  return [alert.alert_type];
+}
+
+function typeLabel(alert: AlertItem): string {
+  if (alert.alert_type === 'incomplete_import') {
+    return incompleteReasonKeys(alert).map(reasonLabel).join(' · ');
+  }
+  if (alert.alert_type === 'missing_deposit') return 'Missing deposit';
+  if (alert.alert_type === 'low_balance') return 'Low balance';
+  if (alert.alert_type === 'duplicate_deposit') return 'Possible duplicate';
   return 'Upload review';
+}
+
+/** Prefer transaction date, then gap period, then created date (YYYY-MM-DD). */
+function alertDate(alert: AlertItem): string | null {
+  if (alert.transaction_date) return alert.transaction_date.slice(0, 10);
+  if (alert.gap?.period_start) return alert.gap.period_start.slice(0, 10);
+  if (alert.created_at) return alert.created_at.slice(0, 10);
+  return null;
 }
 
 function buildDepositForm(alert: AlertItem): DepositCreate {
@@ -68,6 +159,12 @@ export function AlertsPage() {
   const [actionError, setActionError] = useState<unknown>(null);
   const [fixDate, setFixDate] = useState<string | undefined>();
   const [fixAmount, setFixAmount] = useState('');
+  const [types, setTypes] = useState<AlertTypeFilter[]>([]);
+  const [severities, setSeverities] = useState<SeverityFilter[]>([]);
+  const [propertyIds, setPropertyIds] = useState<string[]>([]);
+  const [owners, setOwners] = useState<string[]>([]);
+  const [dateFrom, setDateFrom] = useState<string | undefined>();
+  const [dateTo, setDateTo] = useState<string | undefined>();
 
   const alertsQuery = useQuery({
     queryKey: ['alerts'],
@@ -75,14 +172,100 @@ export function AlertsPage() {
   });
 
   const alerts = alertsQuery.data?.items ?? [];
+
+  const propertyOptions = useMemo(() => {
+    const seen = new Map<string, string>();
+    for (const alert of alerts) {
+      if (alert.property_id && alert.property_name) {
+        seen.set(alert.property_id, alert.property_name);
+      }
+    }
+    return [...seen.entries()]
+      .map(([value, labelText]) => ({ value, label: labelText }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+  }, [alerts]);
+
+  const ownerOptions = useMemo(() => {
+    const names = new Set<string>();
+    for (const alert of alerts) {
+      if (alert.owner_name) names.add(alert.owner_name);
+    }
+    return [...names]
+      .sort((a, b) => a.localeCompare(b))
+      .map((name) => ({ value: name, label: name }));
+  }, [alerts]);
+
+  const filteredAlerts = useMemo(() => {
+    const typeSet = types.length ? new Set(types) : null;
+    const severitySet = severities.length ? new Set(severities) : null;
+    const propertySet = propertyIds.length ? new Set(propertyIds) : null;
+    const ownerSet = owners.length ? new Set(owners) : null;
+
+    return alerts.filter((alert) => {
+      if (typeSet) {
+        const keys = typeFilterKeys(alert);
+        if (!keys.some((key) => typeSet.has(key as AlertTypeFilter))) return false;
+      }
+      if (severitySet && !severitySet.has(alert.severity)) return false;
+      if (propertySet && (!alert.property_id || !propertySet.has(alert.property_id))) {
+        return false;
+      }
+      if (ownerSet && (!alert.owner_name || !ownerSet.has(alert.owner_name))) {
+        return false;
+      }
+      if (dateFrom || dateTo) {
+        const date = alertDate(alert);
+        if (!date) return false;
+        if (dateFrom && date < dateFrom) return false;
+        if (dateTo && date > dateTo) return false;
+      }
+      return true;
+    });
+  }, [alerts, types, severities, propertyIds, owners, dateFrom, dateTo]);
+
+  const hasActiveFilters = Boolean(
+    types.length ||
+      severities.length ||
+      propertyIds.length ||
+      owners.length ||
+      dateFrom ||
+      dateTo,
+  );
+
+  const clearFilters = () => {
+    setTypes([]);
+    setSeverities([]);
+    setPropertyIds([]);
+    setOwners([]);
+    setDateFrom(undefined);
+    setDateTo(undefined);
+  };
+
   const checkedSet = useMemo(() => new Set(checkedIds), [checkedIds]);
-  const allChecked = alerts.length > 0 && alerts.every((alert) => checkedSet.has(alert.id));
+  const allChecked =
+    filteredAlerts.length > 0 && filteredAlerts.every((alert) => checkedSet.has(alert.id));
   const someChecked = checkedIds.length > 0;
 
   const selectedAlert = useMemo(
-    () => alerts.find((alert) => alert.id === selectedId) ?? null,
-    [alerts, selectedId],
+    () => filteredAlerts.find((alert) => alert.id === selectedId) ?? null,
+    [filteredAlerts, selectedId],
   );
+
+  useEffect(() => {
+    if (selectedId && !filteredAlerts.some((alert) => alert.id === selectedId)) {
+      setSelectedId(null);
+      setDepositForm(null);
+      setDrafts([]);
+    }
+  }, [filteredAlerts, selectedId]);
+
+  useEffect(() => {
+    const visible = new Set(filteredAlerts.map((alert) => alert.id));
+    setCheckedIds((current) => {
+      const next = current.filter((id) => visible.has(id));
+      return next.length === current.length ? current : next;
+    });
+  }, [filteredAlerts]);
 
   const propertyQuery = useQuery({
     queryKey: ['property', selectedAlert?.property_id],
@@ -97,8 +280,7 @@ export function AlertsPage() {
   const dismissMutation = useMutation({
     mutationFn: (alertId: string) => api.dismissAlert(alertId),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['alerts'] });
-      queryClient.invalidateQueries({ queryKey: ['alert-summary'] });
+      invalidateAlertData(queryClient);
       setSelectedId(null);
       setActionError(null);
     },
@@ -119,8 +301,7 @@ export function AlertsPage() {
       return { total: alertIds.length, failed };
     },
     onSuccess: (result) => {
-      queryClient.invalidateQueries({ queryKey: ['alerts'] });
-      queryClient.invalidateQueries({ queryKey: ['alert-summary'] });
+      invalidateAlertData(queryClient);
       setCheckedIds([]);
       setSelectedId(null);
       setActionError(
@@ -138,15 +319,7 @@ export function AlertsPage() {
     mutationFn: (payload: { alertId: string; body: Parameters<typeof api.resolveAlert>[1] }) =>
       api.resolveAlert(payload.alertId, payload.body),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['alerts'] });
-      queryClient.invalidateQueries({ queryKey: ['alert-summary'] });
-      queryClient.invalidateQueries({ queryKey: ['deposits'] });
-      queryClient.invalidateQueries({ queryKey: ['expenses'] });
-      queryClient.invalidateQueries({ queryKey: ['deposit-summary'] });
-      queryClient.invalidateQueries({ queryKey: ['expense-summary'] });
-      queryClient.invalidateQueries({ queryKey: ['deposit-summary-rental'] });
-      queryClient.invalidateQueries({ queryKey: ['expense-summary-heshe'] });
-      queryClient.invalidateQueries({ queryKey: ['expense-summary-owner'] });
+      invalidateTransactionData(queryClient);
       setSelectedId(null);
       setDepositForm(null);
       setDrafts([]);
@@ -158,15 +331,7 @@ export function AlertsPage() {
   const fixIncompleteMutation = useMutation({
     mutationFn: api.fixIncompleteTransaction,
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['alerts'] });
-      queryClient.invalidateQueries({ queryKey: ['alert-summary'] });
-      queryClient.invalidateQueries({ queryKey: ['deposits'] });
-      queryClient.invalidateQueries({ queryKey: ['expenses'] });
-      queryClient.invalidateQueries({ queryKey: ['deposit-summary'] });
-      queryClient.invalidateQueries({ queryKey: ['expense-summary'] });
-      queryClient.invalidateQueries({ queryKey: ['deposit-summary-rental'] });
-      queryClient.invalidateQueries({ queryKey: ['expense-summary-heshe'] });
-      queryClient.invalidateQueries({ queryKey: ['expense-summary-owner'] });
+      invalidateTransactionData(queryClient);
       setSelectedId(null);
       setActionError(null);
     },
@@ -209,7 +374,7 @@ export function AlertsPage() {
       setCheckedIds([]);
       return;
     }
-    setCheckedIds(alerts.map((alert) => alert.id));
+    setCheckedIds(filteredAlerts.map((alert) => alert.id));
   };
 
   const dismissSelected = () => {
@@ -222,12 +387,15 @@ export function AlertsPage() {
   };
 
   const dismissAll = () => {
-    if (alerts.length === 0) return;
+    const targets = hasActiveFilters ? filteredAlerts : alerts;
+    if (targets.length === 0) return;
     const confirmed = window.confirm(
-      `Dismiss all ${alerts.length} open alert${alerts.length === 1 ? '' : 's'}?`,
+      hasActiveFilters
+        ? `Dismiss all ${targets.length} matching alert${targets.length === 1 ? '' : 's'}?`
+        : `Dismiss all ${targets.length} open alert${targets.length === 1 ? '' : 's'}?`,
     );
     if (!confirmed) return;
-    dismissManyMutation.mutate(alerts.map((alert) => alert.id));
+    dismissManyMutation.mutate(targets.map((alert) => alert.id));
   };
 
   const updateDraft = (index: number, patch: Partial<TransactionDraft>) => {
@@ -303,6 +471,74 @@ export function AlertsPage() {
         />
       </div>
 
+      <div className="flex shrink-0 items-center justify-between gap-3">
+        <p className="text-sm font-medium text-slate-600 dark:text-slate-300">Filters</p>
+        <button
+          type="button"
+          className="btn-secondary text-xs"
+          disabled={!hasActiveFilters}
+          onClick={clearFilters}
+        >
+          Clear
+        </button>
+      </div>
+
+      <section className="filter-panel shrink-0 md:grid-cols-2 xl:grid-cols-3">
+        <SearchableMultiSelect
+          label="Type"
+          tip="Missing deposit, low balance, missing date/amount, duplicate, or upload review."
+          options={ALERT_TYPE_OPTIONS}
+          selected={types}
+          onChange={(next) => setTypes(next as AlertTypeFilter[])}
+          placeholder="All types"
+          searchPlaceholder="Search type…"
+        />
+        <SearchableMultiSelect
+          label="Severity"
+          tip="Error needs a fix; warning needs a review."
+          options={SEVERITY_OPTIONS}
+          selected={severities}
+          onChange={(next) => setSeverities(next as SeverityFilter[])}
+          placeholder="All severities"
+          searchPlaceholder="Search severity…"
+        />
+        <SearchableMultiSelect
+          label="Property"
+          tip="Filter by property on the alert."
+          options={propertyOptions}
+          selected={propertyIds}
+          onChange={setPropertyIds}
+          placeholder="All properties"
+          searchPlaceholder="Search property…"
+        />
+        <SearchableMultiSelect
+          label="Owner"
+          tip="Filter by owner on the alert."
+          options={ownerOptions}
+          selected={owners}
+          onChange={setOwners}
+          placeholder="All owners"
+          searchPlaceholder="Search owner…"
+        />
+        <DateInputDMY
+          label="From date"
+          value={dateFrom}
+          onChange={setDateFrom}
+        />
+        <DateInputDMY
+          label="To date"
+          value={dateTo}
+          onChange={setDateTo}
+        />
+      </section>
+
+      {hasActiveFilters ? (
+        <p className="shrink-0 text-sm text-muted">
+          Showing {filteredAlerts.length} of {alerts.length} alert
+          {alerts.length === 1 ? '' : 's'}
+        </p>
+      ) : null}
+
       {actionError && !selectedAlert ? <InlineError error={actionError} /> : null}
 
       <div className="grid min-h-0 flex-1 gap-4 xl:grid-cols-[1.4fr_1fr]">
@@ -310,6 +546,10 @@ export function AlertsPage() {
           {alerts.length === 0 ? (
             <div className="p-5">
               <EmptyState message="No open alerts. Everything looks good." />
+            </div>
+          ) : filteredAlerts.length === 0 ? (
+            <div className="p-5">
+              <EmptyState message="No alerts match the current filters." />
             </div>
           ) : (
             <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
@@ -331,7 +571,7 @@ export function AlertsPage() {
                       </Tooltip>
                     </th>
                     <th className="px-3 py-3 font-medium">
-                      <Tooltip content="Missing deposit, incomplete import, duplicate, or upload review.">
+                      <Tooltip content="Missing deposit, low balance, missing date/amount, duplicate, or upload review.">
                         Type
                       </Tooltip>
                     </th>
@@ -340,7 +580,7 @@ export function AlertsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {alerts.map((alert) => (
+                  {filteredAlerts.map((alert) => (
                     <tr
                       key={alert.id}
                       onClick={() => selectAlert(alert)}
@@ -363,7 +603,7 @@ export function AlertsPage() {
                       <td className="px-3 py-3">
                         <span className={severityBadge(alert.severity)}>{alert.severity}</span>
                       </td>
-                      <td className="px-3 py-3">{typeLabel(alert.alert_type)}</td>
+                      <td className="px-3 py-3">{typeLabel(alert)}</td>
                       <td className="px-3 py-3">
                         <p className="font-medium truncate" title={alert.title}>
                           {alert.title}
@@ -404,7 +644,50 @@ export function AlertsPage() {
                 <p className="mt-1 text-sm text-muted">{selectedAlert.message}</p>
               </div>
 
-              {selectedAlert.alert_type === 'incomplete_import' ? (
+              {selectedAlert.alert_type === 'low_balance' ? (
+                <div className="space-y-4">
+                  <dl className="grid gap-2 text-sm sm:grid-cols-2">
+                    <div>
+                      <dt className="label-text">Property</dt>
+                      <dd>{selectedAlert.property_name ?? '—'}</dd>
+                    </div>
+                    <div>
+                      <dt className="label-text">Owner</dt>
+                      <dd>{selectedAlert.owner_name ?? '—'}</dd>
+                    </div>
+                    <div>
+                      <dt className="label-text">Current balance</dt>
+                      <dd
+                        className={
+                          Number(selectedAlert.amount ?? 0) >= 0
+                            ? 'amount-deposit font-medium'
+                            : 'amount-expense font-medium'
+                        }
+                      >
+                        {formatCurrency(selectedAlert.amount ?? '0')}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="label-text">Threshold</dt>
+                      <dd className="font-medium">
+                        {formatCurrency(selectedAlert.threshold_amount ?? '0')}
+                      </dd>
+                    </div>
+                  </dl>
+                  <p className="text-sm text-muted">
+                    Dismiss hides this alert until the balance recovers above the threshold (or the
+                    rule changes).
+                  </p>
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    disabled={dismissMutation.isPending}
+                    onClick={() => dismissMutation.mutate(selectedAlert.id)}
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              ) : selectedAlert.alert_type === 'incomplete_import' ? (
                 <form
                   className="grid gap-3"
                   onSubmit={(event) => {

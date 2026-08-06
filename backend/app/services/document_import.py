@@ -43,8 +43,8 @@ from app.services.statement_import import StatementImportService
 
 logger = logging.getLogger(__name__)
 
-DEPOSIT_EXCEL_COLUMNS = {"account_number", "transaction_date", "amount"}
 EXPENSE_EXCEL_COLUMNS = {"transaction_date", "amount"}
+
 
 MatchConfidence = Literal["high", "medium", "low", "none"]
 

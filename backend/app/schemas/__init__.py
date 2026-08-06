@@ -21,6 +21,8 @@ class OwnerSummary(OwnerRead):
     total_deposits: Decimal = Decimal("0")
     expense_count: int = 0
     total_expenses: Decimal = Decimal("0")
+    # Company-float balance (Inflow − Expenses), summed across properties
+    balance: Decimal = Decimal("0")
 
 
 class OwnerPropertySummary(BaseModel):
@@ -36,10 +38,13 @@ class OwnerPropertySummary(BaseModel):
     total_deposits: Decimal = Decimal("0")
     expense_count: int = 0
     total_expenses: Decimal = Decimal("0")
+    balance: Decimal = Decimal("0")
 
 
 class OwnerDetail(OwnerSummary):
     properties: list[OwnerPropertySummary] = Field(default_factory=list)
+    recent_deposits: list["DepositRead"] = Field(default_factory=list)
+    recent_expenses: list["ExpenseRead"] = Field(default_factory=list)
 
 
 class BankAccountRead(BaseModel):
@@ -100,6 +105,7 @@ class PropertyDetail(PropertyRead):
     owner: OwnerRead
     bank_accounts: list[BankAccountRead] = Field(default_factory=list)
     recent_deposits: list[DepositRead] = Field(default_factory=list)
+    recent_expenses: list["ExpenseRead"] = Field(default_factory=list)
 
 
 class PropertyUpdate(BaseModel):
@@ -238,9 +244,12 @@ class DepositQueryIntent(BaseModel):
     query_type: str
     domain: str = "deposits"
     property_id: UUID | None = None
+    property_ids: list[UUID] = Field(default_factory=list)
     property_name: str | None = None
     client_prop_id: str | None = None
+    client_prop_ids: list[str] = Field(default_factory=list)
     owner_id: UUID | None = None
+    owner_ids: list[UUID] = Field(default_factory=list)
     owner_name: str | None = None
     date_from: date | None = None
     date_to: date | None = None
@@ -264,8 +273,21 @@ class DepositQueryIntent(BaseModel):
     ledger_column: str | None = None
 
 
+class AIQueryFilters(BaseModel):
+    """Structured filters from the AI Query UI; override NL-parsed intent fields."""
+
+    owner_ids: list[UUID] = Field(default_factory=list)
+    property_ids: list[UUID] = Field(default_factory=list)
+    client_prop_ids: list[str] = Field(default_factory=list)
+    date_from: date | None = None
+    date_to: date | None = None
+    min_amount: Decimal | None = None
+    max_amount: Decimal | None = None
+
+
 class AIQueryRequest(BaseModel):
-    question: str = Field(min_length=1, max_length=500)
+    question: str = Field(default="", max_length=500)
+    filters: AIQueryFilters | None = None
 
 
 class AIQueryResponse(BaseModel):
@@ -273,6 +295,36 @@ class AIQueryResponse(BaseModel):
     data: list[dict]
     query_used: DepositQueryIntent
     parser: str = "rules"
+
+
+class TransactionRead(BaseModel):
+    """Shared deposit/expense display row (view model — not a DB table)."""
+
+    kind: Literal["deposit", "expense"]
+    id: UUID
+    property_id: UUID
+    transaction_date: date | None = None
+    amount: Decimal
+    currency: str = "ILS"
+    client_prop_id: str
+    property_name: str
+    owner_name: str
+    section: str
+    notes: str | None = None
+    company: str | None = None
+    payment_method: str | None = None
+    source: str | None = None
+    receipt_ref: str | None = None
+    source_file: str | None = None
+    balance_after: Decimal | None = None
+    needs_review: bool = False
+    review_reasons: str | None = None
+    is_rental_income: bool | None = None
+    paid_by_resident: bool | None = None
+    paid_by_owner: bool | None = None
+    paid_by_company: bool | None = None
+    ledger_column: str | None = None
+    from_bank_statement: bool = False
 
 
 class ExpenseRead(BaseModel):
@@ -429,6 +481,7 @@ class AlertRead(BaseModel):
         "upload_pending",
         "duplicate_deposit",
         "incomplete_import",
+        "low_balance",
     ]
     severity: Literal["error", "warning", "info"]
     title: str
@@ -442,6 +495,7 @@ class AlertRead(BaseModel):
     deposit_id: UUID | None = None
     transaction_date: date | None = None
     amount: Decimal | None = None
+    threshold_amount: Decimal | None = None
     section: str | None = None
     notes: str | None = None
     review_reasons: str | None = None
@@ -475,4 +529,41 @@ class AlertResolveRequest(BaseModel):
     deposit: DepositCreate | None = None
     drafts: list[TransactionDraft] | None = None
     fix_incomplete: FixIncompletePayload | None = None
+
+
+class AlertRuleRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    rule_type: Literal["low_balance"]
+    name: str
+    enabled: bool
+    severity: Literal["error", "warning", "info"]
+    scope_type: Literal["global", "property"]
+    property_id: UUID | None = None
+    property_name: str | None = None
+    client_prop_id: str | None = None
+    threshold_amount: Decimal
+    currency: str
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+class AlertRuleCreate(BaseModel):
+    rule_type: Literal["low_balance"] = "low_balance"
+    name: str = Field(min_length=1, max_length=255)
+    enabled: bool = True
+    severity: Literal["error", "warning", "info"] = "warning"
+    scope_type: Literal["global", "property"]
+    property_id: UUID | None = None
+    threshold_amount: Decimal
+    currency: str = "ILS"
+
+
+class AlertRuleUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    enabled: bool | None = None
+    severity: Literal["error", "warning", "info"] | None = None
+    threshold_amount: Decimal | None = None
+    currency: str | None = None
 

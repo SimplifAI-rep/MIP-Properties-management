@@ -14,4 +14,5 @@ def ai_query(
     db: Session = Depends(get_db),
 ) -> AIQueryResponse:
     service = AIQueryService(db)
-    return service.query(payload.question.strip())
+    question = (payload.question or "").strip()
+    return service.query(question, filters=payload.filters)

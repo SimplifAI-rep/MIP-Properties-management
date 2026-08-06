@@ -12,12 +12,19 @@ import {
   formatDate,
   LoadingState,
 } from '../components/ui/States';
+import { MoneyValue } from '../components/ui/MoneyValue';
 import { Tooltip } from '../components/ui/Tooltip';
+import { formatLabel } from '../utils/formatLabel';
 import {
   ownerTransactionsState,
   propertyTransactionsState,
 } from '../utils/transactionsNav';
-import { depositToUnified, expenseToUnified } from '../utils/unifiedTransaction';
+import {
+  companyFloatTotals,
+  isCompanyFloatDeposit,
+  isCompanyFloatExpense,
+  mergeAndSortTransactions,
+} from '../utils/unifiedTransaction';
 import {
   buildDashboardPeriod,
   defaultDashboardPeriod,
@@ -28,10 +35,8 @@ import {
 } from '../utils/dashboardPeriod';
 
 const RECENT_LIMIT = 10;
+const DEFAULT_EXPENSE_BREAKDOWN_MIN = 1000;
 
-function label(value: string) {
-  return value.replace(/_/g, ' ');
-}
 
 interface PropertyHealth {
   property: Property;
@@ -92,6 +97,14 @@ export function DashboardPage() {
   const [periodType, setPeriodType] = useState<PeriodType>('month');
   const [year, setYear] = useState(defaults.year);
   const [month, setMonth] = useState(defaults.month);
+  const [showAllExpenseCategories, setShowAllExpenseCategories] = useState(false);
+  const [expenseBreakdownMinInput, setExpenseBreakdownMinInput] = useState(
+    String(DEFAULT_EXPENSE_BREAKDOWN_MIN),
+  );
+  const expenseBreakdownMinAmount = useMemo(() => {
+    const parsed = Number(expenseBreakdownMinInput);
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : DEFAULT_EXPENSE_BREAKDOWN_MIN;
+  }, [expenseBreakdownMinInput]);
 
   const yearsQuery = useQuery({
     queryKey: ['transaction-years'],
@@ -165,22 +178,57 @@ export function DashboardPage() {
     ) ?? [];
 
   const expenseCategories = expenseSummaryQuery.data?.by_category ?? [];
-  const maxCategoryTotal = Math.max(
-    ...expenseCategories.map((item) => Number(item.total_amount)),
-    1,
+  const expenseBreakdownRows = useMemo(() => {
+    const sorted = expenseCategories
+      .slice()
+      .sort((a, b) => Number(b.total_amount) - Number(a.total_amount));
+    if (showAllExpenseCategories) {
+      return sorted.map((item) => ({
+        key: item.category,
+        label: formatLabel(item.category),
+        total: Number(item.total_amount),
+        count: item.expense_count,
+      }));
+    }
+    const above = sorted.filter(
+      (item) => Number(item.total_amount) >= expenseBreakdownMinAmount,
+    );
+    const below = sorted.filter(
+      (item) => Number(item.total_amount) < expenseBreakdownMinAmount,
+    );
+    const rows = above.map((item) => ({
+      key: item.category,
+      label: formatLabel(item.category),
+      total: Number(item.total_amount),
+      count: item.expense_count,
+    }));
+    if (below.length > 0) {
+      rows.push({
+        key: '__other_below_min__',
+        label: `Other (under ${formatCurrency(expenseBreakdownMinAmount)})`,
+        total: below.reduce((sum, item) => sum + Number(item.total_amount), 0),
+        count: below.reduce((sum, item) => sum + item.expense_count, 0),
+      });
+    }
+    return rows;
+  }, [expenseCategories, expenseBreakdownMinAmount, showAllExpenseCategories]);
+  const maxCategoryTotal = Math.max(...expenseBreakdownRows.map((item) => item.total), 1);
+  const hasSmallExpenseCategories = expenseCategories.some(
+    (item) => Number(item.total_amount) < expenseBreakdownMinAmount,
+  );
+
+  const periodTransactions = useMemo(
+    () =>
+      mergeAndSortTransactions(
+        periodDepositsQuery.data?.items ?? [],
+        periodExpensesQuery.data?.items ?? [],
+      ),
+    [periodDepositsQuery.data, periodExpensesQuery.data],
   );
 
   const propertyHealth = useMemo(() => {
     const properties = propertiesQuery.data ?? [];
-    // Match Excel/dashboard summary cards: exclude rental and He/She/Owner-paid.
-    const deposits = (periodDepositsQuery.data?.items ?? []).filter(
-      (deposit) => !deposit.is_rental_income,
-    );
-    const expenses = (periodExpensesQuery.data?.items ?? []).filter(
-      (expense) => !expense.paid_by_resident && !expense.paid_by_owner,
-    );
     const gaps = gapsQuery.data ?? [];
-
     const gapCountByProperty = new Map<string, number>();
     gaps.forEach((gap) => {
       gapCountByProperty.set(
@@ -191,20 +239,8 @@ export function DashboardPage() {
 
     return properties
       .map((property): PropertyHealth => {
-        const propertyDeposits = deposits.filter(
-          (deposit) => deposit.property_id === property.id,
-        );
-        const propertyExpenses = expenses.filter(
-          (expense) => expense.property_id === property.id,
-        );
-        const depositTotal = propertyDeposits.reduce(
-          (sum, item) => sum + Number(item.amount),
-          0,
-        );
-        const expenseTotal = propertyExpenses.reduce(
-          (sum, item) => sum + Number(item.amount),
-          0,
-        );
+        const rows = periodTransactions.filter((row) => row.property_id === property.id);
+        const { inflow, expenses, balance } = companyFloatTotals(rows);
         const gapCount = gapCountByProperty.get(property.id) ?? 0;
         let depositStatus: PropertyHealth['depositStatus'] = 'ok';
         if (gapCount > 0 && gapCount >= monthsCount) depositStatus = 'missing';
@@ -212,9 +248,9 @@ export function DashboardPage() {
 
         return {
           property,
-          depositTotal,
-          expenseTotal,
-          net: depositTotal - expenseTotal,
+          depositTotal: inflow,
+          expenseTotal: expenses,
+          net: balance,
           depositStatus,
           gapCount,
         };
@@ -223,21 +259,9 @@ export function DashboardPage() {
         (item) => item.depositTotal > 0 || item.expenseTotal > 0 || item.gapCount > 0,
       )
       .sort((a, b) => b.net - a.net);
-  }, [
-    propertiesQuery.data,
-    periodDepositsQuery.data,
-    periodExpensesQuery.data,
-    gapsQuery.data,
-    monthsCount,
-  ]);
+  }, [propertiesQuery.data, periodTransactions, gapsQuery.data, monthsCount]);
 
   const ownerPeriodRows = useMemo(() => {
-    const deposits = (periodDepositsQuery.data?.items ?? []).filter(
-      (deposit) => !deposit.is_rental_income,
-    );
-    const expenses = (periodExpensesQuery.data?.items ?? []).filter(
-      (expense) => !expense.paid_by_resident && !expense.paid_by_owner,
-    );
     const properties = propertiesQuery.data ?? [];
     const byOwner = new Map<string, OwnerPeriodRow>();
 
@@ -259,22 +283,18 @@ export function DashboardPage() {
       properties.map((property) => [property.owner_name, property.owner_id] as const),
     );
 
-    deposits.forEach((deposit) => {
-      const ownerId = ownerIdByName.get(deposit.owner_name);
+    periodTransactions.forEach((row) => {
+      const ownerId = ownerIdByName.get(row.owner_name);
       if (!ownerId) return;
       const existing = byOwner.get(ownerId);
       if (!existing) return;
-      existing.depositTotal += Number(deposit.amount);
-      existing.depositCount += 1;
-    });
-
-    expenses.forEach((expense) => {
-      const ownerId = ownerIdByName.get(expense.owner_name);
-      if (!ownerId) return;
-      const existing = byOwner.get(ownerId);
-      if (!existing) return;
-      existing.expenseTotal += Number(expense.amount);
-      existing.expenseCount += 1;
+      if (isCompanyFloatDeposit(row)) {
+        existing.depositTotal += Number(row.amount);
+        existing.depositCount += 1;
+      } else if (isCompanyFloatExpense(row)) {
+        existing.expenseTotal += Number(row.amount);
+        existing.expenseCount += 1;
+      }
     });
 
     return Array.from(byOwner.values())
@@ -282,7 +302,7 @@ export function DashboardPage() {
       .sort(
         (a, b) => b.depositTotal - b.expenseTotal - (a.depositTotal - a.expenseTotal),
       );
-  }, [periodDepositsQuery.data, periodExpensesQuery.data, propertiesQuery.data]);
+  }, [periodTransactions, propertiesQuery.data]);
 
   const propertyById = useMemo(() => {
     const map = new Map<string, Property>();
@@ -290,17 +310,10 @@ export function DashboardPage() {
     return map;
   }, [propertiesQuery.data]);
 
-  const recentActivity = useMemo(() => {
-    const deposits = (periodDepositsQuery.data?.items ?? []).map(depositToUnified);
-    const expenses = (periodExpensesQuery.data?.items ?? []).map(expenseToUnified);
-    return [...deposits, ...expenses]
-      .sort((a, b) => {
-        const aDate = a.transaction_date || '';
-        const bDate = b.transaction_date || '';
-        return bDate.localeCompare(aDate);
-      })
-      .slice(0, RECENT_LIMIT);
-  }, [periodDepositsQuery.data, periodExpensesQuery.data]);
+  const recentActivity = useMemo(
+    () => periodTransactions.slice(0, RECENT_LIMIT),
+    [periodTransactions],
+  );
 
   if (depositSummaryQuery.isLoading || expenseSummaryQuery.isLoading) {
     return <LoadingState label="Loading dashboard..." />;
@@ -411,46 +424,128 @@ export function DashboardPage() {
 
       {/* Financial snapshot */}
       <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
-        <Card
-          title="Deposits"
-          value={formatCurrency(depositTotal)}
-          subtitle={`${depositSummaryQuery.data!.deposit_count} in ${period.label}`}
-          tooltip="Deposit total for the selected period."
-        />
-        <Card
-          title="Expenses"
-          value={formatCurrency(expenseTotal)}
-          subtitle={`${expenseSummaryQuery.data!.expense_count} in ${period.label}`}
-          tooltip="Expense total for the selected period."
-        />
-        <Card
-          title="Net position"
-          value={formatCurrency(netTotal)}
-          subtitle="Deposits minus expenses"
-          tooltip="Deposits minus expenses for this period."
-        />
+        <button
+          type="button"
+          className="text-left"
+          onClick={() =>
+            navigate('/transactions', {
+              state: { dateFrom: period.dateFrom, dateTo: period.dateTo, kinds: ['deposit'] },
+            })
+          }
+        >
+          <Card
+            title="Deposits"
+            value={formatCurrency(depositTotal)}
+            subtitle={`${depositSummaryQuery.data!.deposit_count} in ${period.label}`}
+            tooltip="Deposit total for the selected period. Click to open Transactions."
+          />
+        </button>
+        <button
+          type="button"
+          className="text-left"
+          onClick={() =>
+            navigate('/transactions', {
+              state: { dateFrom: period.dateFrom, dateTo: period.dateTo, kinds: ['expense'] },
+            })
+          }
+        >
+          <Card
+            title="Expenses"
+            value={formatCurrency(expenseTotal)}
+            subtitle={`${expenseSummaryQuery.data!.expense_count} in ${period.label}`}
+            tooltip="Expense total for the selected period. Click to open Transactions."
+          />
+        </button>
+        <button
+          type="button"
+          className="text-left"
+          onClick={() =>
+            navigate('/transactions', {
+              state: {
+                dateFrom: period.dateFrom,
+                dateTo: period.dateTo,
+                kinds: ['deposit', 'expense'],
+              },
+            })
+          }
+        >
+          <Card
+            title="Net position"
+            value={formatCurrency(netTotal)}
+            subtitle="Company float for period"
+            tooltip="Deposits minus expenses (company float) for this period."
+          />
+        </button>
         <Card
           title="Transactions"
           value={totalTransactions}
           subtitle={`${depositSummaryQuery.data!.property_count} properties with deposits`}
           tooltip="Deposit + expense count in this period."
         />
-        <Card
-          title="Open alerts"
-          value={alertSummaryQuery.data?.open_count ?? '—'}
-          subtitle={
-            alertSummaryQuery.data
-              ? `${alertSummaryQuery.data.error_count} errors · ${alertSummaryQuery.data.warning_count} warnings`
-              : 'Loading...'
-          }
-          tooltip="Unresolved warnings or errors needing review."
-        />
+        <button type="button" className="text-left" onClick={() => navigate('/alerts')}>
+          <Card
+            title="Open alerts"
+            value={alertSummaryQuery.data?.open_count ?? '—'}
+            subtitle={
+              alertSummaryQuery.data
+                ? `${alertSummaryQuery.data.error_count} errors · ${alertSummaryQuery.data.warning_count} warnings`
+                : 'Loading...'
+            }
+            tooltip="Unresolved warnings or errors needing review."
+          />
+        </button>
         <Card
           title="Missing deposits"
           value={gapsQuery.data?.length ?? '—'}
           subtitle={`Across ${period.label}`}
           tooltip="Expected deposits not found in this period."
         />
+      </section>
+
+      {/* Recent activity (period-scoped) — early for presentation clarity */}
+      <section className="panel">
+        <div className="section-header flex items-start justify-between gap-3">
+          <div>
+            <h3 className="section-title">Recent activity — {period.label}</h3>
+            <p className="section-subtitle">Latest deposits and expenses in the selected period.</p>
+          </div>
+          <Link
+            to="/transactions"
+            state={{
+              dateFrom: period.dateFrom,
+              dateTo: period.dateTo,
+            }}
+            className="btn-secondary text-sm"
+          >
+            View all
+          </Link>
+        </div>
+        {periodDepositsQuery.isLoading || periodExpensesQuery.isLoading ? (
+          <div className="p-5">
+            <LoadingState label="Loading activity..." />
+          </div>
+        ) : recentActivity.length > 0 ? (
+          <TransactionTable
+            rows={recentActivity}
+            onRowClick={(row) =>
+              navigate('/transactions', {
+                state: {
+                  ...propertyTransactionsState(
+                    row.property_id,
+                    row.client_prop_id,
+                    periodDates,
+                  ),
+                  highlightId: row.id,
+                  highlightKind: row.kind,
+                },
+              })
+            }
+          />
+        ) : (
+          <div className="p-5">
+            <EmptyState message="No transactions in this period." />
+          </div>
+        )}
       </section>
 
       {/* Pending uploads + alerts */}
@@ -590,22 +685,24 @@ export function DashboardPage() {
                 <div className="mt-4 grid grid-cols-3 gap-2 text-sm">
                   <div>
                     <p className="text-xs text-muted">
-                      <Tooltip content="Deposits in this period.">Deposits</Tooltip>
+                      <Tooltip content="Company-float deposits in this period.">Deposits</Tooltip>
                     </p>
-                    <p className="amount-deposit">{formatCurrency(item.depositTotal)}</p>
+                    <p>
+                      <MoneyValue amount={item.depositTotal} />
+                    </p>
                   </div>
                   <div>
                     <p className="text-xs text-muted">
-                      <Tooltip content="Expenses in this period.">Expenses</Tooltip>
+                      <Tooltip content="Company-float expenses in this period.">Expenses</Tooltip>
                     </p>
                     <p className="amount-expense">{formatCurrency(item.expenseTotal)}</p>
                   </div>
                   <div>
                     <p className="text-xs text-muted">
-                      <Tooltip content="Deposits minus expenses.">Net</Tooltip>
+                      <Tooltip content="Deposits minus expenses.">Balance</Tooltip>
                     </p>
-                    <p className={item.net >= 0 ? 'amount-deposit' : 'amount-expense'}>
-                      {formatCurrency(item.net)}
+                    <p>
+                      <MoneyValue amount={item.net} />
                     </p>
                   </div>
                 </div>
@@ -626,35 +723,68 @@ export function DashboardPage() {
 
       {/* Expense breakdown */}
       <section className="panel">
-        <div className="section-header">
-          <h3 className="section-title">Expense breakdown — {period.label}</h3>
-          <p className="section-subtitle">Totals by category for the selected period.</p>
+        <div className="section-header flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h3 className="section-title">Expense breakdown — {period.label}</h3>
+            <p className="section-subtitle">
+              {showAllExpenseCategories
+                ? 'Totals by category for the selected period.'
+                : `Categories from ${formatCurrency(expenseBreakdownMinAmount)}; smaller totals are grouped.`}
+            </p>
+          </div>
+          <div className="flex flex-wrap items-end gap-2 shrink-0">
+            <label className="block space-y-1 text-sm">
+              <span className="label-text">Min amount</span>
+              <input
+                type="number"
+                inputMode="decimal"
+                step="any"
+                min="0"
+                value={expenseBreakdownMinInput}
+                onChange={(event) => {
+                  setExpenseBreakdownMinInput(event.target.value);
+                  setShowAllExpenseCategories(false);
+                }}
+                disabled={showAllExpenseCategories}
+                className="field w-28 text-sm"
+                aria-label="Minimum category amount"
+              />
+            </label>
+            {hasSmallExpenseCategories || showAllExpenseCategories ? (
+              <button
+                type="button"
+                className="btn-secondary text-sm"
+                onClick={() => setShowAllExpenseCategories((open) => !open)}
+              >
+                {showAllExpenseCategories
+                  ? `Group under ${formatCurrency(expenseBreakdownMinAmount)}`
+                  : 'Show all'}
+              </button>
+            ) : null}
+          </div>
         </div>
-        {expenseCategories.length > 0 ? (
+        {expenseBreakdownRows.length > 0 ? (
           <ul className="space-y-4 p-5">
-            {expenseCategories
-              .slice()
-              .sort((a, b) => Number(b.total_amount) - Number(a.total_amount))
-              .map((item) => {
-                const width = Math.round((Number(item.total_amount) / maxCategoryTotal) * 100);
-                return (
-                  <li key={item.category}>
-                    <div className="mb-1 flex items-center justify-between text-sm">
-                      <span className="font-medium capitalize">{label(item.category)}</span>
-                      <span>
-                        {formatCurrency(item.total_amount)}
-                        <span className="ml-2 text-xs text-muted">({item.expense_count})</span>
-                      </span>
-                    </div>
-                    <div className="h-2 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
-                      <div
-                        className="h-full rounded-full bg-rose-500 dark:bg-rose-600"
-                        style={{ width: `${width}%` }}
-                      />
-                    </div>
-                  </li>
-                );
-              })}
+            {expenseBreakdownRows.map((item) => {
+              const width = Math.round((item.total / maxCategoryTotal) * 100);
+              return (
+                <li key={item.key}>
+                  <div className="mb-1 flex items-center justify-between text-sm">
+                    <span className="font-medium capitalize">{item.label}</span>
+                    <span>
+                      {formatCurrency(item.total)}
+                      <span className="ml-2 text-xs text-muted">({item.count})</span>
+                    </span>
+                  </div>
+                  <div className="h-2 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
+                    <div
+                      className="h-full rounded-full bg-rose-500 dark:bg-rose-600"
+                      style={{ width: `${width}%` }}
+                    />
+                  </div>
+                </li>
+              );
+            })}
           </ul>
         ) : (
           <div className="p-5">
@@ -772,7 +902,7 @@ export function DashboardPage() {
                       <td className="px-5 py-3 font-medium">{owner.ownerName}</td>
                       <td className="px-5 py-3">{owner.propertyCount}</td>
                       <td className="px-5 py-3">
-                        <span className="amount-deposit">{formatCurrency(owner.depositTotal)}</span>
+                        <MoneyValue amount={owner.depositTotal} />
                         <span className="ml-1 text-xs text-muted">({owner.depositCount})</span>
                       </td>
                       <td className="px-5 py-3">
@@ -780,9 +910,7 @@ export function DashboardPage() {
                         <span className="ml-1 text-xs text-muted">({owner.expenseCount})</span>
                       </td>
                       <td className="px-5 py-3">
-                        <span className={net >= 0 ? 'amount-deposit' : 'amount-expense'}>
-                          {formatCurrency(net)}
-                        </span>
+                        <MoneyValue amount={net} />
                       </td>
                     </tr>
                   );
@@ -793,49 +921,6 @@ export function DashboardPage() {
         ) : (
           <div className="p-5">
             <EmptyState message="No owner activity in this period." />
-          </div>
-        )}
-      </section>
-
-      {/* Recent activity (period-scoped) */}
-      <section className="panel">
-        <div className="section-header flex items-start justify-between gap-3">
-          <div>
-            <h3 className="section-title">Recent activity — {period.label}</h3>
-            <p className="section-subtitle">Latest deposits and expenses in the selected period.</p>
-          </div>
-          <Link
-            to="/transactions"
-            state={{
-              dateFrom: period.dateFrom,
-              dateTo: period.dateTo,
-            }}
-            className="btn-secondary text-sm"
-          >
-            View all
-          </Link>
-        </div>
-        {periodDepositsQuery.isLoading || periodExpensesQuery.isLoading ? (
-          <div className="p-5">
-            <LoadingState label="Loading activity..." />
-          </div>
-        ) : recentActivity.length > 0 ? (
-          <TransactionTable
-            rows={recentActivity}
-            onRowClick={(row) =>
-              navigate('/transactions', {
-                state: propertyTransactionsState(
-                  row.property_id,
-                  row.client_prop_id,
-                  periodDates,
-                ),
-              })
-            }
-            className="overflow-x-auto"
-          />
-        ) : (
-          <div className="p-5">
-            <EmptyState message="No transactions in this period." />
           </div>
         )}
       </section>

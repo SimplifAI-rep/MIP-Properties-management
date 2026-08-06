@@ -18,9 +18,10 @@ from app.models.deposit import Deposit
 from app.models.expense import Expense
 from app.models.owner import Owner
 from app.models.property import Property
-from app.schemas import AIQueryResponse, DepositQueryIntent, PeriodRange
+from app.schemas import AIQueryFilters, AIQueryResponse, DepositQueryIntent, PeriodRange
 from app.services.deposit_query import find_deposit_gaps, list_deposits
 from app.services.expense_query import list_expenses
+from app.services.transaction_view import normalize_transaction_row
 
 logger = logging.getLogger(__name__)
 
@@ -119,8 +120,33 @@ class AIQueryService:
         self.db = db
         self.settings = get_settings()
 
-    def query(self, question: str) -> AIQueryResponse:
-        if self._is_out_of_scope(question):
+    def query(
+        self,
+        question: str,
+        filters: AIQueryFilters | None = None,
+    ) -> AIQueryResponse:
+        trimmed = (question or "").strip()
+        has_filters = bool(
+            filters
+            and (
+                filters.owner_ids
+                or filters.property_ids
+                or filters.client_prop_ids
+                or filters.date_from
+                or filters.date_to
+                or filters.min_amount is not None
+                or filters.max_amount is not None
+            )
+        )
+        if not trimmed and not has_filters:
+            raise HTTPException(
+                status_code=400,
+                detail="Enter a question and/or choose at least one filter.",
+            )
+        if not trimmed:
+            trimmed = "Show matching transactions"
+
+        if self._is_out_of_scope(trimmed):
             raise HTTPException(
                 status_code=400,
                 detail=(
@@ -132,16 +158,17 @@ class AIQueryService:
         parser = "rules"
         if self.settings.llm_api_key:
             try:
-                intent = self._parse_with_llm(question)
+                intent = self._parse_with_llm(trimmed)
                 parser = "llm"
             except Exception:
                 logger.exception("LLM parsing failed; falling back to rules")
-                intent = self._parse_with_rules(question)
+                intent = self._parse_with_rules(trimmed)
         else:
-            intent = self._parse_with_rules(question)
+            intent = self._parse_with_rules(trimmed)
 
         intent = self._validate_intent(intent)
         intent = self._resolve_names(intent)
+        intent = self._apply_structured_filters(intent, filters)
         data = self._execute_intent(intent)
         answer = self._build_answer(intent, data)
         logger.info(
@@ -157,6 +184,45 @@ class AIQueryService:
             query_used=intent,
             parser=parser,
         )
+
+    def _apply_structured_filters(
+        self,
+        intent: DepositQueryIntent,
+        filters: AIQueryFilters | None,
+    ) -> DepositQueryIntent:
+        if not filters:
+            return intent
+
+        updates: dict[str, Any] = {}
+        if filters.date_from is not None:
+            updates["date_from"] = filters.date_from
+            updates["year"] = None
+            updates["month"] = None
+        if filters.date_to is not None:
+            updates["date_to"] = filters.date_to
+            updates["year"] = None
+            updates["month"] = None
+        if filters.min_amount is not None:
+            updates["min_amount"] = filters.min_amount
+        if filters.max_amount is not None:
+            updates["max_amount"] = filters.max_amount
+
+        if filters.owner_ids:
+            updates["owner_ids"] = list(filters.owner_ids)
+            updates["owner_id"] = filters.owner_ids[0] if len(filters.owner_ids) == 1 else None
+            updates["owner_name"] = None
+        if filters.property_ids:
+            updates["property_ids"] = list(filters.property_ids)
+            updates["property_id"] = (
+                filters.property_ids[0] if len(filters.property_ids) == 1 else None
+            )
+            updates["property_name"] = None
+        if filters.client_prop_ids:
+            cleaned = [value.strip() for value in filters.client_prop_ids if value.strip()]
+            updates["client_prop_ids"] = cleaned
+            updates["client_prop_id"] = cleaned[0] if len(cleaned) == 1 else None
+
+        return intent.model_copy(update=updates) if updates else intent
 
     def _is_out_of_scope(self, question: str) -> bool:
         lowered = question.lower()
@@ -395,11 +461,24 @@ class AIQueryService:
                 if not intent.client_prop_id:
                     updates["client_prop_id"] = prop.client_prop_id
         if intent.owner_name and not intent.owner_id:
+            needle = intent.owner_name.strip()
             owner = self.db.scalar(
-                select(Owner).where(Owner.name.ilike(f"%{intent.owner_name.strip()}%"))
+                select(Owner).where(Owner.name.ilike(f"%{needle}%"))
             )
+            if not owner:
+                # Partial / alias match (e.g. "My Israel Property" → "... (MIP)").
+                matched_name = self._best_entity_name_in_text(
+                    needle.lower(),
+                    [row.name for row in self.db.scalars(select(Owner)).all()],
+                    min_token_len=2,
+                )
+                if matched_name:
+                    owner = self.db.scalar(
+                        select(Owner).where(Owner.name == matched_name)
+                    )
             if owner:
                 updates["owner_id"] = owner.id
+                updates["owner_name"] = owner.name
         if updates:
             return intent.model_copy(update=updates)
         return intent
@@ -434,53 +513,6 @@ class AIQueryService:
             status_code=400,
             detail=f"Query type '{intent.query_type}' is not supported for transactions.",
         )
-
-    def _normalize_transaction_row(self, kind: str, item: dict) -> dict:
-        source = item.get("source")
-        if kind == "expense":
-            section = item.get("category") or "other"
-            notes = item.get("notes")
-            if notes is None:
-                desc = (item.get("description") or "").strip()
-                section_str = str(section).strip()
-                if desc and section_str and desc.lower().startswith(section_str.lower()):
-                    rest = desc[len(section_str) :].lstrip(" |").strip()
-                    notes = rest or None
-                else:
-                    notes = desc or None
-        else:
-            if item.get("is_rental_income"):
-                section = "Rental income"
-            else:
-                section = (source or "Inflow").replace("_", " ")
-            notes = item.get("description") or item.get("notes")
-        return {
-            "kind": kind,
-            "id": item.get("id"),
-            "property_id": item.get("property_id"),
-            "transaction_date": item.get("transaction_date"),
-            "amount": item.get("amount"),
-            "currency": item.get("currency") or "ILS",
-            "client_prop_id": item.get("client_prop_id"),
-            "property_name": item.get("property_name"),
-            "owner_name": item.get("owner_name"),
-            "section": section,
-            "notes": notes,
-            "company": item.get("vendor_name") or item.get("company"),
-            "payment_method": item.get("payment_method"),
-            "source": source,
-            "receipt_ref": item.get("receipt_ref"),
-            "source_file": item.get("source_file"),
-            "balance_after": item.get("balance_after"),
-            "needs_review": item.get("needs_review"),
-            "review_reasons": item.get("review_reasons"),
-            "is_rental_income": item.get("is_rental_income"),
-            "paid_by_resident": item.get("paid_by_resident"),
-            "paid_by_owner": item.get("paid_by_owner"),
-            "paid_by_company": item.get("paid_by_company"),
-            "ledger_column": item.get("ledger_column"),
-            "from_bank_statement": source == "bank_statement",
-        }
 
     def _execute_transactions_list(self, intent: DepositQueryIntent) -> list[dict]:
         deposits = self._execute_list(intent)
@@ -571,8 +603,11 @@ class AIQueryService:
         items, _ = list_expenses(
             self.db,
             property_id=intent.property_id,
+            property_ids=intent.property_ids,
             client_prop_id=intent.client_prop_id,
+            client_prop_ids=intent.client_prop_ids,
             owner_id=intent.owner_id,
+            owner_ids=intent.owner_ids,
             category=intent.category,
             source=intent.source,
             payment_method=intent.payment_method,
@@ -591,7 +626,7 @@ class AIQueryService:
             page_size=200,
         )
         return [
-            self._normalize_transaction_row("expense", item.model_dump(mode="json"))
+            normalize_transaction_row("expense", item.model_dump(mode="json"))
             for item in items
         ]
 
@@ -702,8 +737,11 @@ class AIQueryService:
         items, _ = list_deposits(
             self.db,
             property_id=intent.property_id,
+            property_ids=intent.property_ids,
             client_prop_id=intent.client_prop_id,
+            client_prop_ids=intent.client_prop_ids,
             owner_id=intent.owner_id,
+            owner_ids=intent.owner_ids,
             date_from=date_from,
             date_to=date_to,
             min_amount=intent.min_amount,
@@ -715,7 +753,7 @@ class AIQueryService:
             page_size=200,
         )
         return [
-            self._normalize_transaction_row("deposit", item.model_dump(mode="json"))
+            normalize_transaction_row("deposit", item.model_dump(mode="json"))
             for item in items
         ]
 
@@ -1003,19 +1041,43 @@ class AIQueryService:
             stmt = stmt.where(Deposit.transaction_date >= date_from)
         if date_to:
             stmt = stmt.where(Deposit.transaction_date <= date_to)
-        if property_id:
-            stmt = stmt.where(Deposit.property_id == property_id)
-        if owner_id:
-            stmt = stmt.where(Property.owner_id == owner_id)
+
+        property_ids = list(intent.property_ids) if intent and intent.property_ids else []
+        if property_id and property_id not in property_ids:
+            property_ids.append(property_id)
+        if len(property_ids) == 1:
+            stmt = stmt.where(Deposit.property_id == property_ids[0])
+        elif len(property_ids) > 1:
+            stmt = stmt.where(Deposit.property_id.in_(property_ids))
+
+        owner_ids = list(intent.owner_ids) if intent and intent.owner_ids else []
+        if owner_id and owner_id not in owner_ids:
+            owner_ids.append(owner_id)
+        if len(owner_ids) == 1:
+            stmt = stmt.where(Property.owner_id == owner_ids[0])
+        elif len(owner_ids) > 1:
+            stmt = stmt.where(Property.owner_id.in_(owner_ids))
+
         if min_amount is not None:
             stmt = stmt.where(Deposit.amount >= min_amount)
         if max_amount is not None:
             stmt = stmt.where(Deposit.amount <= max_amount)
         if intent is not None:
-            if intent.client_prop_id and not property_id:
-                stmt = stmt.where(
-                    func.upper(Property.client_prop_id) == intent.client_prop_id.strip().upper()
-                )
+            client_prop_ids = [
+                value.strip().upper()
+                for value in (intent.client_prop_ids or [])
+                if value and value.strip()
+            ]
+            if intent.client_prop_id and not property_ids:
+                client_prop_ids.append(intent.client_prop_id.strip().upper())
+            seen: set[str] = set()
+            client_prop_ids = [
+                value for value in client_prop_ids if not (value in seen or seen.add(value))
+            ]
+            if len(client_prop_ids) == 1 and not property_ids:
+                stmt = stmt.where(func.upper(Property.client_prop_id) == client_prop_ids[0])
+            elif len(client_prop_ids) > 1 and not property_ids:
+                stmt = stmt.where(func.upper(Property.client_prop_id).in_(client_prop_ids))
             if intent.source_file:
                 stmt = stmt.where(Deposit.source_file.ilike(f"%{intent.source_file.strip()}%"))
             if intent.needs_review is not None:
@@ -1040,14 +1102,39 @@ class AIQueryService:
             stmt = stmt.where(Expense.transaction_date >= date_from)
         if date_to:
             stmt = stmt.where(Expense.transaction_date <= date_to)
-        if intent.property_id:
-            stmt = stmt.where(Expense.property_id == intent.property_id)
-        if intent.client_prop_id and not intent.property_id:
-            stmt = stmt.where(
-                func.upper(Property.client_prop_id) == intent.client_prop_id.strip().upper()
-            )
-        if intent.owner_id:
-            stmt = stmt.where(Property.owner_id == intent.owner_id)
+
+        property_ids = list(intent.property_ids or [])
+        if intent.property_id and intent.property_id not in property_ids:
+            property_ids.append(intent.property_id)
+        if len(property_ids) == 1:
+            stmt = stmt.where(Expense.property_id == property_ids[0])
+        elif len(property_ids) > 1:
+            stmt = stmt.where(Expense.property_id.in_(property_ids))
+
+        client_prop_ids = [
+            value.strip().upper()
+            for value in (intent.client_prop_ids or [])
+            if value and value.strip()
+        ]
+        if intent.client_prop_id and not property_ids:
+            client_prop_ids.append(intent.client_prop_id.strip().upper())
+        seen: set[str] = set()
+        client_prop_ids = [
+            value for value in client_prop_ids if not (value in seen or seen.add(value))
+        ]
+        if len(client_prop_ids) == 1 and not property_ids:
+            stmt = stmt.where(func.upper(Property.client_prop_id) == client_prop_ids[0])
+        elif len(client_prop_ids) > 1 and not property_ids:
+            stmt = stmt.where(func.upper(Property.client_prop_id).in_(client_prop_ids))
+
+        owner_ids = list(intent.owner_ids or [])
+        if intent.owner_id and intent.owner_id not in owner_ids:
+            owner_ids.append(intent.owner_id)
+        if len(owner_ids) == 1:
+            stmt = stmt.where(Property.owner_id == owner_ids[0])
+        elif len(owner_ids) > 1:
+            stmt = stmt.where(Property.owner_id.in_(owner_ids))
+
         if intent.category:
             stmt = stmt.where(Expense.category == intent.category)
         if intent.source:
@@ -1101,19 +1188,96 @@ class AIQueryService:
                 return number
         return None
 
+    @staticmethod
+    def _entity_match_tokens(name: str) -> list[str]:
+        """Build searchable labels for an owner/property display name.
+
+        Names often look like ``My Israel Property (MIP)`` or include Hebrew
+        aliases in parentheses — match the base label and short Latin aliases.
+        """
+        tokens: list[str] = []
+        full = re.sub(r"\s+", " ", (name or "").strip().lower())
+        if full:
+            tokens.append(full)
+        base = re.sub(r"\([^)]*\)", " ", name or "")
+        base = re.sub(r"\s+", " ", base).strip().lower()
+        if base and base not in tokens:
+            tokens.append(base)
+        for alias in re.findall(r"\(([^)]*)\)", name or ""):
+            # Keep Latin / digit aliases like MIP; drop pure Hebrew blobs.
+            latin = re.sub(r"[^\w\s\-]+", " ", alias, flags=re.UNICODE)
+            latin = re.sub(r"\s+", " ", latin).strip().lower()
+            if latin and re.search(r"[a-z0-9]", latin) and latin not in tokens:
+                tokens.append(latin)
+        # Longest first so "My Israel Property" wins over "MIP" when both match.
+        tokens.sort(key=len, reverse=True)
+        return tokens
+
+    def _best_entity_name_in_text(
+        self,
+        text: str,
+        names: list[str],
+        *,
+        min_token_len: int = 3,
+    ) -> str | None:
+        best_name: str | None = None
+        best_len = 0
+        for name in names:
+            for token in self._entity_match_tokens(name):
+                if len(token) < min_token_len:
+                    continue
+                # Short aliases (MIP) need a word boundary; longer phrases can
+                # match as substrings.
+                if len(token) <= 4:
+                    if not re.search(rf"\b{re.escape(token)}\b", text):
+                        continue
+                elif token not in text:
+                    continue
+                if len(token) > best_len:
+                    best_name = name
+                    best_len = len(token)
+        return best_name
+
     def _extract_property_name(self, text: str) -> str | None:
-        for prop in self.db.scalars(select(Property)).all():
-            if prop.name.lower() in text:
-                return prop.name
-        return None
+        names = [prop.name for prop in self.db.scalars(select(Property)).all()]
+        return self._best_entity_name_in_text(text, names)
 
     def _extract_owner_name(self, text: str) -> str | None:
         if "per owner" in text or "by owner" in text:
             return None
-        for owner in self.db.scalars(select(Owner)).all():
-            if owner.name.lower() in text:
-                return owner.name
-        return None
+
+        owners = list(self.db.scalars(select(Owner)).all())
+        owner_names = [owner.name for owner in owners]
+
+        # Prefer an explicit "owner …" phrase, then fall back to name scan.
+        explicit = re.search(
+            r"(?:for\s+)?(?:the\s+)?owner\s+(.+?)(?="
+            r"\s*,|\s+above|\s+over|\s+greater than|\s+more than|\s+at least|"
+            r"\s+below|\s+under|\s+less than|\s+at most|"
+            r"\s+from\b|\s+since\b|\s+onward|\s+onwards|"
+            r"\s+in\s+(?:jan|january|feb|february|mar|march|apr|april|may|jun|june|"
+            r"jul|july|aug|august|sep|sept|september|oct|october|nov|november|"
+            r"dec|december|q[1-4]|20\d{2})|"
+            r"\s+for\s+(?:jan|january|feb|february|mar|march|apr|april|may|jun|june|"
+            r"jul|july|aug|august|sep|sept|september|oct|october|nov|november|"
+            r"dec|december|q[1-4]|20\d{2})|"
+            r"\s+this\s+year|$)",
+            text,
+            flags=re.IGNORECASE,
+        )
+        if explicit:
+            fragment = explicit.group(1).strip(" .,;:")
+            if fragment:
+                matched = self._best_entity_name_in_text(fragment, owner_names, min_token_len=2)
+                if matched:
+                    return matched
+                # Fragment may be a partial of the DB name (e.g. without "(MIP)").
+                for owner_name in owner_names:
+                    for token in self._entity_match_tokens(owner_name):
+                        if fragment == token or fragment in token or token in fragment:
+                            return owner_name
+
+        return self._best_entity_name_in_text(text, owner_names)
 
     def _extract_date_range(self, text: str, year: int) -> tuple[date | None, date | None]:
         if "last 30 days" in text:
@@ -1136,6 +1300,19 @@ class AIQueryService:
         month = self._extract_month(text)
         if month:
             start = date(year, month, 1)
+            open_ended = bool(
+                re.search(r"\b(onward|onwards|and later|and after)\b", text)
+                or re.search(
+                    r"\b(?:since|from)\s+"
+                    r"(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|"
+                    r"jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|"
+                    r"nov(?:ember)?|dec(?:ember)?|q[1-4]|20\d{2})",
+                    text,
+                )
+            )
+            # "from/since February …" or "February … onward" → no end date.
+            if open_ended:
+                return start, None
             if month == 12:
                 end = date(year, 12, 31)
             else:

@@ -11,6 +11,8 @@ export interface OwnerSummary extends Owner {
   total_deposits: string;
   expense_count: number;
   total_expenses: string;
+  /** Company-float balance (Inflow − Expenses), summed across properties. */
+  balance: string;
 }
 
 export interface OwnerPropertySummary {
@@ -24,10 +26,13 @@ export interface OwnerPropertySummary {
   total_deposits: string;
   expense_count: number;
   total_expenses: string;
+  balance: string;
 }
 
 export interface OwnerDetail extends OwnerSummary {
   properties: OwnerPropertySummary[];
+  recent_deposits: Deposit[];
+  recent_expenses: Expense[];
 }
 
 export interface BankAccount {
@@ -81,6 +86,7 @@ export interface PropertyDetail extends Property {
   owner: Owner;
   bank_accounts: BankAccount[];
   recent_deposits: Deposit[];
+  recent_expenses?: Expense[];
 }
 
 export interface DepositListResponse {
@@ -112,15 +118,20 @@ export interface DepositQueryIntent {
   query_type: string;
   domain?: string;
   property_id?: string | null;
+  property_ids?: string[];
   property_name?: string | null;
   client_prop_id?: string | null;
+  client_prop_ids?: string[];
   owner_id?: string | null;
+  owner_ids?: string[];
   owner_name?: string | null;
   date_from?: string | null;
   date_to?: string | null;
   group_by?: string | null;
   year?: number | null;
   month?: number | null;
+  min_amount?: string | null;
+  max_amount?: string | null;
   category?: string | null;
   source?: string | null;
   payment_method?: string | null;
@@ -132,6 +143,21 @@ export interface DepositQueryIntent {
   paid_by_owner?: boolean | null;
   paid_by_company?: boolean | null;
   ledger_column?: string | null;
+}
+
+export interface AIQueryFilters {
+  owner_ids?: string[];
+  property_ids?: string[];
+  client_prop_ids?: string[];
+  date_from?: string | null;
+  date_to?: string | null;
+  min_amount?: string | null;
+  max_amount?: string | null;
+}
+
+export interface AIQueryRequest {
+  question?: string;
+  filters?: AIQueryFilters | null;
 }
 
 export interface AIQueryResponse {
@@ -401,7 +427,12 @@ export interface DepositCreate {
 
 export interface AlertItem {
   id: string;
-  alert_type: 'missing_deposit' | 'upload_pending' | 'duplicate_deposit' | 'incomplete_import';
+  alert_type:
+    | 'missing_deposit'
+    | 'upload_pending'
+    | 'duplicate_deposit'
+    | 'incomplete_import'
+    | 'low_balance';
   severity: 'error' | 'warning' | 'info';
   title: string;
   message: string;
@@ -414,6 +445,7 @@ export interface AlertItem {
   deposit_id?: string | null;
   transaction_date?: string | null;
   amount?: string | null;
+  threshold_amount?: string | null;
   section?: string | null;
   notes?: string | null;
   review_reasons?: string | null;
@@ -433,6 +465,41 @@ export interface AlertSummary {
   open_count: number;
   error_count: number;
   warning_count: number;
+}
+
+export interface AlertRule {
+  id: string;
+  rule_type: 'low_balance';
+  name: string;
+  enabled: boolean;
+  severity: 'error' | 'warning' | 'info';
+  scope_type: 'global' | 'property';
+  property_id?: string | null;
+  property_name?: string | null;
+  client_prop_id?: string | null;
+  threshold_amount: string;
+  currency: string;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface AlertRuleCreate {
+  rule_type?: 'low_balance';
+  name: string;
+  enabled?: boolean;
+  severity?: 'error' | 'warning' | 'info';
+  scope_type: 'global' | 'property';
+  property_id?: string | null;
+  threshold_amount: string;
+  currency?: string;
+}
+
+export interface AlertRuleUpdate {
+  name?: string;
+  enabled?: boolean;
+  severity?: 'error' | 'warning' | 'info';
+  threshold_amount?: string;
+  currency?: string;
 }
 
 export interface FixIncompletePayload {
@@ -456,3 +523,6 @@ export interface FixIncompleteResponse {
   transaction_date: string | null;
   amount: string;
 }
+
+export type { TransactionKind, UnifiedTransaction } from './transaction';
+

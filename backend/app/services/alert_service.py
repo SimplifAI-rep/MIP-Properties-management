@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
 
 from app.models.alert_action import AlertAction
+from app.models.alert_rule import AlertRule
 from app.models.deposit import Deposit
 from app.models.expense import Expense
 from app.models.owner import Owner
@@ -25,6 +26,7 @@ from app.schemas import (
 )
 from app.services.deposit_query import create_deposit, find_deposit_gaps
 from app.services.document_import import DocumentImportService
+from app.services.running_balance import property_float_totals
 
 
 def _load_closed_keys(db: Session) -> set[str]:
@@ -48,16 +50,144 @@ def _incomplete_deposit_key(deposit_id: UUID) -> str:
     return f"incomplete_import:deposit:{deposit_id}"
 
 
-def _missing_fields_message(reasons: str | None, tx_date: date | None, amount: Decimal) -> str:
-    parts: list[str] = []
+def _low_balance_key(property_id: UUID) -> str:
+    return f"low_balance:{property_id}"
+
+
+def _clear_recovered_low_balance_dismissals(
+    db: Session,
+    *,
+    property_ids_above: list[UUID],
+) -> None:
+    """If balance recovered above threshold, allow the alert to fire again later."""
+    if not property_ids_above:
+        return
+    keys = [_low_balance_key(pid) for pid in property_ids_above]
+    rows = db.scalars(select(AlertAction).where(AlertAction.alert_key.in_(keys))).all()
+    if not rows:
+        return
+    for row in rows:
+        db.delete(row)
+    db.commit()
+
+
+def _append_low_balance_alerts(
+    db: Session,
+    alerts: list[AlertRead],
+    closed_keys: set[str],
+) -> None:
+    rules = db.scalars(
+        select(AlertRule).where(
+            AlertRule.rule_type == "low_balance",
+            AlertRule.enabled.is_(True),
+        )
+    ).all()
+    if not rules:
+        return
+
+    global_rule = next((r for r in rules if r.scope_type == "global"), None)
+    property_rules = {
+        r.property_id: r for r in rules if r.scope_type == "property" and r.property_id
+    }
+    if not global_rule and not property_rules:
+        return
+
+    props = db.scalars(
+        select(Property).options(joinedload(Property.owner)).order_by(Property.client_prop_id)
+    ).unique().all()
+    if not props:
+        return
+
+    floats = property_float_totals(db, [p.id for p in props])
+    recovered: list[UUID] = []
+
+    for prop in props:
+        rule = property_rules.get(prop.id) or global_rule
+        if rule is None:
+            continue
+        totals = floats.get(prop.id)
+        balance = totals.net if totals else Decimal("0.00")
+        threshold = Decimal(str(rule.threshold_amount)).quantize(Decimal("0.01"))
+        if balance >= threshold:
+            recovered.append(prop.id)
+            continue
+
+        alert_id = _low_balance_key(prop.id)
+        if alert_id in closed_keys:
+            continue
+
+        alerts.append(
+            AlertRead(
+                id=alert_id,
+                alert_type="low_balance",
+                severity=rule.severity,  # type: ignore[arg-type]
+                title=f"Low balance — {prop.client_prop_id}",
+                message=(
+                    f"Company-float balance {balance} {rule.currency} is under the "
+                    f"threshold of {threshold} {rule.currency}."
+                ),
+                property_id=prop.id,
+                property_name=prop.name,
+                owner_name=prop.owner.name if prop.owner else None,
+                amount=balance,
+                threshold_amount=threshold,
+                created_at=None,
+            )
+        )
+
+    _clear_recovered_low_balance_dismissals(db, property_ids_above=recovered)
+    # Refresh closed keys after cleanup is not needed for this pass; recovered
+    # properties were already skipped for alert creation.
+
+
+def _incomplete_reason_keys(
+    reasons: str | None, tx_date: date | None, amount: Decimal
+) -> list[str]:
     reason_set = {r.strip() for r in (reasons or "").split(",") if r.strip()}
+    keys: list[str] = []
     if "missing_date" in reason_set or tx_date is None:
-        parts.append("missing date")
-    if "no_money_columns" in reason_set or amount <= 0:
-        parts.append("missing amount")
-    if not parts:
-        parts.append("needs review")
-    return "Incomplete import: " + " and ".join(parts)
+        keys.append("missing_date")
+    if (
+        "no_money_columns" in reason_set
+        or "missing_amount" in reason_set
+        or amount <= 0
+    ):
+        keys.append("missing_amount")
+    for reason in sorted(reason_set):
+        if reason in {"missing_date", "no_money_columns", "missing_amount"}:
+            continue
+        if reason not in keys:
+            keys.append(reason)
+    if not keys:
+        keys.append("needs_review")
+    return keys
+
+
+_REASON_LABELS = {
+    "missing_date": "Missing date",
+    "missing_amount": "Missing amount",
+    "needs_review": "Needs review",
+}
+
+
+def _reason_label(key: str) -> str:
+    return _REASON_LABELS.get(key, key.replace("_", " "))
+
+
+def _missing_fields_title(reasons: str | None, tx_date: date | None, amount: Decimal) -> str:
+    return " · ".join(
+        _reason_label(key) for key in _incomplete_reason_keys(reasons, tx_date, amount)
+    )
+
+
+def _missing_fields_message(
+    reasons: str | None, tx_date: date | None, amount: Decimal
+) -> str:
+    parts = [
+        _reason_label(key).lower()
+        for key in _incomplete_reason_keys(reasons, tx_date, amount)
+    ]
+    return "Imported row needs review: " + " and ".join(parts)
 
 
 def list_alerts(db: Session) -> AlertListResponse:
@@ -164,12 +294,16 @@ def list_alerts(db: Session) -> AlertListResponse:
         if alert_id in closed_keys:
             continue
         prop = expense.property
+        prop_label = prop.client_prop_id if prop else "Unknown"
+        reason_title = _missing_fields_title(
+            expense.review_reasons, expense.transaction_date, expense.amount
+        )
         alerts.append(
             AlertRead(
                 id=alert_id,
                 alert_type="incomplete_import",
                 severity="warning",
-                title=f"Incomplete expense — {prop.client_prop_id if prop else 'Unknown'}",
+                title=f"{reason_title} — {prop_label}",
                 message=_missing_fields_message(
                     expense.review_reasons, expense.transaction_date, expense.amount
                 ),
@@ -199,12 +333,16 @@ def list_alerts(db: Session) -> AlertListResponse:
         if alert_id in closed_keys:
             continue
         prop = deposit.property
+        prop_label = prop.client_prop_id if prop else "Unknown"
+        reason_title = _missing_fields_title(
+            deposit.review_reasons, deposit.transaction_date, deposit.amount
+        )
         alerts.append(
             AlertRead(
                 id=alert_id,
                 alert_type="incomplete_import",
                 severity="warning",
-                title=f"Incomplete deposit — {prop.client_prop_id if prop else 'Unknown'}",
+                title=f"{reason_title} — {prop_label}",
                 message=_missing_fields_message(
                     deposit.review_reasons, deposit.transaction_date, deposit.amount
                 ),
@@ -221,6 +359,8 @@ def list_alerts(db: Session) -> AlertListResponse:
                 created_at=deposit.created_at,
             )
         )
+
+    _append_low_balance_alerts(db, alerts, closed_keys)
 
     alerts.sort(
         key=lambda alert: (

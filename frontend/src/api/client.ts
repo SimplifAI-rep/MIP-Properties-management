@@ -20,6 +20,9 @@ import type {
   AlertSummary,
   AlertResolveRequest,
   AlertItem,
+  AlertRule,
+  AlertRuleCreate,
+  AlertRuleUpdate,
   FixIncompletePayload,
   FixIncompleteResponse,
   ClientDataStatusResponse,
@@ -212,12 +215,20 @@ export const api = {
         date_to: filters.date_to,
       })}`,
     ),
-  postAIQuery: (question: string) =>
-    request<import('../types').AIQueryResponse>('/ai/query', {
+  postAIQuery: (payload: import('../types').AIQueryRequest | string) => {
+    const body =
+      typeof payload === 'string'
+        ? { question: payload }
+        : {
+            question: payload.question ?? '',
+            ...(payload.filters ? { filters: payload.filters } : {}),
+          };
+    return request<import('../types').AIQueryResponse>('/ai/query', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ question }),
-    }),
+      body: JSON.stringify(body),
+    });
+  },
   getExpenses: (filters: ExpenseFilters = {}) =>
     request<ExpenseListResponse>(
       `/expenses${toQuery({
@@ -368,6 +379,23 @@ export const api = {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
+    }),
+  getAlertRules: () => request<AlertRule[]>('/alert-rules'),
+  createAlertRule: (payload: AlertRuleCreate) =>
+    request<AlertRule>('/alert-rules', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }),
+  updateAlertRule: (ruleId: string, payload: AlertRuleUpdate) =>
+    request<AlertRule>(`/alert-rules/${ruleId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }),
+  deleteAlertRule: (ruleId: string) =>
+    request<void>(`/alert-rules/${ruleId}`, {
+      method: 'DELETE',
     }),
   getClientDataStatus: () => request<ClientDataStatusResponse>('/imports/client-data/status'),
   getClientDataSkipReportUrl: (reportId: string) =>

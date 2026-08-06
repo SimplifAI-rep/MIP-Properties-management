@@ -1,3 +1,4 @@
+from decimal import Decimal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -10,8 +11,15 @@ from app.models.expense import Expense
 from app.models.owner import Owner
 from app.models.property import Property
 from app.schemas import OwnerDetail, OwnerPropertySummary, OwnerSummary
+from app.services.deposit_query import list_deposits
+from app.services.expense_query import list_expenses
+from app.services.running_balance import property_float_totals
 
 router = APIRouter(prefix="/owners", tags=["owners"])
+
+
+def _zero() -> Decimal:
+    return Decimal("0.00")
 
 
 def _deposit_stats_by_owner_subquery():
@@ -72,6 +80,22 @@ def list_owners(db: Session = Depends(get_db)) -> list[OwnerSummary]:
         .order_by(Owner.name)
     ).all()
 
+    owner_ids = [owner.id for owner, *_ in rows]
+    property_rows = (
+        db.execute(
+            select(Property.id, Property.owner_id).where(Property.owner_id.in_(owner_ids))
+        ).all()
+        if owner_ids
+        else []
+    )
+    floats = property_float_totals(db, [property_id for property_id, _ in property_rows])
+    balance_by_owner: dict[UUID, Decimal] = {}
+    for property_id, owner_id in property_rows:
+        totals = floats.get(property_id)
+        if not totals:
+            continue
+        balance_by_owner[owner_id] = balance_by_owner.get(owner_id, _zero()) + totals.net
+
     return [
         OwnerSummary(
             id=owner.id,
@@ -83,6 +107,7 @@ def list_owners(db: Session = Depends(get_db)) -> list[OwnerSummary]:
             total_deposits=total_deposits or 0,
             expense_count=expense_count or 0,
             total_expenses=total_expenses or 0,
+            balance=balance_by_owner.get(owner.id, _zero()).quantize(Decimal("0.01")),
         )
         for owner, property_count, deposit_count, total_deposits, expense_count, total_expenses in rows
     ]
@@ -135,6 +160,8 @@ def get_owner(owner_id: UUID, db: Session = Depends(get_db)) -> OwnerDetail:
         .order_by(Property.name)
     ).all()
 
+    floats = property_float_totals(db, [prop.id for prop, *_ in property_rows])
+
     properties = [
         OwnerPropertySummary(
             id=prop.id,
@@ -147,9 +174,13 @@ def get_owner(owner_id: UUID, db: Session = Depends(get_db)) -> OwnerDetail:
             total_deposits=total_deposits or 0,
             expense_count=expense_count or 0,
             total_expenses=total_expenses or 0,
+            balance=(floats.get(prop.id).net if prop.id in floats else _zero()),
         )
         for prop, deposit_count, total_deposits, expense_count, total_expenses in property_rows
     ]
+
+    recent_deposits, _ = list_deposits(db, owner_id=owner_id, page=1, page_size=5)
+    recent_expenses, _ = list_expenses(db, owner_id=owner_id, page=1, page_size=5)
 
     return OwnerDetail(
         id=owner.id,
@@ -161,5 +192,8 @@ def get_owner(owner_id: UUID, db: Session = Depends(get_db)) -> OwnerDetail:
         total_deposits=sum(p.total_deposits for p in properties),
         expense_count=sum(p.expense_count for p in properties),
         total_expenses=sum(p.total_expenses for p in properties),
+        balance=sum((p.balance for p in properties), _zero()).quantize(Decimal("0.01")),
         properties=properties,
+        recent_deposits=recent_deposits,
+        recent_expenses=recent_expenses,
     )

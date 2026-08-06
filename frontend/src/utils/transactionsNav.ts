@@ -13,8 +13,11 @@ export type TransactionsAlertFilter = 'incomplete_import';
 
 export type TransactionsFilterState = {
   propertyId?: string;
+  propertyIds?: string[];
   clientPropId?: string;
+  clientPropIds?: string[];
   ownerId?: string;
+  ownerIds?: string[];
   dateFrom?: string;
   dateTo?: string;
   /** Legacy single type from dashboard/property links. */
@@ -24,6 +27,10 @@ export type TransactionsFilterState = {
   sources?: string[];
   sourceFiles?: string[];
   alertFilters?: TransactionsAlertFilter[];
+  showUpload?: boolean;
+  showForm?: boolean;
+  highlightId?: string;
+  highlightKind?: string;
 };
 
 export type PeriodDateRange = {
@@ -39,7 +46,9 @@ export function propertyTransactionsState(
 ): TransactionsFilterState {
   return {
     propertyId,
+    propertyIds: [propertyId],
     clientPropId: clientPropId ?? undefined,
+    clientPropIds: clientPropId ? [clientPropId] : undefined,
     ...(period
       ? {
           dateFrom: period.dateFrom,
@@ -57,6 +66,7 @@ export function ownerTransactionsState(
 ): TransactionsFilterState {
   return {
     ownerId,
+    ownerIds: [ownerId],
     ...(period
       ? {
           dateFrom: period.dateFrom,
@@ -64,6 +74,43 @@ export function ownerTransactionsState(
         }
       : {}),
     ...(typeFilter ? { typeFilter } : {}),
+  };
+}
+
+/** Normalize router location.state into Transactions filter fields. */
+export function parseTransactionsLocationState(
+  state: unknown,
+): TransactionsFilterState | null {
+  if (!state || typeof state !== 'object') return null;
+  const raw = state as TransactionsFilterState;
+
+  const propertyIds =
+    raw.propertyIds && raw.propertyIds.length > 0
+      ? raw.propertyIds
+      : raw.propertyId
+        ? [raw.propertyId]
+        : undefined;
+  const clientPropIds =
+    raw.clientPropIds && raw.clientPropIds.length > 0
+      ? raw.clientPropIds
+      : raw.clientPropId
+        ? [raw.clientPropId]
+        : undefined;
+  const ownerIds =
+    raw.ownerIds && raw.ownerIds.length > 0
+      ? raw.ownerIds
+      : raw.ownerId
+        ? [raw.ownerId]
+        : undefined;
+
+  return {
+    ...raw,
+    propertyId: propertyIds?.[0],
+    propertyIds,
+    clientPropId: clientPropIds?.[0],
+    clientPropIds,
+    ownerId: ownerIds?.[0],
+    ownerIds,
   };
 }
 
@@ -97,10 +144,38 @@ export function aiIntentToTransactionsState(
   const sources = intent.source ? [intent.source] : undefined;
   const sourceFiles = intent.source_file ? [intent.source_file] : undefined;
 
+  const propertyIds = [
+    ...new Set(
+      [
+        ...(intent.property_ids ?? []),
+        ...(intent.property_id ? [intent.property_id] : []),
+      ].filter(Boolean),
+    ),
+  ];
+  const clientPropIds = [
+    ...new Set(
+      [
+        ...(intent.client_prop_ids ?? []),
+        ...(intent.client_prop_id ? [intent.client_prop_id] : []),
+      ].filter(Boolean),
+    ),
+  ];
+  const ownerIds = [
+    ...new Set(
+      [
+        ...(intent.owner_ids ?? []),
+        ...(intent.owner_id ? [intent.owner_id] : []),
+      ].filter(Boolean),
+    ),
+  ];
+
   return {
-    propertyId: intent.property_id ?? undefined,
-    clientPropId: intent.client_prop_id ?? undefined,
-    ownerId: intent.owner_id ?? undefined,
+    propertyId: propertyIds[0],
+    propertyIds: propertyIds.length ? propertyIds : undefined,
+    clientPropId: clientPropIds[0],
+    clientPropIds: clientPropIds.length ? clientPropIds : undefined,
+    ownerId: ownerIds[0],
+    ownerIds: ownerIds.length ? ownerIds : undefined,
     dateFrom: intent.date_from ?? undefined,
     dateTo: intent.date_to ?? undefined,
     kinds,

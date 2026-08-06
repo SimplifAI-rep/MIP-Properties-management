@@ -5,6 +5,7 @@ const PAGE_LABELS: Array<{ path: string; label: string; end?: boolean }> = [
   { path: '/transactions', label: 'Transactions' },
   { path: '/alerts', label: 'Alerts' },
   { path: '/data-import', label: 'Data import' },
+  { path: '/admin/alert-rules', label: 'Alert rules' },
   { path: '/ai', label: 'AI Query' },
 ];
 

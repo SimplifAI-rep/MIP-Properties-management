@@ -79,8 +79,11 @@ def list_expenses(
     db: Session,
     *,
     property_id: UUID | None = None,
+    property_ids: list[UUID] | None = None,
     client_prop_id: str | None = None,
+    client_prop_ids: list[str] | None = None,
     owner_id: UUID | None = None,
+    owner_ids: list[UUID] | None = None,
     category: str | None = None,
     source: str | None = None,
     payment_method: str | None = None,
@@ -108,12 +111,35 @@ def list_expenses(
         .order_by(Expense.transaction_date.desc())
     )
 
-    if property_id:
-        stmt = stmt.where(Expense.property_id == property_id)
-    if client_prop_id:
-        stmt = stmt.where(func.upper(Property.client_prop_id) == client_prop_id.strip().upper())
-    if owner_id:
-        stmt = stmt.where(Property.owner_id == owner_id)
+    prop_ids = list(property_ids or [])
+    if property_id and property_id not in prop_ids:
+        prop_ids.append(property_id)
+    if len(prop_ids) == 1:
+        stmt = stmt.where(Expense.property_id == prop_ids[0])
+    elif len(prop_ids) > 1:
+        stmt = stmt.where(Expense.property_id.in_(prop_ids))
+
+    prop_codes = [
+        value.strip().upper()
+        for value in (client_prop_ids or [])
+        if value and value.strip()
+    ]
+    if client_prop_id and client_prop_id.strip():
+        prop_codes.append(client_prop_id.strip().upper())
+    seen_codes: set[str] = set()
+    prop_codes = [value for value in prop_codes if not (value in seen_codes or seen_codes.add(value))]
+    if len(prop_codes) == 1 and not prop_ids:
+        stmt = stmt.where(func.upper(Property.client_prop_id) == prop_codes[0])
+    elif len(prop_codes) > 1 and not prop_ids:
+        stmt = stmt.where(func.upper(Property.client_prop_id).in_(prop_codes))
+
+    own_ids = list(owner_ids or [])
+    if owner_id and owner_id not in own_ids:
+        own_ids.append(owner_id)
+    if len(own_ids) == 1:
+        stmt = stmt.where(Property.owner_id == own_ids[0])
+    elif len(own_ids) > 1:
+        stmt = stmt.where(Property.owner_id.in_(own_ids))
     if category:
         stmt = stmt.where(Expense.category == category)
     if source:

@@ -18,13 +18,23 @@ import {
 } from '../components/ui/States';
 import { SearchableMultiSelect } from '../components/ui/SearchableMultiSelect';
 import { DateInputDMY } from '../components/ui/DateInputDMY';
+import {
+  TransactionFilterFields,
+  type TransactionEntityFilters,
+} from '../components/ui/TransactionFilterFields';
 import { Tooltip } from '../components/ui/Tooltip';
 import { TransactionUploadPanel } from '../components/TransactionUploadPanel';
 import { useFeedback } from '../context/FeedbackContext';
 import {
-  depositToUnified,
-  expenseToUnified,
+  syncClientPropIdsFromProperties,
+  syncPropertyIdsFromPropIds,
+  useOwnerPropertyFilterOptions,
+} from '../hooks/useOwnerPropertyFilterOptions';
+import {
   formatTransactionFeedback,
+  isCompanyFloatDeposit,
+  isCompanyFloatExpense,
+  mergeAndSortTransactions,
   transactionRowClassName,
   type TransactionKind,
   type UnifiedTransaction,
@@ -36,6 +46,13 @@ import {
 } from '../constants/expenseOptions';
 import { todayISO } from '../utils/dateFormat';
 import { validationError } from '../utils/errors';
+import { formatLabel } from '../utils/formatLabel';
+import { invalidateTransactionData } from '../utils/invalidateQueries';
+import {
+  buildTxnListFilters,
+  buildTxnSharedFilters,
+} from '../utils/prefetchTransactions';
+import { parseTransactionsLocationState } from '../utils/transactionsNav';
 
 /** Filters that match Excel money lanes + Deposit/Expense. */
 type TypeFilterKind =
@@ -50,7 +67,7 @@ type AlertFilterKind = 'incomplete_import';
 type TypeFilter = 'all' | TransactionKind;
 
 function label(value: string) {
-  return value.replace(/_/g, ' ');
+  return formatLabel(value);
 }
 
 interface TransactionEditForm {
@@ -85,18 +102,6 @@ function rowTypeTags(row: UnifiedTransaction): TypeFilterKind[] {
 }
 
 const PAGE_SIZE = 50;
-
-function invalidateTransactionSummaries(queryClient: ReturnType<typeof useQueryClient>) {
-  queryClient.invalidateQueries({ queryKey: ['expenses'] });
-  queryClient.invalidateQueries({ queryKey: ['deposits'] });
-  queryClient.invalidateQueries({ queryKey: ['expense-summary'] });
-  queryClient.invalidateQueries({ queryKey: ['deposit-summary'] });
-  queryClient.invalidateQueries({ queryKey: ['expense-summary-heshe'] });
-  queryClient.invalidateQueries({ queryKey: ['expense-summary-owner'] });
-  queryClient.invalidateQueries({ queryKey: ['deposit-summary-rental'] });
-  queryClient.invalidateQueries({ queryKey: ['alerts'] });
-  queryClient.invalidateQueries({ queryKey: ['alert-summary'] });
-}
 
 function makeEmptyForm(): ExpenseCreate {
   return {
@@ -177,21 +182,7 @@ export function TransactionsPage() {
   const [editError, setEditError] = useState<unknown>(null);
 
   useEffect(() => {
-    const state = location.state as {
-      showUpload?: boolean;
-      showForm?: boolean;
-      propertyId?: string;
-      clientPropId?: string;
-      ownerId?: string;
-      dateFrom?: string;
-      dateTo?: string;
-      typeFilter?: TypeFilter;
-      kinds?: TypeFilterKind[];
-      sections?: string[];
-      sources?: string[];
-      sourceFiles?: string[];
-      alertFilters?: AlertFilterKind[];
-    } | null;
+    const state = parseTransactionsLocationState(location.state);
     if (!state) return;
 
     if (state.showUpload) {
@@ -202,15 +193,20 @@ export function TransactionsPage() {
       setShowForm(true);
       setShowUpload(false);
     }
-    if (state.propertyId || state.clientPropId) {
-      setPropertyIds(state.propertyId ? [state.propertyId] : []);
-      setClientPropIds(state.clientPropId ? [state.clientPropId] : []);
-      if (!state.ownerId) setOwnerIds([]);
+
+    const nextPropertyIds = state.propertyIds?.length ? state.propertyIds : null;
+    const nextClientPropIds = state.clientPropIds?.length ? state.clientPropIds : null;
+    const nextOwnerIds = state.ownerIds?.length ? state.ownerIds : null;
+
+    if (nextPropertyIds || nextClientPropIds) {
+      setPropertyIds(nextPropertyIds ?? []);
+      setClientPropIds(nextClientPropIds ?? []);
+      if (!nextOwnerIds) setOwnerIds([]);
       setPage(1);
     }
-    if (state.ownerId) {
-      setOwnerIds([state.ownerId]);
-      if (!state.propertyId && !state.clientPropId) {
+    if (nextOwnerIds) {
+      setOwnerIds(nextOwnerIds);
+      if (!nextPropertyIds && !nextClientPropIds) {
         setPropertyIds([]);
         setClientPropIds([]);
       }
@@ -222,7 +218,7 @@ export function TransactionsPage() {
       setPage(1);
     }
     if (state.kinds && state.kinds.length > 0) {
-      setKinds(state.kinds);
+      setKinds(state.kinds as TypeFilterKind[]);
       setPage(1);
     } else if (state.typeFilter === 'deposit') {
       setKinds(['deposit']);
@@ -230,7 +226,7 @@ export function TransactionsPage() {
     } else if (state.typeFilter === 'expense') {
       setKinds(['expense']);
       setPage(1);
-    } else if (state.propertyId || state.clientPropId || state.ownerId) {
+    } else if (nextPropertyIds || nextClientPropIds || nextOwnerIds) {
       setKinds(['deposit', 'expense']);
     }
     if (state.sections) {
@@ -246,7 +242,7 @@ export function TransactionsPage() {
       setPage(1);
     }
     if (state.alertFilters) {
-      setAlertFilters(state.alertFilters);
+      setAlertFilters(state.alertFilters as AlertFilterKind[]);
       setPage(1);
     }
   }, [location.state]);
@@ -257,13 +253,13 @@ export function TransactionsPage() {
   const apiSection = sections.length === 1 ? sections[0] : undefined;
   const apiSource = sources.length === 1 ? sources[0] : undefined;
 
-  const sharedFilters = {
+  const sharedFilters = buildTxnSharedFilters({
     property_id: apiPropertyId,
     client_prop_id: apiClientPropId,
     owner_id: apiOwnerId,
     date_from: dateFrom,
     date_to: dateTo,
-  };
+  });
 
   const includeDeposits =
     kinds.length === 0 ||
@@ -303,20 +299,22 @@ export function TransactionsPage() {
         ? false
         : undefined;
 
-  const listFilters = {
+  const listFilters = buildTxnListFilters({
     ...sharedFilters,
     source_file: singleSourceFile,
     needs_review: needsReviewOnly,
-  };
+  });
 
-  const propertiesQuery = useQuery({
-    queryKey: ['properties'],
-    queryFn: api.getProperties,
-  });
-  const ownersQuery = useQuery({
-    queryKey: ['owners'],
-    queryFn: api.getOwners,
-  });
+  const {
+    properties,
+    owners,
+    ownerOptions,
+    propertyOptions,
+    propIdOptions,
+    propertiesQuery,
+    ownersQuery,
+  } = useOwnerPropertyFilterOptions();
+
   const expenseSummaryQuery = useQuery({
     queryKey: ['expense-summary', sharedFilters, apiSection, apiSource, singleSourceFile],
     queryFn: () =>
@@ -407,7 +405,7 @@ export function TransactionsPage() {
   const createMutation = useMutation({
     mutationFn: api.createExpense,
     onSuccess: () => {
-      invalidateTransactionSummaries(queryClient);
+      invalidateTransactionData(queryClient);
       setForm(makeEmptyForm());
       setShowForm(false);
       setFormError(null);
@@ -443,7 +441,7 @@ export function TransactionsPage() {
       });
     },
     onSuccess: () => {
-      invalidateTransactionSummaries(queryClient);
+      invalidateTransactionData(queryClient);
       setEditForm(null);
       setEditError(null);
     },
@@ -458,7 +456,7 @@ export function TransactionsPage() {
       return api.deleteDeposit(payload.id);
     },
     onSuccess: () => {
-      invalidateTransactionSummaries(queryClient);
+      invalidateTransactionData(queryClient);
       setEditForm(null);
       setEditError(null);
     },
@@ -481,36 +479,6 @@ export function TransactionsPage() {
   const alertOptions = useMemo(
     () => [{ value: 'incomplete_import', label: 'Incomplete import' }],
     [],
-  );
-
-  const propIdOptions = useMemo(
-    () =>
-      (propertiesQuery.data ?? []).map((property) => ({
-        value: property.client_prop_id,
-        label:
-          property.status !== 'active'
-            ? `${property.client_prop_id} (inactive)`
-            : property.client_prop_id,
-      })),
-    [propertiesQuery.data],
-  );
-
-  const propertyOptions = useMemo(
-    () =>
-      (propertiesQuery.data ?? []).map((property) => ({
-        value: property.id,
-        label: `${property.client_prop_id} — ${property.name}`,
-      })),
-    [propertiesQuery.data],
-  );
-
-  const ownerOptions = useMemo(
-    () =>
-      (ownersQuery.data ?? []).map((owner) => ({
-        value: owner.id,
-        label: owner.name,
-      })),
-    [ownersQuery.data],
   );
 
   const sectionOptions = useMemo(() => {
@@ -559,22 +527,10 @@ export function TransactionsPage() {
     moneyRowCount,
     listedRowCount,
   } = useMemo(() => {
-      const deposits = includeDeposits
-        ? (depositsQuery.data?.items ?? []).map(depositToUnified)
-        : [];
-      const expenses = includeExpenses
-        ? (expensesQuery.data?.items ?? []).map(expenseToUnified)
-        : [];
-      let merged = [...deposits, ...expenses].sort((a, b) => {
-        // Newest date first. Missing date goes to the end.
-        // Missing amount keeps its date position (or end if date is also missing).
-        const aHasDate = Boolean(a.transaction_date);
-        const bHasDate = Boolean(b.transaction_date);
-        if (aHasDate !== bHasDate) return aHasDate ? -1 : 1;
-        const aTime = a.transaction_date ? new Date(a.transaction_date).getTime() : 0;
-        const bTime = b.transaction_date ? new Date(b.transaction_date).getTime() : 0;
-        return bTime - aTime;
-      });
+      let merged = mergeAndSortTransactions(
+        includeDeposits ? (depositsQuery.data?.items ?? []) : [],
+        includeExpenses ? (expensesQuery.data?.items ?? []) : [],
+      );
 
       if (kinds.length > 0) {
         const kindSet = new Set(kinds);
@@ -588,16 +544,14 @@ export function TransactionsPage() {
         merged = merged.filter((row) => set.has(row.client_prop_id));
       }
       if (propertyIds.length > 0) {
-        const props = propertiesQuery.data ?? [];
         merged = merged.filter((row) =>
-          props.some(
+          properties.some(
             (property) =>
               propertyIds.includes(property.id) && property.client_prop_id === row.client_prop_id,
           ),
         );
       }
       if (ownerIds.length > 0) {
-        const owners = ownersQuery.data ?? [];
         const allowedNames = new Set(
           owners.filter((owner) => ownerIds.includes(owner.id)).map((owner) => owner.name),
         );
@@ -672,13 +626,8 @@ export function TransactionsPage() {
       const clientSideFiltered =
         multiEntity || sources.length > 0 || sourceFiles.length > 1;
       if (clientSideFiltered) {
-        const depItems = merged.filter(
-          (row) => row.kind === 'deposit' && !row.is_rental_income,
-        );
-        const expItems = merged.filter(
-          (row) =>
-            row.kind === 'expense' && !row.paid_by_resident && !row.paid_by_owner,
-        );
+        const depItems = merged.filter(isCompanyFloatDeposit);
+        const expItems = merged.filter(isCompanyFloatExpense);
         cardInflow = depItems.reduce((sum, row) => sum + Number(row.amount), 0);
         cardExpenses = expItems.reduce((sum, row) => sum + Number(row.amount), 0);
         cardInflowCount = depItems.length;
@@ -686,13 +635,8 @@ export function TransactionsPage() {
         inflowSubtitle = 'filtered rows';
         expenseSubtitle = 'filtered rows';
       } else if (laneOnly) {
-        const depItems = merged.filter(
-          (row) => row.kind === 'deposit' && !row.is_rental_income,
-        );
-        const expItems = merged.filter(
-          (row) =>
-            row.kind === 'expense' && !row.paid_by_resident && !row.paid_by_owner,
-        );
+        const depItems = merged.filter(isCompanyFloatDeposit);
+        const expItems = merged.filter(isCompanyFloatExpense);
         cardInflow = depItems.reduce((sum, row) => sum + Number(row.amount), 0);
         cardExpenses = expItems.reduce((sum, row) => sum + Number(row.amount), 0);
         cardInflowCount = depItems.length;
@@ -755,9 +699,9 @@ export function TransactionsPage() {
       includeExpenses,
       kinds,
       ownerIds,
-      ownersQuery.data,
+      owners,
       page,
-      propertiesQuery.data,
+      properties,
       propertyIds,
       sections,
       sourceFiles,
@@ -862,25 +806,12 @@ export function TransactionsPage() {
     );
   }
 
-  function syncPropIdsFromProperties(nextPropertyIds: string[]) {
-    setPropertyIds(nextPropertyIds);
-    const props = propertiesQuery.data ?? [];
-    setClientPropIds(
-      nextPropertyIds
-        .map((id) => props.find((property) => property.id === id)?.client_prop_id)
-        .filter((value): value is string => Boolean(value)),
-    );
-    resetPage();
-  }
-
-  function syncPropertiesFromPropIds(nextPropIds: string[]) {
-    setClientPropIds(nextPropIds);
-    const props = propertiesQuery.data ?? [];
-    setPropertyIds(
-      nextPropIds
-        .map((propId) => props.find((property) => property.client_prop_id === propId)?.id)
-        .filter((value): value is string => Boolean(value)),
-    );
+  function syncEntityFilters(next: TransactionEntityFilters) {
+    setOwnerIds(next.ownerIds);
+    setPropertyIds(next.propertyIds);
+    setClientPropIds(next.clientPropIds);
+    setDateFrom(next.dateFrom);
+    setDateTo(next.dateTo);
     resetPage();
   }
 
@@ -995,7 +926,7 @@ export function TransactionsPage() {
 
       {showUpload ? (
         <TransactionUploadPanel
-          properties={propertiesQuery.data ?? []}
+          properties={properties}
           onClose={() => setShowUpload(false)}
         />
       ) : null}
@@ -1190,111 +1121,95 @@ export function TransactionsPage() {
       </div>
 
       <section className="filter-panel md:grid-cols-2 xl:grid-cols-4">
-        <SearchableMultiSelect
-          label="Type"
-          tip="Deposit/Expense match Excel Inflow/Amount. Rental, He/She, Owner paid, Bank statement, and Nearly CC are separate lanes you can filter."
-          options={typeOptions}
-          selected={kinds}
-          onChange={(next) => {
-            setKinds(next as TypeFilterKind[]);
-            resetPage();
+        <TransactionFilterFields
+          value={{
+            ownerIds,
+            propertyIds,
+            clientPropIds,
+            dateFrom,
+            dateTo,
           }}
-          placeholder="All types"
-          searchPlaceholder="Search type…"
-        />
-        <SearchableMultiSelect
-          label="Alerts"
-          tip="Filter to incomplete import rows (missing date and/or amount). Those also appear under Alerts until dismissed or fixed."
-          options={alertOptions}
-          selected={alertFilters}
-          onChange={(next) => {
-            setAlertFilters(next as AlertFilterKind[]);
-            resetPage();
-          }}
-          placeholder="All rows"
-          searchPlaceholder="Search alerts…"
-        />
-        <SearchableMultiSelect
-          label="Prop ID"
-          tip="Excel Prop ID — select one or more."
-          options={propIdOptions}
-          selected={clientPropIds}
-          onChange={syncPropertiesFromPropIds}
-          placeholder="All Prop IDs"
-          searchPlaceholder="Search Prop ID…"
-        />
-        <SearchableMultiSelect
-          label="Property"
-          tip="Select one or more properties."
-          options={propertyOptions}
-          selected={propertyIds}
-          onChange={syncPropIdsFromProperties}
-          placeholder="All properties"
-          searchPlaceholder="Search property…"
-        />
-        <SearchableMultiSelect
-          label="Owner"
-          tip="Select one or more owners."
-          options={ownerOptions}
-          selected={ownerIds}
-          onChange={(next) => {
-            setOwnerIds(next);
-            resetPage();
-          }}
-          placeholder="All owners"
-          searchPlaceholder="Search owner…"
-        />
-        <DateInputDMY
-          label="From date"
-          value={dateFrom}
-          onChange={(iso) => {
-            setDateFrom(iso);
-            resetPage();
-          }}
-        />
-        <DateInputDMY
-          label="To date"
-          value={dateTo}
-          onChange={(iso) => {
-            setDateTo(iso);
-            resetPage();
-          }}
-        />
-        <SearchableMultiSelect
-          label="Section"
-          tip="Excel Section — select one or more."
-          options={sectionOptions}
-          selected={sections}
-          onChange={(next) => {
-            setSections(next);
-            resetPage();
-          }}
-          placeholder="All sections"
-          searchPlaceholder="Search section…"
-        />
-        <SearchableMultiSelect
-          label="Source"
-          tip="How the expense was recorded."
-          options={sourceOptions}
-          selected={sources}
-          onChange={(next) => {
-            setSources(next);
-            resetPage();
-          }}
-          placeholder="All sources"
-          searchPlaceholder="Search source…"
-        />
-        <SearchableMultiSelect
-          label="Source file"
-          tip="Original import/upload filename for the row."
-          options={sourceFileOptions}
-          selected={sourceFiles}
-          onChange={(next) => {
-            setSourceFiles(next);
-            resetPage();
-          }}
-          placeholder="All source files"
-          searchPlaceholder="Search file…"
+          onChange={syncEntityFilters}
+          ownerOptions={ownerOptions}
+          propertyOptions={propertyOptions}
+          propIdOptions={propIdOptions}
+          showAmounts={false}
+          onSyncFromProperties={(nextPropertyIds) => ({
+            propertyIds: nextPropertyIds,
+            clientPropIds: syncClientPropIdsFromProperties(nextPropertyIds, properties),
+          })}
+          onSyncFromPropIds={(nextPropIds) => ({
+            clientPropIds: nextPropIds,
+            propertyIds: syncPropertyIdsFromPropIds(nextPropIds, properties),
+          })}
+          prepend={
+            <>
+              <SearchableMultiSelect
+                label="Type"
+                tip="Deposit/Expense match Excel Inflow/Amount. Rental, He/She, Owner paid, Bank statement, and Nearly CC are separate lanes you can filter."
+                options={typeOptions}
+                selected={kinds}
+                onChange={(next) => {
+                  setKinds(next as TypeFilterKind[]);
+                  resetPage();
+                }}
+                placeholder="All types"
+                searchPlaceholder="Search type…"
+              />
+              <SearchableMultiSelect
+                label="Alerts"
+                tip="Filter to incomplete import rows (missing date and/or amount). Those also appear under Alerts until dismissed or fixed."
+                options={alertOptions}
+                selected={alertFilters}
+                onChange={(next) => {
+                  setAlertFilters(next as AlertFilterKind[]);
+                  resetPage();
+                }}
+                placeholder="All rows"
+                searchPlaceholder="Search alerts…"
+              />
+            </>
+          }
+          append={
+            <>
+              <SearchableMultiSelect
+                label="Section"
+                tip="Excel Section — select one or more."
+                options={sectionOptions}
+                selected={sections}
+                onChange={(next) => {
+                  setSections(next);
+                  resetPage();
+                }}
+                placeholder="All sections"
+                searchPlaceholder="Search section…"
+              />
+              <SearchableMultiSelect
+                label="Source"
+                tip="How the expense was recorded."
+                options={sourceOptions}
+                selected={sources}
+                onChange={(next) => {
+                  setSources(next);
+                  resetPage();
+                }}
+                placeholder="All sources"
+                searchPlaceholder="Search source…"
+              />
+              <SearchableMultiSelect
+                label="Source file"
+                tip="Original import/upload filename for the row."
+                options={sourceFileOptions}
+                selected={sourceFiles}
+                onChange={(next) => {
+                  setSourceFiles(next);
+                  resetPage();
+                }}
+                placeholder="All source files"
+                searchPlaceholder="Search file…"
+              />
+            </>
+          }
         />
       </section>
 

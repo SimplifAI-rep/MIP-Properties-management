@@ -1,15 +1,18 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { AppShell } from './components/layout/AppShell';
+import { RequireAdmin } from './components/RequireAdmin';
 import { ThemeProvider } from './context/ThemeContext';
 import { AuthProvider } from './context/AuthContext';
 import { AIQueryPage } from './pages/AIQueryPage';
+import { AlertRulesPage } from './pages/AlertRulesPage';
 import { AlertsPage } from './pages/AlertsPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { DataImportPage } from './pages/DataImportPage';
 import { TransactionsPage } from './pages/TransactionsPage';
 import { OwnersPage } from './pages/OwnersPage';
 import { PropertiesPage } from './pages/PropertiesPage';
+import { ReportsPage } from './pages/ReportsPage';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -33,7 +36,23 @@ export default function App() {
                 <Route path="owners" element={<OwnersPage />} />
                 <Route path="transactions" element={<TransactionsPage />} />
                 <Route path="alerts" element={<AlertsPage />} />
-                <Route path="data-import" element={<DataImportPage />} />
+                <Route path="reports" element={<ReportsPage />} />
+                <Route
+                  path="data-import"
+                  element={
+                    <RequireAdmin>
+                      <DataImportPage />
+                    </RequireAdmin>
+                  }
+                />
+                <Route
+                  path="admin/alert-rules"
+                  element={
+                    <RequireAdmin>
+                      <AlertRulesPage />
+                    </RequireAdmin>
+                  }
+                />
                 <Route path="ai" element={<AIQueryPage />} />
                 <Route path="*" element={<Navigate to="/" replace />} />
               </Route>

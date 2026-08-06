@@ -48,6 +48,7 @@ def test_list_owners_with_summaries(client):
     david = next(row for row in body if row["id"] == str(OWNER_DAVID_ID))
     assert david["property_count"] == 2
     assert david["expense_count"] >= 2
+    assert "balance" in david
 
 
 def test_get_owner_detail(client):
@@ -57,3 +58,13 @@ def test_get_owner_detail(client):
     assert body["name"] == "David Cohen"
     assert len(body["properties"]) == 2
     assert body["contact_email"] == "david.cohen@example.com"
+    assert "balance" in body
+    assert all("balance" in prop for prop in body["properties"])
+    assert float(body["balance"]) == pytest.approx(
+        sum(float(prop["balance"]) for prop in body["properties"]),
+        abs=0.01,
+    )
+    assert "recent_deposits" in body
+    assert "recent_expenses" in body
+    assert len(body["recent_deposits"]) <= 5
+    assert len(body["recent_expenses"]) <= 5

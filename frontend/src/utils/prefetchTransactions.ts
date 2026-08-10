@@ -5,6 +5,7 @@ type TxnSharedFilters = {
   property_id?: string;
   client_prop_id?: string;
   owner_id?: string;
+  property_status?: 'active' | 'inactive';
   date_from?: string;
   date_to?: string;
 };
@@ -20,6 +21,7 @@ export function buildTxnSharedFilters(partial: TxnSharedFilters = {}): TxnShared
     property_id: partial.property_id,
     client_prop_id: partial.client_prop_id,
     owner_id: partial.owner_id,
+    property_status: partial.property_status,
     date_from: partial.date_from,
     date_to: partial.date_to,
   };
@@ -33,8 +35,8 @@ export function buildTxnListFilters(partial: TxnListFilters = {}): TxnListFilter
   };
 }
 
-const DEFAULT_TXN_SHARED_FILTERS = buildTxnSharedFilters();
-const DEFAULT_TXN_LIST_FILTERS = buildTxnListFilters();
+const DEFAULT_TXN_SHARED_FILTERS = buildTxnSharedFilters({ property_status: 'active' });
+const DEFAULT_TXN_LIST_FILTERS = buildTxnListFilters({ property_status: 'active' });
 
 /**
  * Warm React Query cache for the default Transactions view so navigation

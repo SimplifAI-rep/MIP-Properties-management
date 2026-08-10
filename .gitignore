@@ -16,3 +16,5 @@ docs/SimplifAI_Client_Guide.out
 docs/SimplifAI_Client_Guide.toc
 data/ClientData/~$Management expenses sheet.xlsx
 data/ClientData/inspection_dumps/*
+manual tests/
+scripts/generate_manual_test_suite.py

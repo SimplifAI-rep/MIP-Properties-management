@@ -64,6 +64,7 @@ type TypeFilterKind =
   | 'bank_statement'
   | 'nearly_cc';
 type AlertFilterKind = 'incomplete_import';
+type PropertyStatusFilter = 'active' | 'inactive';
 type TypeFilter = 'all' | TransactionKind;
 
 function label(value: string) {
@@ -165,6 +166,7 @@ export function TransactionsPage() {
   const { openFeedback } = useFeedback();
   const [kinds, setKinds] = useState<TypeFilterKind[]>(['deposit', 'expense']);
   const [page, setPage] = useState(1);
+  const [propertyStatuses, setPropertyStatuses] = useState<PropertyStatusFilter[]>(['active']);
   const [propertyIds, setPropertyIds] = useState<string[]>([]);
   const [clientPropIds, setClientPropIds] = useState<string[]>([]);
   const [ownerIds, setOwnerIds] = useState<string[]>([]);
@@ -202,6 +204,8 @@ export function TransactionsPage() {
       setPropertyIds(nextPropertyIds ?? []);
       setClientPropIds(nextClientPropIds ?? []);
       if (!nextOwnerIds) setOwnerIds([]);
+      // Deep links should show the linked property even if inactive.
+      setPropertyStatuses(['active', 'inactive']);
       setPage(1);
     }
     if (nextOwnerIds) {
@@ -210,6 +214,7 @@ export function TransactionsPage() {
         setPropertyIds([]);
         setClientPropIds([]);
       }
+      setPropertyStatuses(['active', 'inactive']);
       setPage(1);
     }
     if (state.dateFrom != null || state.dateTo != null) {
@@ -250,6 +255,8 @@ export function TransactionsPage() {
   const apiPropertyId = propertyIds.length === 1 ? propertyIds[0] : undefined;
   const apiClientPropId = clientPropIds.length === 1 ? clientPropIds[0] : undefined;
   const apiOwnerId = ownerIds.length === 1 ? ownerIds[0] : undefined;
+  const apiPropertyStatus =
+    propertyStatuses.length === 1 ? propertyStatuses[0] : undefined;
   const apiSection = sections.length === 1 ? sections[0] : undefined;
   const apiSource = sources.length === 1 ? sources[0] : undefined;
 
@@ -257,6 +264,7 @@ export function TransactionsPage() {
     property_id: apiPropertyId,
     client_prop_id: apiClientPropId,
     owner_id: apiOwnerId,
+    property_status: apiPropertyStatus,
     date_from: dateFrom,
     date_to: dateTo,
   });
@@ -475,6 +483,34 @@ export function TransactionsPage() {
     ],
     [],
   );
+
+  const propertyStatusOptions = useMemo(
+    () => [
+      { value: 'active', label: 'Active' },
+      { value: 'inactive', label: 'Inactive' },
+    ],
+    [],
+  );
+
+  const statusFilteredPropertyOptions = useMemo(() => {
+    if (propertyStatuses.length !== 1) return propertyOptions;
+    const status = propertyStatuses[0];
+    const allowed = new Set(
+      properties.filter((property) => property.status === status).map((property) => property.id),
+    );
+    return propertyOptions.filter((option) => allowed.has(option.value));
+  }, [properties, propertyOptions, propertyStatuses]);
+
+  const statusFilteredPropIdOptions = useMemo(() => {
+    if (propertyStatuses.length !== 1) return propIdOptions;
+    const status = propertyStatuses[0];
+    const allowed = new Set(
+      properties
+        .filter((property) => property.status === status)
+        .map((property) => property.client_prop_id),
+    );
+    return propIdOptions.filter((option) => allowed.has(option.value));
+  }, [properties, propIdOptions, propertyStatuses]);
 
   const alertOptions = useMemo(
     () => [{ value: 'incomplete_import', label: 'Incomplete import' }],
@@ -727,6 +763,8 @@ export function TransactionsPage() {
     kinds.length !== 2 ||
       !kinds.includes('deposit') ||
       !kinds.includes('expense') ||
+      propertyStatuses.length !== 1 ||
+      propertyStatuses[0] !== 'active' ||
       alertFilters.length ||
       propertyIds.length ||
       clientPropIds.length ||
@@ -740,6 +778,7 @@ export function TransactionsPage() {
 
   function clearFilters() {
     setKinds(['deposit', 'expense']);
+    setPropertyStatuses(['active']);
     setAlertFilters([]);
     setPropertyIds([]);
     setClientPropIds([]);
@@ -1131,8 +1170,8 @@ export function TransactionsPage() {
           }}
           onChange={syncEntityFilters}
           ownerOptions={ownerOptions}
-          propertyOptions={propertyOptions}
-          propIdOptions={propIdOptions}
+          propertyOptions={statusFilteredPropertyOptions}
+          propIdOptions={statusFilteredPropIdOptions}
           showAmounts={false}
           onSyncFromProperties={(nextPropertyIds) => ({
             propertyIds: nextPropertyIds,
@@ -1144,6 +1183,20 @@ export function TransactionsPage() {
           })}
           prepend={
             <>
+              <SearchableMultiSelect
+                label="Property status"
+                tip="Show transactions for active and/or inactive properties. Default is active only."
+                options={propertyStatusOptions}
+                selected={propertyStatuses}
+                onChange={(next) => {
+                  setPropertyStatuses(next as PropertyStatusFilter[]);
+                  setPropertyIds([]);
+                  setClientPropIds([]);
+                  resetPage();
+                }}
+                placeholder="All statuses"
+                searchPlaceholder="Search status…"
+              />
               <SearchableMultiSelect
                 label="Type"
                 tip="Deposit/Expense match Excel Inflow/Amount. Rental, He/She, Owner paid, Bank statement, and Nearly CC are separate lanes you can filter."

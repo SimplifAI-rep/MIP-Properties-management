@@ -31,6 +31,9 @@ def get_deposits(
     property_id: UUID | None = None,
     client_prop_id: str | None = None,
     owner_id: UUID | None = None,
+    property_status: str | None = Query(
+        None, pattern="^(active|inactive)$", description="Filter by property status"
+    ),
     date_from: date | None = None,
     date_to: date | None = None,
     min_amount: Decimal | None = None,
@@ -47,6 +50,7 @@ def get_deposits(
         property_id=property_id,
         client_prop_id=client_prop_id,
         owner_id=owner_id,
+        property_status=property_status,
         date_from=date_from,
         date_to=date_to,
         min_amount=min_amount,
@@ -75,6 +79,9 @@ def deposit_summary(
     property_id: UUID | None = None,
     client_prop_id: str | None = None,
     owner_id: UUID | None = None,
+    property_status: str | None = Query(
+        None, pattern="^(active|inactive)$", description="Filter by property status"
+    ),
     date_from: date | None = None,
     date_to: date | None = None,
     min_amount: Decimal | None = None,
@@ -90,6 +97,7 @@ def deposit_summary(
         property_id=property_id,
         client_prop_id=client_prop_id,
         owner_id=owner_id,
+        property_status=property_status,
         date_from=date_from,
         date_to=date_to,
         min_amount=min_amount,

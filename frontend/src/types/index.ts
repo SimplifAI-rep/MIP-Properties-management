@@ -13,6 +13,8 @@ export interface OwnerSummary extends Owner {
   total_expenses: string;
   /** Company-float balance (Inflow − Expenses), summed across properties. */
   balance: string;
+  /** Inactive only when every linked property is inactive. */
+  status?: 'active' | 'inactive';
 }
 
 export interface OwnerPropertySummary {
@@ -171,6 +173,7 @@ export interface DepositFilters {
   property_id?: string;
   client_prop_id?: string;
   owner_id?: string;
+  property_status?: 'active' | 'inactive';
   date_from?: string;
   date_to?: string;
   min_amount?: string;
@@ -234,6 +237,7 @@ export interface ExpenseFilters {
   property_id?: string;
   client_prop_id?: string;
   owner_id?: string;
+  property_status?: 'active' | 'inactive';
   category?: string;
   source?: string;
   payment_method?: string;

@@ -23,6 +23,8 @@ class OwnerSummary(OwnerRead):
     total_expenses: Decimal = Decimal("0")
     # Company-float balance (Inflow − Expenses), summed across properties
     balance: Decimal = Decimal("0")
+    # Derived: inactive only when the owner has properties and all are inactive
+    status: Literal["active", "inactive"] = "active"
 
 
 class OwnerPropertySummary(BaseModel):

@@ -793,25 +793,21 @@ export function DashboardPage() {
         )}
       </section>
 
-      {/* Missing deposits */}
-      <section className="panel">
-        <div className="section-header">
-          <h3 className="section-title">
-            <Tooltip content="Expected deposits not found for properties in this period.">
-              Missing expected deposits
-            </Tooltip>
-            {' — '}
-            {period.label}
-          </h3>
-          <p className="section-subtitle">
-            Properties where the expected deposit was not received.
-          </p>
-        </div>
-        {gapsQuery.isLoading ? (
-          <div className="p-5">
-            <LoadingState label="Checking gaps..." />
+      {/* Missing deposits — only when expected-deposit rules produce gaps */}
+      {gapsQuery.data && gapsQuery.data.length > 0 ? (
+        <section className="panel">
+          <div className="section-header">
+            <h3 className="section-title">
+              <Tooltip content="Expected deposits not found for properties in this period.">
+                Missing expected deposits
+              </Tooltip>
+              {' — '}
+              {period.label}
+            </h3>
+            <p className="section-subtitle">
+              Properties where the expected deposit was not received.
+            </p>
           </div>
-        ) : gapsQuery.data && gapsQuery.data.length > 0 ? (
           <div className="overflow-x-auto">
             <table className="table-shell">
               <thead className="table-head">
@@ -832,16 +828,13 @@ export function DashboardPage() {
                       key={`${gap.property_id}-${gap.period_start}`}
                       className="table-row-link"
                       onClick={() =>
-                        navigate(
-                          '/transactions',
-                          {
-                            state: propertyTransactionsState(
-                              gap.property_id,
-                              property?.client_prop_id,
-                              periodDates,
-                            ),
-                          },
-                        )
+                        navigate('/transactions', {
+                          state: propertyTransactionsState(
+                            gap.property_id,
+                            property?.client_prop_id,
+                            periodDates,
+                          ),
+                        })
                       }
                     >
                       <td className="px-5 py-3 font-medium">{gap.property_name}</td>
@@ -858,10 +851,8 @@ export function DashboardPage() {
               </tbody>
             </table>
           </div>
-        ) : (
-          <div className="p-5 muted-text">No missing deposits for {period.label}.</div>
-        )}
-      </section>
+        </section>
+      ) : null}
 
       {/* Owner overview (period-scoped) */}
       <section className="panel">

@@ -149,6 +149,7 @@ export const api = {
         property_id: filters.property_id,
         client_prop_id: filters.client_prop_id,
         owner_id: filters.owner_id,
+        property_status: filters.property_status,
         date_from: filters.date_from,
         date_to: filters.date_to,
         min_amount: filters.min_amount,
@@ -176,6 +177,7 @@ export const api = {
       property_id?: string;
       client_prop_id?: string;
       owner_id?: string;
+      property_status?: 'active' | 'inactive';
       date_from?: string;
       date_to?: string;
       min_amount?: string;
@@ -191,6 +193,7 @@ export const api = {
         property_id: filters.property_id,
         client_prop_id: filters.client_prop_id,
         owner_id: filters.owner_id,
+        property_status: filters.property_status,
         date_from: filters.date_from,
         date_to: filters.date_to,
         min_amount: filters.min_amount,
@@ -235,6 +238,7 @@ export const api = {
         property_id: filters.property_id,
         client_prop_id: filters.client_prop_id,
         owner_id: filters.owner_id,
+        property_status: filters.property_status,
         category: filters.category,
         source: filters.source,
         payment_method: filters.payment_method,
@@ -267,6 +271,7 @@ export const api = {
       property_id?: string;
       client_prop_id?: string;
       owner_id?: string;
+      property_status?: 'active' | 'inactive';
       category?: string;
       source?: string;
       payment_method?: string;
@@ -287,6 +292,7 @@ export const api = {
         property_id: filters.property_id,
         client_prop_id: filters.client_prop_id,
         owner_id: filters.owner_id,
+        property_status: filters.property_status,
         category: filters.category,
         source: filters.source,
         payment_method: filters.payment_method,

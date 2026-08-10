@@ -3,6 +3,7 @@
 from types import SimpleNamespace
 from uuid import uuid4
 
+from app.models.deposit import Deposit
 from app.services.transaction_filters import (
     deposit_counts_in_company_float,
     deposit_float_filter_clauses,
@@ -10,6 +11,7 @@ from app.services.transaction_filters import (
     expense_float_filter_clauses,
     merge_unique_ids,
     normalize_client_prop_codes,
+    property_scope_clauses,
 )
 
 
@@ -57,3 +59,16 @@ def test_merge_unique_ids():
     a, b = uuid4(), uuid4()
     assert merge_unique_ids(a, [b, a]) == [b, a]
     assert merge_unique_ids(None, None) == []
+
+
+def test_property_status_scope_requires_join():
+    clauses, needs_join = property_scope_clauses(
+        Deposit,
+        property_status="active",
+    )
+    assert needs_join is True
+    assert len(clauses) == 1
+
+    none_clauses, none_join = property_scope_clauses(Deposit, property_status=None)
+    assert none_clauses == []
+    assert none_join is False

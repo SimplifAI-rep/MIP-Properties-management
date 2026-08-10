@@ -20,18 +20,25 @@ import {
 } from '../utils/transactionsNav';
 import { mergeAndSortTransactions } from '../utils/unifiedTransaction';
 
-const OWNER_COL_COUNT = 6;
+const OWNER_COL_COUNT = 7;
+
+type OwnerStatusFilter = 'active' | 'inactive';
 
 function formatOwnerFeedback(owner: OwnerSummary): string {
   return [
     'Feedback about this owner:',
     `Owner: ${owner.name}`,
     `Owner ID: ${owner.id}`,
+    `Status: ${owner.status === 'inactive' ? 'Inactive' : 'Active'}`,
     `Properties: ${owner.property_count}`,
     `Deposits: ${owner.total_deposits} (${owner.deposit_count})`,
     `Expenses: ${owner.total_expenses} (${owner.expense_count})`,
     `Balance: ${owner.balance}`,
   ].join('\n');
+}
+
+function isOwnerInactive(owner: OwnerSummary): boolean {
+  return owner.status === 'inactive';
 }
 
 function recentOwnerTransactions(detail: OwnerDetail) {
@@ -74,6 +81,11 @@ function OwnerExpandedDetails({
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-baseline gap-x-5 gap-y-1">
             <h3 className="detail-title">{detail.name}</h3>
+            {isOwnerInactive(detail) ? (
+              <span className="badge-neutral" title="All linked properties are inactive">
+                Inactive
+              </span>
+            ) : null}
             <span className="text-base text-slate-600 dark:text-slate-300">
               Deposits:{' '}
               <span className="amount-deposit text-lg font-semibold">
@@ -154,6 +166,7 @@ export function OwnersPage() {
   const navigate = useNavigate();
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [ownerFilterIds, setOwnerFilterIds] = useState<string[]>([]);
+  const [ownerStatuses, setOwnerStatuses] = useState<OwnerStatusFilter[]>(['active']);
 
   const ownersQuery = useQuery({
     queryKey: ['owners'],
@@ -167,15 +180,34 @@ export function OwnersPage() {
   });
 
   const allOwners = ownersQuery.data ?? [];
+  const statusFilteredOwners = useMemo(() => {
+    if (ownerStatuses.length === 0 || ownerStatuses.length === 2) return allOwners;
+    const status = ownerStatuses[0];
+    return allOwners.filter((owner) =>
+      status === 'inactive' ? isOwnerInactive(owner) : !isOwnerInactive(owner),
+    );
+  }, [allOwners, ownerStatuses]);
   const ownerOptions = useMemo(
-    () => allOwners.map((owner) => ({ value: owner.id, label: owner.name })),
-    [allOwners],
+    () =>
+      statusFilteredOwners.map((owner) => ({
+        value: owner.id,
+        label: isOwnerInactive(owner) ? `${owner.name} (inactive)` : owner.name,
+      })),
+    [statusFilteredOwners],
   );
   const owners = useMemo(() => {
-    if (!ownerFilterIds.length) return allOwners;
+    if (!ownerFilterIds.length) return statusFilteredOwners;
     const selected = new Set(ownerFilterIds);
-    return allOwners.filter((owner) => selected.has(owner.id));
-  }, [allOwners, ownerFilterIds]);
+    return statusFilteredOwners.filter((owner) => selected.has(owner.id));
+  }, [statusFilteredOwners, ownerFilterIds]);
+
+  const ownerStatusOptions = useMemo(
+    () => [
+      { value: 'active', label: 'Active' },
+      { value: 'inactive', label: 'Inactive' },
+    ],
+    [],
+  );
 
   if (ownersQuery.isLoading) return <LoadingState />;
   if (ownersQuery.isError) {
@@ -201,7 +233,19 @@ export function OwnersPage() {
         </p>
       </div>
 
-      <div className="filter-panel max-w-md md:grid-cols-1">
+      <div className="filter-panel max-w-3xl md:grid-cols-2">
+        <SearchableMultiSelect
+          label="Owner status"
+          tip="Active owners have at least one active property. Inactive means every linked property is inactive."
+          options={ownerStatusOptions}
+          selected={ownerStatuses}
+          onChange={(next) => {
+            setOwnerStatuses(next as OwnerStatusFilter[]);
+            setOwnerFilterIds([]);
+          }}
+          placeholder="All statuses"
+          searchPlaceholder="Search status…"
+        />
         <SearchableMultiSelect
           label="Filter owners"
           tip="Show only selected owners in the table."
@@ -219,6 +263,11 @@ export function OwnersPage() {
             <thead className="table-head">
               <tr>
                 <th className="px-5 py-3 font-medium">Owner</th>
+                <th className="px-5 py-3 font-medium">
+                  <Tooltip content="Inactive only when every linked property is inactive.">
+                    Status
+                  </Tooltip>
+                </th>
                 <th className="px-5 py-3 font-medium">
                   <Tooltip content="Properties linked to this owner.">Properties</Tooltip>
                 </th>
@@ -239,6 +288,7 @@ export function OwnersPage() {
             <tbody>
               {owners.map((owner) => {
                 const expanded = expandedId === owner.id;
+                const inactive = isOwnerInactive(owner);
                 return (
                   <Fragment key={owner.id}>
                     <tr
@@ -250,6 +300,18 @@ export function OwnersPage() {
                       className={`table-row-link ${expanded ? 'table-row-selected' : ''}`}
                     >
                       <td className="px-5 py-3 font-medium">{owner.name}</td>
+                      <td className="px-5 py-3">
+                        {inactive ? (
+                          <span
+                            className="badge-neutral"
+                            title="All linked properties are inactive"
+                          >
+                            Inactive
+                          </span>
+                        ) : (
+                          <span className="muted-text">—</span>
+                        )}
+                      </td>
                       <td className="px-5 py-3">{owner.property_count}</td>
                       <td className="px-5 py-3">
                         {formatCurrency(owner.total_deposits)}

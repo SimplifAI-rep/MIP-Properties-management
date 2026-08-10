@@ -23,6 +23,9 @@ def get_expenses(
     property_id: UUID | None = None,
     client_prop_id: str | None = None,
     owner_id: UUID | None = None,
+    property_status: str | None = Query(
+        None, pattern="^(active|inactive)$", description="Filter by property status"
+    ),
     category: str | None = None,
     source: str | None = None,
     payment_method: str | None = None,
@@ -44,6 +47,7 @@ def get_expenses(
         property_id=property_id,
         client_prop_id=client_prop_id,
         owner_id=owner_id,
+        property_status=property_status,
         category=category,
         source=source,
         payment_method=payment_method,
@@ -77,6 +81,9 @@ def expense_summary(
     property_id: UUID | None = None,
     client_prop_id: str | None = None,
     owner_id: UUID | None = None,
+    property_status: str | None = Query(
+        None, pattern="^(active|inactive)$", description="Filter by property status"
+    ),
     category: str | None = None,
     source: str | None = None,
     payment_method: str | None = None,
@@ -97,6 +104,7 @@ def expense_summary(
         property_id=property_id,
         client_prop_id=client_prop_id,
         owner_id=owner_id,
+        property_status=property_status,
         category=category,
         source=source,
         payment_method=payment_method,

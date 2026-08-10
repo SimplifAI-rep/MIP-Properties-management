@@ -115,6 +115,7 @@ def property_scope_clauses(
     client_prop_ids: list[str] | None = None,
     owner_id: UUID | None = None,
     owner_ids: list[UUID] | None = None,
+    property_status: str | None = None,
 ) -> tuple[list[ColumnElement[bool]], bool]:
     """Return (clauses, needs_property_join).
 
@@ -144,6 +145,11 @@ def property_scope_clauses(
             clauses.append(Property.owner_id == own_ids[0])
         else:
             clauses.append(Property.owner_id.in_(own_ids))
+
+    status = (property_status or "").strip().lower()
+    if status in {"active", "inactive"}:
+        needs_join = True
+        clauses.append(Property.status == status)
 
     return clauses, needs_join
 
@@ -195,6 +201,7 @@ def apply_property_scope(
     client_prop_ids: list[str] | None = None,
     owner_id: UUID | None = None,
     owner_ids: list[UUID] | None = None,
+    property_status: str | None = None,
 ) -> Select[Any]:
     clauses, _ = property_scope_clauses(
         model,
@@ -204,6 +211,7 @@ def apply_property_scope(
         client_prop_ids=client_prop_ids,
         owner_id=owner_id,
         owner_ids=owner_ids,
+        property_status=property_status,
     )
     return apply_clauses(stmt, clauses)
 
@@ -244,6 +252,7 @@ def apply_deposit_list_filters(
     client_prop_ids: list[str] | None = None,
     owner_id: UUID | None = None,
     owner_ids: list[UUID] | None = None,
+    property_status: str | None = None,
     date_from: date | None = None,
     date_to: date | None = None,
     min_amount: Decimal | None = None,
@@ -264,6 +273,7 @@ def apply_deposit_list_filters(
         client_prop_ids=client_prop_ids,
         owner_id=owner_id,
         owner_ids=owner_ids,
+        property_status=property_status,
     )
     stmt = apply_common_transaction_filters(
         stmt,
@@ -297,6 +307,7 @@ def apply_expense_list_filters(
     client_prop_ids: list[str] | None = None,
     owner_id: UUID | None = None,
     owner_ids: list[UUID] | None = None,
+    property_status: str | None = None,
     category: str | None = None,
     source: str | None = None,
     payment_method: str | None = None,
@@ -323,6 +334,7 @@ def apply_expense_list_filters(
         client_prop_ids=client_prop_ids,
         owner_id=owner_id,
         owner_ids=owner_ids,
+        property_status=property_status,
     )
     stmt = apply_common_transaction_filters(
         stmt,
@@ -373,6 +385,7 @@ def collect_deposit_summary_filters(
     property_id: UUID | None = None,
     client_prop_id: str | None = None,
     owner_id: UUID | None = None,
+    property_status: str | None = None,
     date_from: date | None = None,
     date_to: date | None = None,
     min_amount: Decimal | None = None,
@@ -392,6 +405,7 @@ def collect_deposit_summary_filters(
         property_id=property_id,
         client_prop_id=client_prop_id,
         owner_id=owner_id,
+        property_status=property_status,
     )
     filters.extend(scope)
     filters.extend(
@@ -413,6 +427,7 @@ def collect_expense_summary_filters(
     property_id: UUID | None = None,
     client_prop_id: str | None = None,
     owner_id: UUID | None = None,
+    property_status: str | None = None,
     category: str | None = None,
     source: str | None = None,
     payment_method: str | None = None,
@@ -439,6 +454,7 @@ def collect_expense_summary_filters(
         property_id=property_id,
         client_prop_id=client_prop_id,
         owner_id=owner_id,
+        property_status=property_status,
     )
     filters.extend(scope)
     filters.extend(

@@ -3,8 +3,11 @@ import { api } from '../api/client';
 
 type TxnSharedFilters = {
   property_id?: string;
+  property_ids?: string[];
   client_prop_id?: string;
+  client_prop_ids?: string[];
   owner_id?: string;
+  owner_ids?: string[];
   property_status?: 'active' | 'inactive';
   date_from?: string;
   date_to?: string;
@@ -19,8 +22,11 @@ type TxnListFilters = TxnSharedFilters & {
 export function buildTxnSharedFilters(partial: TxnSharedFilters = {}): TxnSharedFilters {
   return {
     property_id: partial.property_id,
+    property_ids: partial.property_ids,
     client_prop_id: partial.client_prop_id,
+    client_prop_ids: partial.client_prop_ids,
     owner_id: partial.owner_id,
+    owner_ids: partial.owner_ids,
     property_status: partial.property_status,
     date_from: partial.date_from,
     date_to: partial.date_to,
@@ -40,7 +46,7 @@ const DEFAULT_TXN_LIST_FILTERS = buildTxnListFilters({ property_status: 'active'
 
 /**
  * Warm React Query cache for the default Transactions view so navigation
- * feels instant. Safe to call on every app shell mount (deduped by query keys).
+ * feels instant. Prefetches first pages only (not the full ledger).
  */
 export function prefetchTransactionsData(queryClient: QueryClient): void {
   void queryClient.prefetchQuery({
@@ -52,11 +58,12 @@ export function prefetchTransactionsData(queryClient: QueryClient): void {
     queryFn: api.getOwners,
   });
   void queryClient.prefetchQuery({
-    queryKey: ['deposits', DEFAULT_TXN_LIST_FILTERS, undefined],
+    queryKey: ['deposits', DEFAULT_TXN_LIST_FILTERS, undefined, 'page', 1],
     queryFn: () =>
-      api.getAllDeposits({
+      api.getDeposits({
         ...DEFAULT_TXN_LIST_FILTERS,
-        is_rental_income: undefined,
+        page: 1,
+        page_size: 50,
       }),
   });
   void queryClient.prefetchQuery({
@@ -67,14 +74,14 @@ export function prefetchTransactionsData(queryClient: QueryClient): void {
       undefined,
       undefined,
       undefined,
+      'page',
+      1,
     ],
     queryFn: () =>
-      api.getAllExpenses({
+      api.getExpenses({
         ...DEFAULT_TXN_LIST_FILTERS,
-        category: undefined,
-        source: undefined,
-        paid_by_resident: undefined,
-        paid_by_owner: undefined,
+        page: 1,
+        page_size: 50,
       }),
   });
   void queryClient.prefetchQuery({

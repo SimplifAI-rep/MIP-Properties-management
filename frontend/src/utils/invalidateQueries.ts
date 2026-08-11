@@ -18,3 +18,22 @@ export function invalidateAlertData(queryClient: QueryClient): void {
   queryClient.invalidateQueries({ queryKey: ['alerts'] });
   queryClient.invalidateQueries({ queryKey: ['alert-summary'] });
 }
+
+/**
+ * After ClientData import replaces owners/properties/ledger rows.
+ * Prefer this over invalidateQueries() so unrelated cache (auth, UI) stays warm.
+ */
+export function invalidateAfterClientDataImport(queryClient: QueryClient): void {
+  invalidateTransactionData(queryClient);
+  queryClient.invalidateQueries({ queryKey: ['owners'] });
+  queryClient.invalidateQueries({ queryKey: ['owner'] });
+  queryClient.invalidateQueries({ queryKey: ['properties'] });
+  queryClient.invalidateQueries({ queryKey: ['property'] });
+  queryClient.invalidateQueries({ queryKey: ['deposit-gaps'] });
+  queryClient.invalidateQueries({ queryKey: ['dashboard-period-float'] });
+  queryClient.invalidateQueries({ queryKey: ['dashboard-recent-deposits'] });
+  queryClient.invalidateQueries({ queryKey: ['dashboard-recent-expenses'] });
+  queryClient.invalidateQueries({ queryKey: ['transaction-years'] });
+  queryClient.invalidateQueries({ queryKey: ['client-data-status'] });
+  queryClient.invalidateQueries({ queryKey: ['alert-rules'] });
+}

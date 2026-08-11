@@ -20,9 +20,6 @@ import {
   propertyTransactionsState,
 } from '../utils/transactionsNav';
 import {
-  companyFloatTotals,
-  isCompanyFloatDeposit,
-  isCompanyFloatExpense,
   mergeAndSortTransactions,
 } from '../utils/unifiedTransaction';
 import {
@@ -35,7 +32,7 @@ import {
 } from '../utils/dashboardPeriod';
 
 const RECENT_LIMIT = 10;
-const DEFAULT_EXPENSE_BREAKDOWN_MIN = 1000;
+const DEFAULT_EXPENSE_BREAKDOWN_MIN = 10000;
 
 
 interface PropertyHealth {
@@ -138,14 +135,19 @@ export function DashboardPage() {
     queryFn: () =>
       api.getExpenseSummary({ date_from: period.dateFrom, date_to: period.dateTo }),
   });
-  const alertSummaryQuery = useQuery({
-    queryKey: ['alert-summary'],
-    queryFn: api.getAlertSummary,
-  });
   const alertsQuery = useQuery({
     queryKey: ['alerts'],
     queryFn: api.getAlerts,
   });
+  const alertSummary = useMemo(() => {
+    const data = alertsQuery.data;
+    if (!data) return null;
+    return {
+      open_count: data.total,
+      error_count: data.error_count,
+      warning_count: data.warning_count,
+    };
+  }, [alertsQuery.data]);
   const gapsQuery = useQuery({
     queryKey: ['deposit-gaps', period],
     queryFn: () => fetchPeriodGaps(period),
@@ -154,20 +156,31 @@ export function DashboardPage() {
     queryKey: ['properties'],
     queryFn: api.getProperties,
   });
-  const periodDepositsQuery = useQuery({
-    queryKey: ['dashboard-period-deposits', period.dateFrom, period.dateTo],
+  const periodFloatQuery = useQuery({
+    queryKey: ['dashboard-period-float', period.dateFrom, period.dateTo],
     queryFn: () =>
-      api.getAllDeposits({
+      api.getPeriodFloat({ date_from: period.dateFrom, date_to: period.dateTo }),
+  });
+  const recentDepositsQuery = useQuery({
+    queryKey: ['dashboard-recent-deposits', period.dateFrom, period.dateTo],
+    queryFn: () =>
+      api.getDeposits({
         date_from: period.dateFrom,
         date_to: period.dateTo,
+        page: 1,
+        page_size: RECENT_LIMIT,
+        include_running_balance: false,
       }),
   });
-  const periodExpensesQuery = useQuery({
-    queryKey: ['dashboard-period-expenses', period.dateFrom, period.dateTo],
+  const recentExpensesQuery = useQuery({
+    queryKey: ['dashboard-recent-expenses', period.dateFrom, period.dateTo],
     queryFn: () =>
-      api.getAllExpenses({
+      api.getExpenses({
         date_from: period.dateFrom,
         date_to: period.dateTo,
+        page: 1,
+        page_size: RECENT_LIMIT,
+        include_running_balance: false,
       }),
   });
 
@@ -217,14 +230,21 @@ export function DashboardPage() {
     (item) => Number(item.total_amount) < expenseBreakdownMinAmount,
   );
 
-  const periodTransactions = useMemo(
-    () =>
-      mergeAndSortTransactions(
-        periodDepositsQuery.data?.items ?? [],
-        periodExpensesQuery.data?.items ?? [],
-      ),
-    [periodDepositsQuery.data, periodExpensesQuery.data],
-  );
+  const periodFloatByProperty = useMemo(() => {
+    const map = new Map<
+      string,
+      { depositTotal: number; expenseTotal: number; depositCount: number; expenseCount: number }
+    >();
+    for (const row of periodFloatQuery.data?.properties ?? []) {
+      map.set(row.property_id, {
+        depositTotal: Number(row.deposit_total),
+        expenseTotal: Number(row.expense_total),
+        depositCount: row.deposit_count,
+        expenseCount: row.expense_count,
+      });
+    }
+    return map;
+  }, [periodFloatQuery.data]);
 
   const propertyHealth = useMemo(() => {
     const properties = propertiesQuery.data ?? [];
@@ -239,8 +259,9 @@ export function DashboardPage() {
 
     return properties
       .map((property): PropertyHealth => {
-        const rows = periodTransactions.filter((row) => row.property_id === property.id);
-        const { inflow, expenses, balance } = companyFloatTotals(rows);
+        const floats = periodFloatByProperty.get(property.id);
+        const depositTotal = floats?.depositTotal ?? 0;
+        const expenseTotal = floats?.expenseTotal ?? 0;
         const gapCount = gapCountByProperty.get(property.id) ?? 0;
         let depositStatus: PropertyHealth['depositStatus'] = 'ok';
         if (gapCount > 0 && gapCount >= monthsCount) depositStatus = 'missing';
@@ -248,9 +269,9 @@ export function DashboardPage() {
 
         return {
           property,
-          depositTotal: inflow,
-          expenseTotal: expenses,
-          net: balance,
+          depositTotal,
+          expenseTotal,
+          net: depositTotal - expenseTotal,
           depositStatus,
           gapCount,
         };
@@ -259,7 +280,7 @@ export function DashboardPage() {
         (item) => item.depositTotal > 0 || item.expenseTotal > 0 || item.gapCount > 0,
       )
       .sort((a, b) => b.net - a.net);
-  }, [propertiesQuery.data, periodTransactions, gapsQuery.data, monthsCount]);
+  }, [propertiesQuery.data, periodFloatByProperty, gapsQuery.data, monthsCount]);
 
   const ownerPeriodRows = useMemo(() => {
     const properties = propertiesQuery.data ?? [];
@@ -276,25 +297,14 @@ export function DashboardPage() {
         expenseCount: 0,
       };
       existing.propertyCount += 1;
-      byOwner.set(property.owner_id, existing);
-    });
-
-    const ownerIdByName = new Map(
-      properties.map((property) => [property.owner_name, property.owner_id] as const),
-    );
-
-    periodTransactions.forEach((row) => {
-      const ownerId = ownerIdByName.get(row.owner_name);
-      if (!ownerId) return;
-      const existing = byOwner.get(ownerId);
-      if (!existing) return;
-      if (isCompanyFloatDeposit(row)) {
-        existing.depositTotal += Number(row.amount);
-        existing.depositCount += 1;
-      } else if (isCompanyFloatExpense(row)) {
-        existing.expenseTotal += Number(row.amount);
-        existing.expenseCount += 1;
+      const floats = periodFloatByProperty.get(property.id);
+      if (floats) {
+        existing.depositTotal += floats.depositTotal;
+        existing.expenseTotal += floats.expenseTotal;
+        existing.depositCount += floats.depositCount;
+        existing.expenseCount += floats.expenseCount;
       }
+      byOwner.set(property.owner_id, existing);
     });
 
     return Array.from(byOwner.values())
@@ -302,7 +312,7 @@ export function DashboardPage() {
       .sort(
         (a, b) => b.depositTotal - b.expenseTotal - (a.depositTotal - a.expenseTotal),
       );
-  }, [periodTransactions, propertiesQuery.data]);
+  }, [periodFloatByProperty, propertiesQuery.data]);
 
   const propertyById = useMemo(() => {
     const map = new Map<string, Property>();
@@ -311,8 +321,12 @@ export function DashboardPage() {
   }, [propertiesQuery.data]);
 
   const recentActivity = useMemo(
-    () => periodTransactions.slice(0, RECENT_LIMIT),
-    [periodTransactions],
+    () =>
+      mergeAndSortTransactions(
+        recentDepositsQuery.data?.items ?? [],
+        recentExpensesQuery.data?.items ?? [],
+      ).slice(0, RECENT_LIMIT),
+    [recentDepositsQuery.data, recentExpensesQuery.data],
   );
 
   if (depositSummaryQuery.isLoading || expenseSummaryQuery.isLoading) {
@@ -411,9 +425,9 @@ export function DashboardPage() {
         </Link>
         <Link to="/alerts" className="btn-secondary">
           View alerts
-          {alertSummaryQuery.data && alertSummaryQuery.data.open_count > 0 ? (
+          {alertSummary && alertSummary.open_count > 0 ? (
             <span className="ml-2 rounded-full bg-rose-500 px-2 py-0.5 text-xs text-white">
-              {alertSummaryQuery.data.open_count}
+              {alertSummary.open_count}
             </span>
           ) : null}
         </Link>
@@ -485,21 +499,23 @@ export function DashboardPage() {
         <button type="button" className="text-left" onClick={() => navigate('/alerts')}>
           <Card
             title="Open alerts"
-            value={alertSummaryQuery.data?.open_count ?? '—'}
+            value={alertSummary?.open_count ?? '—'}
             subtitle={
-              alertSummaryQuery.data
-                ? `${alertSummaryQuery.data.error_count} errors · ${alertSummaryQuery.data.warning_count} warnings`
+              alertSummary
+                ? `${alertSummary.error_count} errors · ${alertSummary.warning_count} warnings`
                 : 'Loading...'
             }
             tooltip="Unresolved warnings or errors needing review."
           />
         </button>
-        <Card
-          title="Missing deposits"
-          value={gapsQuery.data?.length ?? '—'}
-          subtitle={`Across ${period.label}`}
-          tooltip="Expected deposits not found in this period."
-        />
+        {gapsQuery.data && gapsQuery.data.length > 0 ? (
+          <Card
+            title="Missing deposits"
+            value={gapsQuery.data.length}
+            subtitle={`Across ${period.label}`}
+            tooltip="Expected deposits not found in this period."
+          />
+        ) : null}
       </section>
 
       {/* Recent activity (period-scoped) — early for presentation clarity */}
@@ -520,7 +536,7 @@ export function DashboardPage() {
             View all
           </Link>
         </div>
-        {periodDepositsQuery.isLoading || periodExpensesQuery.isLoading ? (
+        {recentDepositsQuery.isLoading || recentExpensesQuery.isLoading ? (
           <div className="p-5">
             <LoadingState label="Loading activity..." />
           </div>
@@ -645,7 +661,7 @@ export function DashboardPage() {
             Properties with deposits, expenses, or missing expected deposits in {period.label}.
           </p>
         </div>
-        {propertiesQuery.isLoading || periodDepositsQuery.isLoading || periodExpensesQuery.isLoading ? (
+        {propertiesQuery.isLoading || periodFloatQuery.isLoading ? (
           <LoadingState label="Loading property health..." />
         ) : propertyHealth.length > 0 ? (
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">

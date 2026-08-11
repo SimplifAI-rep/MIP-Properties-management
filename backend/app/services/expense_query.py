@@ -105,6 +105,7 @@ def list_expenses(
     ledger_column: str | None = None,
     page: int = 1,
     page_size: int = 50,
+    include_running_balance: bool = True,
 ) -> tuple[list[ExpenseRead], int]:
     page_size = min(max(page_size, 1), 2000)
     page = max(page, 1)
@@ -146,7 +147,11 @@ def list_expenses(
     rows = db.execute(stmt.offset((page - 1) * page_size).limit(page_size)).all()
     expenses = [row[0] for row in rows]
     upload_names = load_upload_filenames(db, [e.receipt_ref for e in expenses])
-    balances = compute_running_balances(db, [e.property_id for e in expenses])
+    balances = (
+        compute_running_balances(db, [e.property_id for e in expenses])
+        if include_running_balance and expenses
+        else {}
+    )
     items = [
         expense_to_read(
             expense,

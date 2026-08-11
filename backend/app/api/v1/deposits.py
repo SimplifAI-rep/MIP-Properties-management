@@ -29,8 +29,11 @@ router = APIRouter(prefix="/deposits", tags=["deposits"])
 @router.get("", response_model=DepositListResponse)
 def get_deposits(
     property_id: UUID | None = None,
+    property_ids: list[UUID] | None = Query(None),
     client_prop_id: str | None = None,
+    client_prop_ids: list[str] | None = Query(None),
     owner_id: UUID | None = None,
+    owner_ids: list[UUID] | None = Query(None),
     property_status: str | None = Query(
         None, pattern="^(active|inactive)$", description="Filter by property status"
     ),
@@ -41,6 +44,7 @@ def get_deposits(
     source_file: str | None = None,
     needs_review: bool | None = None,
     is_rental_income: bool | None = None,
+    include_running_balance: bool = Query(True),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=2000),
     db: Session = Depends(get_db),
@@ -48,8 +52,11 @@ def get_deposits(
     items, total = list_deposits(
         db,
         property_id=property_id,
+        property_ids=property_ids,
         client_prop_id=client_prop_id,
+        client_prop_ids=client_prop_ids,
         owner_id=owner_id,
+        owner_ids=owner_ids,
         property_status=property_status,
         date_from=date_from,
         date_to=date_to,
@@ -60,6 +67,7 @@ def get_deposits(
         is_rental_income=is_rental_income,
         page=page,
         page_size=page_size,
+        include_running_balance=include_running_balance,
     )
     return DepositListResponse(
         items=items, total=total, page=page, page_size=page_size

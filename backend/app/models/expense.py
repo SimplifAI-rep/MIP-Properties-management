@@ -9,6 +9,7 @@ from sqlalchemy import (
     CheckConstraint,
     Date,
     ForeignKey,
+    Index,
     Numeric,
     String,
     Text,
@@ -53,6 +54,20 @@ class Expense(Base, TimestampMixin):
     __table_args__ = (
         CheckConstraint("amount >= 0", name="ck_expenses_amount_non_negative"),
         UniqueConstraint("import_key", name="uq_expenses_import_key"),
+        Index("ix_expenses_property_date", "property_id", "transaction_date"),
+        Index("ix_expenses_date", "transaction_date"),
+        Index("ix_expenses_category", "category"),
+        Index("ix_expenses_source", "source"),
+        Index("ix_expenses_source_file", "source_file"),
+        Index("ix_expenses_needs_review_created", "needs_review", "created_at"),
+        Index(
+            "ix_expenses_property_flags_date",
+            "property_id",
+            "paid_by_resident",
+            "paid_by_owner",
+            "transaction_date",
+        ),
+        Index("ix_expenses_ledger_column", "ledger_column"),
     )
 
     id: Mapped[uuid.UUID] = uuid_pk()

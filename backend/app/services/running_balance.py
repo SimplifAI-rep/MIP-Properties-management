@@ -21,9 +21,7 @@ from app.models.deposit import Deposit
 from app.models.expense import Expense
 from app.services.transaction_filters import (
     deposit_company_float_clause,
-    deposit_counts_in_company_float,
     expense_company_float_clauses,
-    expense_counts_in_company_float,
 )
 
 
@@ -102,7 +100,10 @@ def compute_running_balances(
     db: Session,
     property_ids: list[UUID],
 ) -> dict[tuple[str, str], Decimal]:
-    """Return {(kind, transaction_id_str): balance_after} for all txs on those properties."""
+    """Return {(kind, transaction_id_str): balance_after} for all txs on those properties.
+
+    Loads lean column projections (not full ORM rows) to keep list endpoints cheaper.
+    """
     if not property_ids:
         return {}
 
@@ -110,36 +111,66 @@ def compute_running_balances(
     if not unique_ids:
         return {}
 
-    deposits = db.scalars(
-        select(Deposit).where(Deposit.property_id.in_(unique_ids))
+    deposit_rows = db.execute(
+        select(
+            Deposit.id,
+            Deposit.property_id,
+            Deposit.transaction_date,
+            Deposit.created_at,
+            Deposit.amount,
+            Deposit.is_rental_income,
+        ).where(Deposit.property_id.in_(unique_ids))
     ).all()
-    expenses = db.scalars(
-        select(Expense).where(Expense.property_id.in_(unique_ids))
+    expense_rows = db.execute(
+        select(
+            Expense.id,
+            Expense.property_id,
+            Expense.transaction_date,
+            Expense.created_at,
+            Expense.amount,
+            Expense.paid_by_resident,
+            Expense.paid_by_owner,
+        ).where(Expense.property_id.in_(unique_ids))
     ).all()
 
     events: list[_LedgerEvent] = []
-    for deposit in deposits:
-        counts = deposit_counts_in_company_float(deposit)
+    for (
+        deposit_id,
+        property_id,
+        transaction_date,
+        created_at,
+        amount,
+        is_rental_income,
+    ) in deposit_rows:
+        counts = not bool(is_rental_income)
         events.append(
             _LedgerEvent(
-                property_id=deposit.property_id,
-                transaction_date=deposit.transaction_date,
-                created_at=getattr(deposit, "created_at", None),
+                property_id=property_id,
+                transaction_date=transaction_date,
+                created_at=created_at,
                 kind="deposit",
-                id=deposit.id,
-                delta=deposit.amount if counts else Decimal("0"),
+                id=deposit_id,
+                delta=amount if counts else Decimal("0"),
             )
         )
-    for expense in expenses:
-        counts = expense_counts_in_company_float(expense)
+    for (
+        expense_id,
+        property_id,
+        transaction_date,
+        created_at,
+        amount,
+        paid_by_resident,
+        paid_by_owner,
+    ) in expense_rows:
+        counts = not bool(paid_by_resident) and not bool(paid_by_owner)
         events.append(
             _LedgerEvent(
-                property_id=expense.property_id,
-                transaction_date=expense.transaction_date,
-                created_at=getattr(expense, "created_at", None),
+                property_id=property_id,
+                transaction_date=transaction_date,
+                created_at=created_at,
                 kind="expense",
-                id=expense.id,
-                delta=-expense.amount if counts else Decimal("0"),
+                id=expense_id,
+                delta=-amount if counts else Decimal("0"),
             )
         )
 

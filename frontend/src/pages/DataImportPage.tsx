@@ -8,6 +8,7 @@ import { ErrorState, InlineError, LoadingState } from '../components/ui/States';
 import { Tooltip } from '../components/ui/Tooltip';
 import { validationError, AppError } from '../utils/errors';
 import { formatLabel } from '../utils/formatLabel';
+import { invalidateAfterClientDataImport } from '../utils/invalidateQueries';
 
 type FileRole = 'client_list' | 'management';
 
@@ -114,7 +115,7 @@ export function DataImportPage() {
       setResult(response);
       setError(null);
       setProgressMessage(null);
-      queryClient.invalidateQueries();
+      invalidateAfterClientDataImport(queryClient);
       statusQuery.refetch();
     },
     onError: (err: Error) => {

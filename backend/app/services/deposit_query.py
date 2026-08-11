@@ -89,6 +89,7 @@ def list_deposits(
     is_rental_income: bool | None = None,
     page: int = 1,
     page_size: int = 50,
+    include_running_balance: bool = True,
 ) -> tuple[list[DepositRead], int]:
     page_size = min(max(page_size, 1), 2000)
     page = max(page, 1)
@@ -134,7 +135,11 @@ def list_deposits(
     deposits = [row[0] for row in rows]
     upload_names = load_upload_filenames(db, [d.receipt_ref for d in deposits])
     batch_names = load_batch_filenames(db, [d.import_batch_id for d in deposits])
-    balances = compute_running_balances(db, [d.property_id for d in deposits])
+    balances = (
+        compute_running_balances(db, [d.property_id for d in deposits])
+        if include_running_balance and deposits
+        else {}
+    )
 
     items = [
         deposit_to_read(
@@ -272,22 +277,29 @@ def find_deposit_gaps(
         expected_stmt = expected_stmt.where(Property.owner_id == owner_id)
 
     expected_rows = db.execute(expected_stmt).all()
+    if not expected_rows:
+        return []
+
+    property_ids = list({prop.id for _, prop, _ in expected_rows})
+    deposits = db.scalars(
+        select(Deposit).where(
+            and_(
+                Deposit.property_id.in_(property_ids),
+                Deposit.transaction_date >= period_start,
+                Deposit.transaction_date <= period_end,
+                deposit_company_float_clause(),
+            )
+        )
+    ).all()
+    deposits_by_property: dict[UUID, list[Deposit]] = {}
+    for deposit in deposits:
+        deposits_by_property.setdefault(deposit.property_id, []).append(deposit)
 
     gaps: list[DepositGap] = []
     for expected, prop, owner in expected_rows:
-        deposits = db.scalars(
-            select(Deposit).where(
-                and_(
-                    Deposit.property_id == prop.id,
-                    Deposit.transaction_date >= period_start,
-                    Deposit.transaction_date <= period_end,
-                    deposit_company_float_clause(),
-                )
-            )
-        ).all()
-
+        property_deposits = deposits_by_property.get(prop.id, [])
         matched = any(
-            abs(dep.amount - expected.amount) <= tolerance for dep in deposits
+            abs(dep.amount - expected.amount) <= tolerance for dep in property_deposits
         )
         if not matched:
             gaps.append(

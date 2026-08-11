@@ -4,7 +4,16 @@ import uuid
 from datetime import date
 from decimal import Decimal
 
-from sqlalchemy import Boolean, Date, ForeignKey, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import (
+    Boolean,
+    Date,
+    ForeignKey,
+    Index,
+    Numeric,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import TimestampMixin, uuid_pk
@@ -15,6 +24,16 @@ class Deposit(Base, TimestampMixin):
     __tablename__ = "deposits"
     __table_args__ = (
         UniqueConstraint("import_key", name="uq_deposits_import_key"),
+        Index("ix_deposits_property_date", "property_id", "transaction_date"),
+        Index("ix_deposits_date", "transaction_date"),
+        Index("ix_deposits_source_file", "source_file"),
+        Index("ix_deposits_needs_review_created", "needs_review", "created_at"),
+        Index(
+            "ix_deposits_property_rental_date",
+            "property_id",
+            "is_rental_income",
+            "transaction_date",
+        ),
     )
 
     id: Mapped[uuid.UUID] = uuid_pk()

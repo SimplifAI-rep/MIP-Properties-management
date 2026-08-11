@@ -116,6 +116,18 @@ export interface DepositGap {
   status: string;
 }
 
+export interface PeriodPropertyFloat {
+  property_id: string;
+  deposit_total: string;
+  expense_total: string;
+  deposit_count: number;
+  expense_count: number;
+}
+
+export interface PeriodFloatResponse {
+  properties: PeriodPropertyFloat[];
+}
+
 export interface DepositQueryIntent {
   query_type: string;
   domain?: string;
@@ -171,8 +183,11 @@ export interface AIQueryResponse {
 
 export interface DepositFilters {
   property_id?: string;
+  property_ids?: string[];
   client_prop_id?: string;
+  client_prop_ids?: string[];
   owner_id?: string;
+  owner_ids?: string[];
   property_status?: 'active' | 'inactive';
   date_from?: string;
   date_to?: string;
@@ -181,6 +196,7 @@ export interface DepositFilters {
   source_file?: string;
   needs_review?: boolean;
   is_rental_income?: boolean;
+  include_running_balance?: boolean;
   page?: number;
   page_size?: number;
 }
@@ -235,8 +251,11 @@ export interface ExpenseSummary {
 
 export interface ExpenseFilters {
   property_id?: string;
+  property_ids?: string[];
   client_prop_id?: string;
+  client_prop_ids?: string[];
   owner_id?: string;
+  owner_ids?: string[];
   property_status?: 'active' | 'inactive';
   category?: string;
   source?: string;
@@ -250,6 +269,7 @@ export interface ExpenseFilters {
   paid_by_resident?: boolean;
   paid_by_owner?: boolean;
   paid_by_company?: boolean;
+  include_running_balance?: boolean;
   page?: number;
   page_size?: number;
 }

@@ -12,15 +12,12 @@ export type TransactionsTypeKind =
 export type TransactionsAlertFilter = 'incomplete_import';
 
 export type TransactionsFilterState = {
-  propertyId?: string;
   propertyIds?: string[];
-  clientPropId?: string;
   clientPropIds?: string[];
-  ownerId?: string;
   ownerIds?: string[];
   dateFrom?: string;
   dateTo?: string;
-  /** Legacy single type from dashboard/property links. */
+  /** Legacy single type from older deep links. Prefer `kinds`. */
   typeFilter?: TransactionsTypeFilter;
   kinds?: TransactionsTypeKind[];
   sections?: string[];
@@ -31,6 +28,12 @@ export type TransactionsFilterState = {
   showForm?: boolean;
   highlightId?: string;
   highlightKind?: string;
+  /** @deprecated Prefer propertyIds — still accepted by parseTransactionsLocationState. */
+  propertyId?: string;
+  /** @deprecated Prefer clientPropIds. */
+  clientPropId?: string;
+  /** @deprecated Prefer ownerIds. */
+  ownerId?: string;
 };
 
 export type PeriodDateRange = {
@@ -45,9 +48,7 @@ export function propertyTransactionsState(
   typeFilter?: TransactionsTypeFilter,
 ): TransactionsFilterState {
   return {
-    propertyId,
     propertyIds: [propertyId],
-    clientPropId: clientPropId ?? undefined,
     clientPropIds: clientPropId ? [clientPropId] : undefined,
     ...(period
       ? {
@@ -65,7 +66,6 @@ export function ownerTransactionsState(
   typeFilter?: TransactionsTypeFilter,
 ): TransactionsFilterState {
   return {
-    ownerId,
     ownerIds: [ownerId],
     ...(period
       ? {
@@ -104,13 +104,21 @@ export function parseTransactionsLocationState(
         : undefined;
 
   return {
-    ...raw,
-    propertyId: propertyIds?.[0],
     propertyIds,
-    clientPropId: clientPropIds?.[0],
     clientPropIds,
-    ownerId: ownerIds?.[0],
     ownerIds,
+    dateFrom: raw.dateFrom,
+    dateTo: raw.dateTo,
+    typeFilter: raw.typeFilter,
+    kinds: raw.kinds,
+    sections: raw.sections,
+    sources: raw.sources,
+    sourceFiles: raw.sourceFiles,
+    alertFilters: raw.alertFilters,
+    showUpload: raw.showUpload,
+    showForm: raw.showForm,
+    highlightId: raw.highlightId,
+    highlightKind: raw.highlightKind,
   };
 }
 
@@ -170,11 +178,8 @@ export function aiIntentToTransactionsState(
   ];
 
   return {
-    propertyId: propertyIds[0],
     propertyIds: propertyIds.length ? propertyIds : undefined,
-    clientPropId: clientPropIds[0],
     clientPropIds: clientPropIds.length ? clientPropIds : undefined,
-    ownerId: ownerIds[0],
     ownerIds: ownerIds.length ? ownerIds : undefined,
     dateFrom: intent.date_from ?? undefined,
     dateTo: intent.date_to ?? undefined,

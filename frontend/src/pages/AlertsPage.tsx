@@ -584,7 +584,7 @@ export function AlertsPage() {
                     <tr
                       key={alert.id}
                       onClick={() => selectAlert(alert)}
-                      className={`table-row-interactive ${
+                      className={`table-row-link ${
                         selectedId === alert.id ? 'table-row-selected' : ''
                       }`}
                     >

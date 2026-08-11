@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import ForeignKey, String, Text, UniqueConstraint
+from sqlalchemy import ForeignKey, Index, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import TimestampMixin, uuid_pk
@@ -13,6 +13,7 @@ class Property(Base, TimestampMixin):
     __tablename__ = "properties"
     __table_args__ = (
         UniqueConstraint("client_prop_id", name="uq_properties_client_prop_id"),
+        Index("ix_properties_owner_status", "owner_id", "status"),
     )
 
     id: Mapped[uuid.UUID] = uuid_pk()

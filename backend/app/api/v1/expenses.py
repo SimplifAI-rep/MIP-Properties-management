@@ -21,8 +21,11 @@ router = APIRouter(prefix="/expenses", tags=["expenses"])
 @router.get("", response_model=ExpenseListResponse)
 def get_expenses(
     property_id: UUID | None = None,
+    property_ids: list[UUID] | None = Query(None),
     client_prop_id: str | None = None,
+    client_prop_ids: list[str] | None = Query(None),
     owner_id: UUID | None = None,
+    owner_ids: list[UUID] | None = Query(None),
     property_status: str | None = Query(
         None, pattern="^(active|inactive)$", description="Filter by property status"
     ),
@@ -38,6 +41,7 @@ def get_expenses(
     paid_by_resident: bool | None = None,
     paid_by_owner: bool | None = None,
     paid_by_company: bool | None = None,
+    include_running_balance: bool = Query(True),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=2000),
     db: Session = Depends(get_db),
@@ -45,8 +49,11 @@ def get_expenses(
     items, total = list_expenses(
         db,
         property_id=property_id,
+        property_ids=property_ids,
         client_prop_id=client_prop_id,
+        client_prop_ids=client_prop_ids,
         owner_id=owner_id,
+        owner_ids=owner_ids,
         property_status=property_status,
         category=category,
         source=source,
@@ -62,6 +69,7 @@ def get_expenses(
         paid_by_company=paid_by_company,
         page=page,
         page_size=page_size,
+        include_running_balance=include_running_balance,
     )
     return ExpenseListResponse(
         items=items, total=total, page=page, page_size=page_size

@@ -28,6 +28,35 @@ def init_db() -> None:
     _ensure_sqlite_deposit_receipt_ref()
     _ensure_sqlite_source_file_columns()
     _ensure_sqlite_incomplete_transaction_support()
+    _ensure_sqlite_indexes()
+
+
+def _ensure_sqlite_indexes() -> None:
+    """Create filter/sort indexes on existing SQLite DBs (create_all skips them)."""
+    settings = get_settings()
+    if not settings.database_url.startswith("sqlite"):
+        return
+
+    statements = (
+        "CREATE INDEX IF NOT EXISTS ix_deposits_property_date ON deposits (property_id, transaction_date)",
+        "CREATE INDEX IF NOT EXISTS ix_deposits_date ON deposits (transaction_date)",
+        "CREATE INDEX IF NOT EXISTS ix_deposits_source_file ON deposits (source_file)",
+        "CREATE INDEX IF NOT EXISTS ix_deposits_needs_review_created ON deposits (needs_review, created_at)",
+        "CREATE INDEX IF NOT EXISTS ix_deposits_property_rental_date ON deposits (property_id, is_rental_income, transaction_date)",
+        "CREATE INDEX IF NOT EXISTS ix_expenses_property_date ON expenses (property_id, transaction_date)",
+        "CREATE INDEX IF NOT EXISTS ix_expenses_date ON expenses (transaction_date)",
+        "CREATE INDEX IF NOT EXISTS ix_expenses_category ON expenses (category)",
+        "CREATE INDEX IF NOT EXISTS ix_expenses_source ON expenses (source)",
+        "CREATE INDEX IF NOT EXISTS ix_expenses_source_file ON expenses (source_file)",
+        "CREATE INDEX IF NOT EXISTS ix_expenses_needs_review_created ON expenses (needs_review, created_at)",
+        "CREATE INDEX IF NOT EXISTS ix_expenses_property_flags_date ON expenses (property_id, paid_by_resident, paid_by_owner, transaction_date)",
+        "CREATE INDEX IF NOT EXISTS ix_expenses_ledger_column ON expenses (ledger_column)",
+        "CREATE INDEX IF NOT EXISTS ix_properties_owner_status ON properties (owner_id, status)",
+        "CREATE INDEX IF NOT EXISTS ix_expected_deposits_active_property ON expected_deposits (active, property_id)",
+    )
+    with engine.begin() as conn:
+        for statement in statements:
+            conn.exec_driver_sql(statement)
 
 
 def _ensure_sqlite_deposit_receipt_ref() -> None:

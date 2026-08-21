@@ -23,6 +23,8 @@ class OwnerSummary(OwnerRead):
     total_expenses: Decimal = Decimal("0")
     # Company-float balance (Inflow − Expenses), summed across properties
     balance: Decimal = Decimal("0")
+    # Derived: inactive only when the owner has properties and all are inactive
+    status: Literal["active", "inactive"] = "active"
 
 
 class OwnerPropertySummary(BaseModel):
@@ -156,16 +158,6 @@ class DepositUpdate(BaseModel):
     reference: str | None = None
     description: str | None = None
     is_rental_income: bool | None = None
-
-
-class ImportResultRead(BaseModel):
-    filename: str
-    row_count: int
-    imported_count: int
-    skipped_count: int
-    error_count: int
-    errors: list[dict]
-    import_batch_id: str | None = None
 
 
 class ClientDataImportCounts(BaseModel):

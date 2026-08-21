@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.schemas import DepositRead, ExpenseRead, TransactionRead
+from app.schemas import TransactionRead
 
 
 def _expense_notes(item: dict[str, Any]) -> str | None:
@@ -92,15 +92,3 @@ def normalize_transaction_row(kind: str, item: dict[str, Any]) -> dict[str, Any]
     if kind == "expense":
         return expense_dict_to_transaction(item)
     return deposit_dict_to_transaction(item)
-
-
-def deposit_to_transaction_read(deposit: DepositRead) -> TransactionRead:
-    return TransactionRead.model_validate(
-        deposit_dict_to_transaction(deposit.model_dump(mode="json"))
-    )
-
-
-def expense_to_transaction_read(expense: ExpenseRead) -> TransactionRead:
-    return TransactionRead.model_validate(
-        expense_dict_to_transaction(expense.model_dump(mode="json"))
-    )

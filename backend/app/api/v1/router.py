@@ -5,6 +5,7 @@ from app.api.v1 import (
     alert_rules,
     alerts,
     auth,
+    dashboard,
     deposits,
     expenses,
     feedback,
@@ -20,6 +21,7 @@ api_router = APIRouter()
 api_router.include_router(health.router)
 api_router.include_router(auth.router)
 api_router.include_router(meta.router)
+api_router.include_router(dashboard.router)
 api_router.include_router(owners.router)
 api_router.include_router(properties.router)
 api_router.include_router(deposits.router)

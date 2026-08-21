@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from decimal import Decimal
 
-from sqlalchemy import Boolean, ForeignKey, Integer, Numeric, String
+from sqlalchemy import Boolean, ForeignKey, Index, Integer, Numeric, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import TimestampMixin, uuid_pk
@@ -12,6 +12,9 @@ from app.core.database import Base
 
 class ExpectedDeposit(Base, TimestampMixin):
     __tablename__ = "expected_deposits"
+    __table_args__ = (
+        Index("ix_expected_deposits_active_property", "active", "property_id"),
+    )
 
     id: Mapped[uuid.UUID] = uuid_pk()
     property_id: Mapped[uuid.UUID] = mapped_column(

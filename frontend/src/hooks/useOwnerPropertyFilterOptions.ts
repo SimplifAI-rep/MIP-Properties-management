@@ -5,21 +5,21 @@ import type { OwnerSummary, Property } from '../types';
 
 export type FilterOption = { value: string; label: string };
 
-export function buildOwnerOptions(owners: OwnerSummary[]): FilterOption[] {
+function buildOwnerOptions(owners: OwnerSummary[]): FilterOption[] {
   return owners.map((owner) => ({
     value: owner.id,
     label: owner.name,
   }));
 }
 
-export function buildPropertyOptions(properties: Property[]): FilterOption[] {
+function buildPropertyOptions(properties: Property[]): FilterOption[] {
   return properties.map((property) => ({
     value: property.id,
     label: `${property.client_prop_id} — ${property.name}`,
   }));
 }
 
-export function buildPropIdOptions(properties: Property[]): FilterOption[] {
+function buildPropIdOptions(properties: Property[]): FilterOption[] {
   return properties.map((property) => ({
     value: property.client_prop_id,
     label:

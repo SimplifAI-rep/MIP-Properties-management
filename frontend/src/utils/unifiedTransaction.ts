@@ -9,7 +9,7 @@ export function isUploadReceiptRef(ref: string | null | undefined): ref is strin
   return Boolean(ref && UPLOAD_ID_RE.test(ref));
 }
 
-export function expenseNotes(expense: Expense): string | null {
+function expenseNotes(expense: Expense): string | null {
   const desc = expense.description?.trim() || null;
   const section = expense.category?.trim() || '';
   if (!desc) return null;
@@ -21,7 +21,7 @@ export function expenseNotes(expense: Expense): string | null {
   return desc;
 }
 
-export function depositToUnified(deposit: Deposit): UnifiedTransaction {
+function depositToUnified(deposit: Deposit): UnifiedTransaction {
   return {
     id: deposit.id,
     kind: 'deposit',
@@ -48,7 +48,7 @@ export function depositToUnified(deposit: Deposit): UnifiedTransaction {
   };
 }
 
-export function expenseToUnified(expense: Expense): UnifiedTransaction {
+function expenseToUnified(expense: Expense): UnifiedTransaction {
   return {
     id: expense.id,
     kind: 'expense',
@@ -232,11 +232,7 @@ export function isCompanyFloatExpense(row: UnifiedTransaction): boolean {
   );
 }
 
-export function isCompanyFloatRow(row: UnifiedTransaction): boolean {
-  return isCompanyFloatDeposit(row) || isCompanyFloatExpense(row);
-}
-
-export function sumAmounts(rows: UnifiedTransaction[]): number {
+function sumAmounts(rows: UnifiedTransaction[]): number {
   return rows.reduce((sum, row) => sum + Number(row.amount || 0), 0);
 }
 
@@ -251,7 +247,7 @@ export function companyFloatTotals(rows: UnifiedTransaction[]): {
 }
 
 /** Newest dated rows first; undated rows last. */
-export function sortTransactionsNewestFirst(
+function sortTransactionsNewestFirst(
   rows: UnifiedTransaction[],
 ): UnifiedTransaction[] {
   return [...rows].sort((a, b) => {

@@ -4,7 +4,7 @@ import { api } from '../../api/client';
 const IMAGE_EXT = new Set(['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp']);
 const PREVIEW_EXT = new Set([...IMAGE_EXT, 'pdf']);
 
-export function fileExtension(filename: string | null | undefined): string {
+function fileExtension(filename: string | null | undefined): string {
   if (!filename) return '';
   const parts = filename.toLowerCase().split('.');
   return parts.length > 1 ? parts[parts.length - 1]! : '';
@@ -14,7 +14,7 @@ export function isPreviewableFile(filename: string | null | undefined): boolean 
   return PREVIEW_EXT.has(fileExtension(filename));
 }
 
-export function isImageFile(filename: string | null | undefined): boolean {
+function isImageFile(filename: string | null | undefined): boolean {
   return IMAGE_EXT.has(fileExtension(filename));
 }
 

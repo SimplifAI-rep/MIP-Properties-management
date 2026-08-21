@@ -22,6 +22,15 @@ def _zero() -> Decimal:
     return Decimal("0.00")
 
 
+def _owner_status_from_property_statuses(statuses: list[str]) -> str:
+    """Inactive only when every linked property is inactive."""
+    if not statuses:
+        return "active"
+    if all((status or "").strip().lower() != "active" for status in statuses):
+        return "inactive"
+    return "active"
+
+
 def _deposit_stats_by_owner_subquery():
     return (
         select(
@@ -83,14 +92,18 @@ def list_owners(db: Session = Depends(get_db)) -> list[OwnerSummary]:
     owner_ids = [owner.id for owner, *_ in rows]
     property_rows = (
         db.execute(
-            select(Property.id, Property.owner_id).where(Property.owner_id.in_(owner_ids))
+            select(Property.id, Property.owner_id, Property.status).where(
+                Property.owner_id.in_(owner_ids)
+            )
         ).all()
         if owner_ids
         else []
     )
-    floats = property_float_totals(db, [property_id for property_id, _ in property_rows])
+    floats = property_float_totals(db, [property_id for property_id, _, _ in property_rows])
     balance_by_owner: dict[UUID, Decimal] = {}
-    for property_id, owner_id in property_rows:
+    statuses_by_owner: dict[UUID, list[str]] = {}
+    for property_id, owner_id, status in property_rows:
+        statuses_by_owner.setdefault(owner_id, []).append(status)
         totals = floats.get(property_id)
         if not totals:
             continue
@@ -108,6 +121,9 @@ def list_owners(db: Session = Depends(get_db)) -> list[OwnerSummary]:
             expense_count=expense_count or 0,
             total_expenses=total_expenses or 0,
             balance=balance_by_owner.get(owner.id, _zero()).quantize(Decimal("0.01")),
+            status=_owner_status_from_property_statuses(
+                statuses_by_owner.get(owner.id, [])
+            ),
         )
         for owner, property_count, deposit_count, total_deposits, expense_count, total_expenses in rows
     ]
@@ -193,6 +209,7 @@ def get_owner(owner_id: UUID, db: Session = Depends(get_db)) -> OwnerDetail:
         expense_count=sum(p.expense_count for p in properties),
         total_expenses=sum(p.total_expenses for p in properties),
         balance=sum((p.balance for p in properties), _zero()).quantize(Decimal("0.01")),
+        status=_owner_status_from_property_statuses([p.status for p in properties]),
         properties=properties,
         recent_deposits=recent_deposits,
         recent_expenses=recent_expenses,

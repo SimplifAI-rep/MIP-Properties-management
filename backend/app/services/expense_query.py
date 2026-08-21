@@ -3,7 +3,7 @@ from decimal import Decimal
 from uuid import UUID
 
 from fastapi import HTTPException
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models.expense import Expense
@@ -12,6 +12,10 @@ from app.models.property import Property
 from app.schemas import ExpenseCategoryTotal, ExpenseCreate, ExpenseRead, ExpenseUpdate
 from app.services.running_balance import compute_running_balances
 from app.services.source_file import load_upload_filenames, resolve_source_file
+from app.services.transaction_filters import (
+    apply_expense_list_filters,
+    collect_expense_summary_filters,
+)
 
 
 def expense_to_read(
@@ -84,6 +88,7 @@ def list_expenses(
     client_prop_ids: list[str] | None = None,
     owner_id: UUID | None = None,
     owner_ids: list[UUID] | None = None,
+    property_status: str | None = None,
     category: str | None = None,
     source: str | None = None,
     payment_method: str | None = None,
@@ -100,6 +105,7 @@ def list_expenses(
     ledger_column: str | None = None,
     page: int = 1,
     page_size: int = 50,
+    include_running_balance: bool = True,
 ) -> tuple[list[ExpenseRead], int]:
     page_size = min(max(page_size, 1), 2000)
     page = max(page, 1)
@@ -110,70 +116,30 @@ def list_expenses(
         .join(Owner, Property.owner_id == Owner.id)
         .order_by(Expense.transaction_date.desc())
     )
-
-    prop_ids = list(property_ids or [])
-    if property_id and property_id not in prop_ids:
-        prop_ids.append(property_id)
-    if len(prop_ids) == 1:
-        stmt = stmt.where(Expense.property_id == prop_ids[0])
-    elif len(prop_ids) > 1:
-        stmt = stmt.where(Expense.property_id.in_(prop_ids))
-
-    prop_codes = [
-        value.strip().upper()
-        for value in (client_prop_ids or [])
-        if value and value.strip()
-    ]
-    if client_prop_id and client_prop_id.strip():
-        prop_codes.append(client_prop_id.strip().upper())
-    seen_codes: set[str] = set()
-    prop_codes = [value for value in prop_codes if not (value in seen_codes or seen_codes.add(value))]
-    if len(prop_codes) == 1 and not prop_ids:
-        stmt = stmt.where(func.upper(Property.client_prop_id) == prop_codes[0])
-    elif len(prop_codes) > 1 and not prop_ids:
-        stmt = stmt.where(func.upper(Property.client_prop_id).in_(prop_codes))
-
-    own_ids = list(owner_ids or [])
-    if owner_id and owner_id not in own_ids:
-        own_ids.append(owner_id)
-    if len(own_ids) == 1:
-        stmt = stmt.where(Property.owner_id == own_ids[0])
-    elif len(own_ids) > 1:
-        stmt = stmt.where(Property.owner_id.in_(own_ids))
-    if category:
-        stmt = stmt.where(Expense.category == category)
-    if source:
-        stmt = stmt.where(Expense.source == source)
-    if payment_method:
-        stmt = stmt.where(Expense.payment_method == payment_method)
-    if search_text:
-        pattern = f"%{search_text}%"
-        stmt = stmt.where(
-            or_(
-                Expense.description.ilike(pattern),
-                Expense.vendor_name.ilike(pattern),
-            )
-        )
-    if date_from:
-        stmt = stmt.where(Expense.transaction_date >= date_from)
-    if date_to:
-        stmt = stmt.where(Expense.transaction_date <= date_to)
-    if min_amount is not None:
-        stmt = stmt.where(Expense.amount >= min_amount)
-    if max_amount is not None:
-        stmt = stmt.where(Expense.amount <= max_amount)
-    if source_file:
-        stmt = stmt.where(Expense.source_file == source_file.strip())
-    if needs_review is not None:
-        stmt = stmt.where(Expense.needs_review.is_(needs_review))
-    if paid_by_resident is not None:
-        stmt = stmt.where(Expense.paid_by_resident.is_(paid_by_resident))
-    if paid_by_owner is not None:
-        stmt = stmt.where(Expense.paid_by_owner.is_(paid_by_owner))
-    if paid_by_company is not None:
-        stmt = stmt.where(Expense.paid_by_company.is_(paid_by_company))
-    if ledger_column:
-        stmt = stmt.where(Expense.ledger_column == ledger_column)
+    stmt = apply_expense_list_filters(
+        stmt,
+        property_id=property_id,
+        property_ids=property_ids,
+        client_prop_id=client_prop_id,
+        client_prop_ids=client_prop_ids,
+        owner_id=owner_id,
+        owner_ids=owner_ids,
+        property_status=property_status,
+        category=category,
+        source=source,
+        payment_method=payment_method,
+        search_text=search_text,
+        date_from=date_from,
+        date_to=date_to,
+        min_amount=min_amount,
+        max_amount=max_amount,
+        source_file=source_file,
+        needs_review=needs_review,
+        paid_by_resident=paid_by_resident,
+        paid_by_owner=paid_by_owner,
+        paid_by_company=paid_by_company,
+        ledger_column=ledger_column,
+    )
 
     count_stmt = select(func.count()).select_from(stmt.subquery())
     total = db.scalar(count_stmt) or 0
@@ -181,7 +147,11 @@ def list_expenses(
     rows = db.execute(stmt.offset((page - 1) * page_size).limit(page_size)).all()
     expenses = [row[0] for row in rows]
     upload_names = load_upload_filenames(db, [e.receipt_ref for e in expenses])
-    balances = compute_running_balances(db, [e.property_id for e in expenses])
+    balances = (
+        compute_running_balances(db, [e.property_id for e in expenses])
+        if include_running_balance and expenses
+        else {}
+    )
     items = [
         expense_to_read(
             expense,
@@ -296,6 +266,7 @@ def get_expense_summary(
     property_id: UUID | None = None,
     client_prop_id: str | None = None,
     owner_id: UUID | None = None,
+    property_status: str | None = None,
     category: str | None = None,
     source: str | None = None,
     payment_method: str | None = None,
@@ -312,48 +283,25 @@ def get_expense_summary(
 ) -> dict:
     # Default: resident/owner-paid rows are informational only — exclude from company totals.
     # Explicit paid_by_* flags override that default.
-    filters = []
-    explicit_payer = (
-        paid_by_resident is not None
-        or paid_by_owner is not None
-        or paid_by_company is not None
+    filters, needs_property_join = collect_expense_summary_filters(
+        property_id=property_id,
+        client_prop_id=client_prop_id,
+        owner_id=owner_id,
+        property_status=property_status,
+        category=category,
+        source=source,
+        payment_method=payment_method,
+        date_from=date_from,
+        date_to=date_to,
+        min_amount=min_amount,
+        max_amount=max_amount,
+        source_file=source_file,
+        needs_review=needs_review,
+        paid_by_resident=paid_by_resident,
+        paid_by_owner=paid_by_owner,
+        paid_by_company=paid_by_company,
+        include_all=include_all,
     )
-    if explicit_payer:
-        if paid_by_resident is not None:
-            filters.append(Expense.paid_by_resident.is_(paid_by_resident))
-        if paid_by_owner is not None:
-            filters.append(Expense.paid_by_owner.is_(paid_by_owner))
-        if paid_by_company is not None:
-            filters.append(Expense.paid_by_company.is_(paid_by_company))
-    elif not include_all:
-        filters.extend(
-            [
-                Expense.paid_by_resident.is_(False),
-                Expense.paid_by_owner.is_(False),
-            ]
-        )
-
-    needs_property_join = bool(client_prop_id or owner_id)
-    if property_id:
-        filters.append(Expense.property_id == property_id)
-    if category:
-        filters.append(Expense.category == category)
-    if source:
-        filters.append(Expense.source == source)
-    if payment_method:
-        filters.append(Expense.payment_method == payment_method)
-    if date_from:
-        filters.append(Expense.transaction_date >= date_from)
-    if date_to:
-        filters.append(Expense.transaction_date <= date_to)
-    if min_amount is not None:
-        filters.append(Expense.amount >= min_amount)
-    if max_amount is not None:
-        filters.append(Expense.amount <= max_amount)
-    if source_file:
-        filters.append(Expense.source_file == source_file.strip())
-    if needs_review is not None:
-        filters.append(Expense.needs_review.is_(needs_review))
 
     amount_stmt = select(func.coalesce(func.sum(Expense.amount), 0))
     count_stmt = select(func.count()).select_from(Expense)
@@ -373,12 +321,6 @@ def get_expense_summary(
         count_stmt = count_stmt.join(Property, Expense.property_id == Property.id)
         property_stmt = property_stmt.join(Property, Expense.property_id == Property.id)
         category_stmt = category_stmt.join(Property, Expense.property_id == Property.id)
-        if client_prop_id:
-            filters.append(
-                func.upper(Property.client_prop_id) == client_prop_id.strip().upper()
-            )
-        if owner_id:
-            filters.append(Property.owner_id == owner_id)
     elif filters:
         amount_stmt = amount_stmt.select_from(Expense)
 

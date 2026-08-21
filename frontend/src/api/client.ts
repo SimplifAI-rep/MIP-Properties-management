@@ -11,6 +11,7 @@ import type {
   DepositUpdate,
   OwnerDetail,
   OwnerSummary,
+  PeriodFloatResponse,
   Property,
   PropertyDetail,
   TransactionDraft,
@@ -95,12 +96,19 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
 }
 
-function toQuery(params: Record<string, string | number | boolean | undefined>): string {
+function toQuery(
+  params: Record<string, string | number | boolean | string[] | undefined>,
+): string {
   const search = new URLSearchParams();
   Object.entries(params).forEach(([key, value]) => {
-    if (value !== undefined && value !== '') {
-      search.set(key, String(value));
+    if (value === undefined || value === '') return;
+    if (Array.isArray(value)) {
+      value.forEach((item) => {
+        if (item !== undefined && item !== '') search.append(key, String(item));
+      });
+      return;
     }
+    search.set(key, String(value));
   });
   const query = search.toString();
   return query ? `?${query}` : '';
@@ -134,6 +142,13 @@ export const api = {
       '/auth/admin/session',
     ),
   getTransactionYears: () => request<{ years: number[] }>('/meta/transaction-years'),
+  getPeriodFloat: (filters: { date_from: string; date_to: string }) =>
+    request<PeriodFloatResponse>(
+      `/dashboard/period-float${toQuery({
+        date_from: filters.date_from,
+        date_to: filters.date_to,
+      })}`,
+    ),
   getOwners: () => request<OwnerSummary[]>('/owners'),
   getOwner: (id: string) => request<OwnerDetail>(`/owners/${id}`),
   getProperties: () => request<Property[]>('/properties'),
@@ -147,8 +162,12 @@ export const api = {
     request<DepositListResponse>(
       `/deposits${toQuery({
         property_id: filters.property_id,
+        property_ids: filters.property_ids,
         client_prop_id: filters.client_prop_id,
+        client_prop_ids: filters.client_prop_ids,
         owner_id: filters.owner_id,
+        owner_ids: filters.owner_ids,
+        property_status: filters.property_status,
         date_from: filters.date_from,
         date_to: filters.date_to,
         min_amount: filters.min_amount,
@@ -156,6 +175,8 @@ export const api = {
         source_file: filters.source_file,
         needs_review: filters.needs_review,
         is_rental_income: filters.is_rental_income,
+        include_running_balance:
+          filters.include_running_balance === false ? false : undefined,
         page: filters.page,
         page_size: filters.page_size,
       })}`,
@@ -176,6 +197,7 @@ export const api = {
       property_id?: string;
       client_prop_id?: string;
       owner_id?: string;
+      property_status?: 'active' | 'inactive';
       date_from?: string;
       date_to?: string;
       min_amount?: string;
@@ -191,6 +213,7 @@ export const api = {
         property_id: filters.property_id,
         client_prop_id: filters.client_prop_id,
         owner_id: filters.owner_id,
+        property_status: filters.property_status,
         date_from: filters.date_from,
         date_to: filters.date_to,
         min_amount: filters.min_amount,
@@ -233,8 +256,12 @@ export const api = {
     request<ExpenseListResponse>(
       `/expenses${toQuery({
         property_id: filters.property_id,
+        property_ids: filters.property_ids,
         client_prop_id: filters.client_prop_id,
+        client_prop_ids: filters.client_prop_ids,
         owner_id: filters.owner_id,
+        owner_ids: filters.owner_ids,
+        property_status: filters.property_status,
         category: filters.category,
         source: filters.source,
         payment_method: filters.payment_method,
@@ -247,6 +274,8 @@ export const api = {
         paid_by_resident: filters.paid_by_resident,
         paid_by_owner: filters.paid_by_owner,
         paid_by_company: filters.paid_by_company,
+        include_running_balance:
+          filters.include_running_balance === false ? false : undefined,
         page: filters.page,
         page_size: filters.page_size,
       })}`,
@@ -267,6 +296,7 @@ export const api = {
       property_id?: string;
       client_prop_id?: string;
       owner_id?: string;
+      property_status?: 'active' | 'inactive';
       category?: string;
       source?: string;
       payment_method?: string;
@@ -287,6 +317,7 @@ export const api = {
         property_id: filters.property_id,
         client_prop_id: filters.client_prop_id,
         owner_id: filters.owner_id,
+        property_status: filters.property_status,
         category: filters.category,
         source: filters.source,
         payment_method: filters.payment_method,

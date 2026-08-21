@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
@@ -64,6 +64,7 @@ type TypeFilterKind =
   | 'bank_statement'
   | 'nearly_cc';
 type AlertFilterKind = 'incomplete_import';
+type PropertyStatusFilter = 'active' | 'inactive';
 type TypeFilter = 'all' | TransactionKind;
 
 function label(value: string) {
@@ -165,6 +166,7 @@ export function TransactionsPage() {
   const { openFeedback } = useFeedback();
   const [kinds, setKinds] = useState<TypeFilterKind[]>(['deposit', 'expense']);
   const [page, setPage] = useState(1);
+  const [propertyStatuses, setPropertyStatuses] = useState<PropertyStatusFilter[]>(['active']);
   const [propertyIds, setPropertyIds] = useState<string[]>([]);
   const [clientPropIds, setClientPropIds] = useState<string[]>([]);
   const [ownerIds, setOwnerIds] = useState<string[]>([]);
@@ -180,6 +182,9 @@ export function TransactionsPage() {
   const [formError, setFormError] = useState<unknown>(null);
   const [editForm, setEditForm] = useState<TransactionEditForm | null>(null);
   const [editError, setEditError] = useState<unknown>(null);
+  const [highlightId, setHighlightId] = useState<string | undefined>();
+  const [highlightKind, setHighlightKind] = useState<string | undefined>();
+  const highlightClearRef = useRef<number | null>(null);
 
   useEffect(() => {
     const state = parseTransactionsLocationState(location.state);
@@ -202,6 +207,8 @@ export function TransactionsPage() {
       setPropertyIds(nextPropertyIds ?? []);
       setClientPropIds(nextClientPropIds ?? []);
       if (!nextOwnerIds) setOwnerIds([]);
+      // Deep links should show the linked property even if inactive.
+      setPropertyStatuses(['active', 'inactive']);
       setPage(1);
     }
     if (nextOwnerIds) {
@@ -210,6 +217,7 @@ export function TransactionsPage() {
         setPropertyIds([]);
         setClientPropIds([]);
       }
+      setPropertyStatuses(['active', 'inactive']);
       setPage(1);
     }
     if (state.dateFrom != null || state.dateTo != null) {
@@ -245,18 +253,31 @@ export function TransactionsPage() {
       setAlertFilters(state.alertFilters as AlertFilterKind[]);
       setPage(1);
     }
+    if (state.highlightId) {
+      setHighlightId(state.highlightId);
+      setHighlightKind(state.highlightKind);
+    }
   }, [location.state]);
 
   const apiPropertyId = propertyIds.length === 1 ? propertyIds[0] : undefined;
+  const apiPropertyIds = propertyIds.length > 1 ? propertyIds : undefined;
   const apiClientPropId = clientPropIds.length === 1 ? clientPropIds[0] : undefined;
+  const apiClientPropIds = clientPropIds.length > 1 ? clientPropIds : undefined;
   const apiOwnerId = ownerIds.length === 1 ? ownerIds[0] : undefined;
+  const apiOwnerIds = ownerIds.length > 1 ? ownerIds : undefined;
+  const apiPropertyStatus =
+    propertyStatuses.length === 1 ? propertyStatuses[0] : undefined;
   const apiSection = sections.length === 1 ? sections[0] : undefined;
   const apiSource = sources.length === 1 ? sources[0] : undefined;
 
   const sharedFilters = buildTxnSharedFilters({
     property_id: apiPropertyId,
+    property_ids: apiPropertyIds,
     client_prop_id: apiClientPropId,
+    client_prop_ids: apiClientPropIds,
     owner_id: apiOwnerId,
+    owner_ids: apiOwnerIds,
+    property_status: apiPropertyStatus,
     date_from: dateFrom,
     date_to: dateTo,
   });
@@ -278,6 +299,13 @@ export function TransactionsPage() {
 
   const singleSourceFile = sourceFiles.length === 1 ? sourceFiles[0] : undefined;
   const needsReviewOnly = alertFilters.includes('incomplete_import') ? true : undefined;
+
+  // Server-page when only one stream is needed and multi-value client-only filters are idle.
+  const useServerPaging =
+    !(includeDeposits && includeExpenses) &&
+    sections.length <= 1 &&
+    sources.length <= 1 &&
+    sourceFiles.length <= 1;
 
   // Narrow list fetches when a single Type lane is selected.
   const depositTypeFilter =
@@ -373,12 +401,25 @@ export function TransactionsPage() {
   });
 
   const depositsQuery = useQuery({
-    queryKey: ['deposits', listFilters, depositTypeFilter],
+    queryKey: [
+      'deposits',
+      listFilters,
+      depositTypeFilter,
+      useServerPaging ? 'page' : 'all',
+      useServerPaging ? page : null,
+    ],
     queryFn: () =>
-      api.getAllDeposits({
-        ...listFilters,
-        is_rental_income: depositTypeFilter,
-      }),
+      useServerPaging
+        ? api.getDeposits({
+            ...listFilters,
+            is_rental_income: depositTypeFilter,
+            page,
+            page_size: PAGE_SIZE,
+          })
+        : api.getAllDeposits({
+            ...listFilters,
+            is_rental_income: depositTypeFilter,
+          }),
     enabled: includeDeposits,
   });
 
@@ -390,15 +431,27 @@ export function TransactionsPage() {
       apiSource,
       expenseResidentFilter,
       expenseOwnerFilter,
+      useServerPaging ? 'page' : 'all',
+      useServerPaging ? page : null,
     ],
     queryFn: () =>
-      api.getAllExpenses({
-        ...listFilters,
-        category: apiSection,
-        source: apiSource,
-        paid_by_resident: expenseResidentFilter,
-        paid_by_owner: expenseOwnerFilter,
-      }),
+      useServerPaging
+        ? api.getExpenses({
+            ...listFilters,
+            category: apiSection,
+            source: apiSource,
+            paid_by_resident: expenseResidentFilter,
+            paid_by_owner: expenseOwnerFilter,
+            page,
+            page_size: PAGE_SIZE,
+          })
+        : api.getAllExpenses({
+            ...listFilters,
+            category: apiSection,
+            source: apiSource,
+            paid_by_resident: expenseResidentFilter,
+            paid_by_owner: expenseOwnerFilter,
+          }),
     enabled: includeExpenses,
   });
 
@@ -476,6 +529,34 @@ export function TransactionsPage() {
     [],
   );
 
+  const propertyStatusOptions = useMemo(
+    () => [
+      { value: 'active', label: 'Active' },
+      { value: 'inactive', label: 'Inactive' },
+    ],
+    [],
+  );
+
+  const statusFilteredPropertyOptions = useMemo(() => {
+    if (propertyStatuses.length !== 1) return propertyOptions;
+    const status = propertyStatuses[0];
+    const allowed = new Set(
+      properties.filter((property) => property.status === status).map((property) => property.id),
+    );
+    return propertyOptions.filter((option) => allowed.has(option.value));
+  }, [properties, propertyOptions, propertyStatuses]);
+
+  const statusFilteredPropIdOptions = useMemo(() => {
+    if (propertyStatuses.length !== 1) return propIdOptions;
+    const status = propertyStatuses[0];
+    const allowed = new Set(
+      properties
+        .filter((property) => property.status === status)
+        .map((property) => property.client_prop_id),
+    );
+    return propIdOptions.filter((option) => allowed.has(option.value));
+  }, [properties, propIdOptions, propertyStatuses]);
+
   const alertOptions = useMemo(
     () => [{ value: 'incomplete_import', label: 'Incomplete import' }],
     [],
@@ -526,6 +607,7 @@ export function TransactionsPage() {
     outsideSelectedCount,
     moneyRowCount,
     listedRowCount,
+    highlightPage,
   } = useMemo(() => {
       let merged = mergeAndSortTransactions(
         includeDeposits ? (depositsQuery.data?.items ?? []) : [],
@@ -539,29 +621,12 @@ export function TransactionsPage() {
       if (alertFilters.includes('incomplete_import')) {
         merged = merged.filter((row) => Boolean(row.needs_review));
       }
-      if (clientPropIds.length > 0) {
-        const set = new Set(clientPropIds);
-        merged = merged.filter((row) => set.has(row.client_prop_id));
-      }
-      if (propertyIds.length > 0) {
-        merged = merged.filter((row) =>
-          properties.some(
-            (property) =>
-              propertyIds.includes(property.id) && property.client_prop_id === row.client_prop_id,
-          ),
-        );
-      }
-      if (ownerIds.length > 0) {
-        const allowedNames = new Set(
-          owners.filter((owner) => ownerIds.includes(owner.id)).map((owner) => owner.name),
-        );
-        merged = merged.filter((row) => allowedNames.has(row.owner_name));
-      }
-      if (sections.length > 0) {
+      // property/owner/client-prop filters are applied server-side via listFilters.
+      if (sections.length > 1) {
         const set = new Set(sections.map((value) => value.toLowerCase()));
         merged = merged.filter((row) => set.has(row.section.toLowerCase()));
       }
-      if (sources.length > 0) {
+      if (sources.length > 1) {
         const sourceSet = new Set(sources);
         const expenseSourceById = new Map(
           (expensesQuery.data?.items ?? []).map((row) => [row.id, row.source]),
@@ -572,7 +637,7 @@ export function TransactionsPage() {
           return source ? sourceSet.has(source) : false;
         });
       }
-      if (sourceFiles.length > 0) {
+      if (sourceFiles.length > 1) {
         const fileSet = new Set(sourceFiles);
         merged = merged.filter((row) => Boolean(row.source_file && fileSet.has(row.source_file)));
       }
@@ -617,14 +682,9 @@ export function TransactionsPage() {
         cardExpenseCount += apiExpenseCount;
       }
 
-      // Multi-select entity filters (2+) / multi source-file are client-side on the full loaded set.
-      const multiEntity =
-        propertyIds.length > 1 ||
-        clientPropIds.length > 1 ||
-        ownerIds.length > 1 ||
-        sections.length > 1;
+      // Multi section/source/file still need client totals from the loaded set.
       const clientSideFiltered =
-        multiEntity || sources.length > 0 || sourceFiles.length > 1;
+        sections.length > 1 || sources.length > 1 || sourceFiles.length > 1;
       if (clientSideFiltered) {
         const depItems = merged.filter(isCompanyFloatDeposit);
         const expItems = merged.filter(isCompanyFloatExpense);
@@ -666,9 +726,37 @@ export function TransactionsPage() {
         matchingCount = cardInflowCount + cardExpenseCount + outsideSelectedCount;
       }
 
-      const totalPagesCount = Math.max(1, Math.ceil(merged.length / PAGE_SIZE));
+      const totalPagesCount = useServerPaging
+        ? Math.max(
+            1,
+            Math.ceil(
+              (includeDeposits
+                ? (depositsQuery.data?.total ?? 0)
+                : (expensesQuery.data?.total ?? 0)) / PAGE_SIZE,
+            ),
+          )
+        : Math.max(1, Math.ceil(merged.length / PAGE_SIZE));
+      let highlightPageNum: number | undefined;
+      if (!useServerPaging && highlightId) {
+        const highlightIndex = merged.findIndex(
+          (row) =>
+            row.id === highlightId &&
+            (!highlightKind || row.kind === highlightKind),
+        );
+        if (highlightIndex >= 0) {
+          highlightPageNum = Math.floor(highlightIndex / PAGE_SIZE) + 1;
+        }
+      }
       const start = (page - 1) * PAGE_SIZE;
-      const pageItems = merged.slice(start, start + PAGE_SIZE);
+      const pageItems = useServerPaging
+        ? merged
+        : merged.slice(start, start + PAGE_SIZE);
+
+      const serverListedTotal = useServerPaging
+        ? includeDeposits
+          ? (depositsQuery.data?.total ?? merged.length)
+          : (expensesQuery.data?.total ?? merged.length)
+        : merged.length;
 
       return {
         items: pageItems,
@@ -683,11 +771,11 @@ export function TransactionsPage() {
         expenseSubtitle,
         outsideSelectedCount,
         moneyRowCount: cardInflowCount + cardExpenseCount,
-        listedRowCount: merged.length,
+        listedRowCount: serverListedTotal,
+        highlightPage: highlightPageNum,
       };
     }, [
       alertFilters,
-      clientPropIds,
       depositRentalSummaryQuery.data,
       depositSummaryQuery.data,
       depositsQuery.data,
@@ -695,17 +783,16 @@ export function TransactionsPage() {
       expenseOwnerPaidSummaryQuery.data,
       expenseSummaryQuery.data,
       expensesQuery.data,
+      highlightId,
+      highlightKind,
       includeDeposits,
       includeExpenses,
       kinds,
-      ownerIds,
-      owners,
       page,
-      properties,
-      propertyIds,
       sections,
       sourceFiles,
       sources,
+      useServerPaging,
     ]);
 
   const isLoading =
@@ -719,6 +806,35 @@ export function TransactionsPage() {
     (includeDeposits && depositsQuery.isError) ||
     (includeExpenses && expensesQuery.isError);
 
+  useEffect(() => {
+    if (highlightPage != null && highlightPage !== page) {
+      setPage(highlightPage);
+    }
+  }, [highlightPage, page]);
+
+  useEffect(() => {
+    if (!highlightId) return;
+    const rowId = `txn-${highlightKind ?? 'deposit'}-${highlightId}`;
+    const el = document.getElementById(rowId);
+    if (!el) return;
+
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    if (highlightClearRef.current != null) {
+      window.clearTimeout(highlightClearRef.current);
+    }
+    highlightClearRef.current = window.setTimeout(() => {
+      setHighlightId(undefined);
+      setHighlightKind(undefined);
+      highlightClearRef.current = null;
+    }, 3500);
+    return () => {
+      if (highlightClearRef.current != null) {
+        window.clearTimeout(highlightClearRef.current);
+        highlightClearRef.current = null;
+      }
+    };
+  }, [highlightId, highlightKind, items]);
+
   function resetPage() {
     setPage(1);
   }
@@ -727,6 +843,8 @@ export function TransactionsPage() {
     kinds.length !== 2 ||
       !kinds.includes('deposit') ||
       !kinds.includes('expense') ||
+      propertyStatuses.length !== 1 ||
+      propertyStatuses[0] !== 'active' ||
       alertFilters.length ||
       propertyIds.length ||
       clientPropIds.length ||
@@ -740,6 +858,7 @@ export function TransactionsPage() {
 
   function clearFilters() {
     setKinds(['deposit', 'expense']);
+    setPropertyStatuses(['active']);
     setAlertFilters([]);
     setPropertyIds([]);
     setClientPropIds([]);
@@ -1131,8 +1250,8 @@ export function TransactionsPage() {
           }}
           onChange={syncEntityFilters}
           ownerOptions={ownerOptions}
-          propertyOptions={propertyOptions}
-          propIdOptions={propIdOptions}
+          propertyOptions={statusFilteredPropertyOptions}
+          propIdOptions={statusFilteredPropIdOptions}
           showAmounts={false}
           onSyncFromProperties={(nextPropertyIds) => ({
             propertyIds: nextPropertyIds,
@@ -1144,6 +1263,20 @@ export function TransactionsPage() {
           })}
           prepend={
             <>
+              <SearchableMultiSelect
+                label="Property status"
+                tip="Show transactions for active and/or inactive properties. Default is active only."
+                options={propertyStatusOptions}
+                selected={propertyStatuses}
+                onChange={(next) => {
+                  setPropertyStatuses(next as PropertyStatusFilter[]);
+                  setPropertyIds([]);
+                  setClientPropIds([]);
+                  resetPage();
+                }}
+                placeholder="All statuses"
+                searchPlaceholder="Search status…"
+              />
               <SearchableMultiSelect
                 label="Type"
                 tip="Deposit/Expense match Excel Inflow/Amount. Rental, He/She, Owner paid, Bank statement, and Nearly CC are separate lanes you can filter."
@@ -1222,12 +1355,16 @@ export function TransactionsPage() {
               {items.map((row) => {
                 const isEditing =
                   editForm?.id === row.id && editForm.kind === row.kind && editForm != null;
+                const isHighlighted =
+                  highlightId === row.id &&
+                  (!highlightKind || highlightKind === row.kind);
                 return (
                   <Fragment key={`${row.kind}-${row.id}`}>
                     <tr
+                      id={`txn-${row.kind}-${row.id}`}
                       className={`${transactionRowClassName(row)}${
-                        isEditing ? ' table-row-selected' : ''
-                      }`}
+                        isEditing || isHighlighted ? ' table-row-selected' : ''
+                      }${isHighlighted ? ' table-row-highlight' : ''}`}
                     >
                       <TransactionDisplayCells
                         row={row}

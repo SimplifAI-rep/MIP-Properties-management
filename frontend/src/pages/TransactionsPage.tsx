@@ -65,7 +65,6 @@ type TypeFilterKind =
   | 'nearly_cc';
 type AlertFilterKind = 'incomplete_import';
 type PropertyStatusFilter = 'active' | 'inactive';
-type TypeFilter = 'all' | TransactionKind;
 
 function label(value: string) {
   return formatLabel(value);
@@ -335,7 +334,6 @@ export function TransactionsPage() {
 
   const {
     properties,
-    owners,
     ownerOptions,
     propertyOptions,
     propIdOptions,

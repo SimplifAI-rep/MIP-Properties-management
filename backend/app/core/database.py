@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from sqlalchemy import create_engine
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
@@ -13,7 +15,16 @@ def _create_engine():
     connect_args = {}
     if settings.database_url.startswith("sqlite"):
         connect_args["check_same_thread"] = False
+        _ensure_sqlite_parent_dir(settings.database_url)
     return create_engine(settings.database_url, connect_args=connect_args)
+
+
+def _ensure_sqlite_parent_dir(database_url: str) -> None:
+    """Create parent folders for absolute SQLite paths (e.g. /var/data/simplifai.db)."""
+    # sqlite:///relative or sqlite:////absolute
+    raw = database_url.removeprefix("sqlite:///")
+    if raw.startswith("/") or (len(raw) > 1 and raw[1] == ":"):
+        Path(raw).parent.mkdir(parents=True, exist_ok=True)
 
 
 engine = _create_engine()

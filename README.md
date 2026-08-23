@@ -141,4 +141,4 @@ Copy `.env.example` to `.env` at the project root.
 - **AI:** optional `LLM_API_KEY`
 - **Feedback email:** SMTP settings in `.env`
 
-See [docs/DEPLOY.md](docs/DEPLOY.md) for production deploy notes.
+See [docs/DEPLOY.md](docs/DEPLOY.md) for production deploy notes (Vercel frontend + Render backend with **persistent SQLite disk**).

@@ -83,6 +83,7 @@ def get_period_property_floats(
     }
 
     zero = Decimal("0.00")
+    property_ids = set(deposit_map) | set(expense_map)
     rows = [
         PeriodPropertyFloat(
             property_id=property_id,

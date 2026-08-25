@@ -3,13 +3,11 @@
 from __future__ import annotations
 
 import re
-from datetime import date, datetime
-from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 
 import openpyxl
-from sqlalchemy import func, select
+from sqlalchemy import func, not_, select
 from sqlalchemy.orm import Session
 
 from app.models.deposit import Deposit
@@ -18,46 +16,16 @@ from app.models.owner import Owner
 from app.models.property import Property
 from app.services.client_import import (
     BANK_FILE,
+    BUFFER_PROP_ID,
     CLIENT_LIST_FILE,
     CREDIT_CARD_FILES,
     MANAGEMENT_FILE,
     META_SHEETS,
+    _parse_amount,
+    _parse_date,
     normalize_prop_key,
+    prop_key_aliases,
 )
-
-
-def _parse_amount(value: Any) -> Decimal | None:
-    if value is None:
-        return None
-    try:
-        amount = Decimal(str(value).replace(",", "").replace("₪", "").strip())
-    except (InvalidOperation, ValueError, AttributeError):
-        return None
-    if amount == 0:
-        return None
-    return abs(amount).quantize(Decimal("0.01"))
-
-
-def _parse_date(value: Any) -> date | None:
-    if value is None:
-        return None
-    if isinstance(value, datetime):
-        return value.date()
-    if isinstance(value, date):
-        return value
-    text = str(value).strip()
-    if not text:
-        return None
-    try:
-        return datetime.fromisoformat(text.replace("Z", "")).date()
-    except ValueError:
-        pass
-    for fmt in ("%d.%m.%Y", "%d/%m/%Y", "%Y-%m-%d", "%d.%m.%y", "%d/%m/%y"):
-        try:
-            return datetime.strptime(text, fmt).date()
-        except ValueError:
-            continue
-    return None
 
 
 def _detect_header(values: list[Any]) -> dict[str, int] | None:
@@ -128,18 +96,103 @@ def _detect_header(values: list[Any]) -> dict[str, int] | None:
     return None
 
 
+def _sheet_default_prop_id(sheet_name: str) -> str | None:
+    lower = sheet_name.strip().lower()
+    if lower == "buffer":
+        return BUFFER_PROP_ID
+    if sheet_name.strip() in {"801-618- 619", "801-618-619"}:
+        return None
+    return normalize_prop_key(sheet_name)
+
+
+def _build_prop_alias_map(data_dir: Path) -> dict[str, str]:
+    """Map normalized aliases → canonical client_prop_id (mirrors importer)."""
+    alias_to_prop: dict[str, str] = {BUFFER_PROP_ID: BUFFER_PROP_ID}
+    client_list = data_dir / CLIENT_LIST_FILE
+    if not client_list.exists():
+        return alias_to_prop
+    wb = openpyxl.load_workbook(client_list, data_only=True)
+    try:
+        for sheet_name in ("current clients", "past clients"):
+            if sheet_name not in wb.sheetnames:
+                continue
+            ws = wb[sheet_name]
+            for i, row in enumerate(ws.iter_rows(values_only=True), 1):
+                if i == 1:
+                    continue
+                raw = row[0] if row else None
+                canonical = normalize_prop_key(raw)
+                if not canonical:
+                    continue
+                # Prefer first (current) registration; don't overwrite with past
+                if canonical not in alias_to_prop:
+                    alias_to_prop[canonical] = canonical
+                for alias in prop_key_aliases(raw):
+                    alias_to_prop.setdefault(alias, canonical)
+    finally:
+        wb.close()
+    return alias_to_prop
+
+
+def _resolve_verify_prop_id(
+    prop_raw: Any,
+    default_prop_id: str | None,
+    alias_to_prop: dict[str, str],
+) -> str | None:
+    """Match ClientDataImportService ledger property resolution order."""
+    resolved: str | None = None
+    if prop_raw is not None:
+        text = str(prop_raw).strip()
+        # Slash/plus codes do not normalize to a single property (importer returns None)
+        if text and "/" not in text and "+" not in text:
+            key = normalize_prop_key(prop_raw)
+            if key:
+                if key in alias_to_prop:
+                    resolved = alias_to_prop[key]
+                else:
+                    for alias in prop_key_aliases(prop_raw):
+                        if alias in alias_to_prop:
+                            resolved = alias_to_prop[alias]
+                            break
+    if resolved is None and default_prop_id:
+        resolved = alias_to_prop.get(default_prop_id, default_prop_id)
+    if resolved is None and prop_raw is not None:
+        text = str(prop_raw)
+        if "/" in text or "+" in text:
+            return BUFFER_PROP_ID
+    return resolved
+
+
 def count_management_rows(path: Path) -> dict[str, int]:
+    """Count unique management ledger import keys (matches importer dedupe)."""
     wb = openpyxl.load_workbook(path, data_only=True)
-    expenses = 0
-    deposits = 0
-    resident_paid = 0
-    owner_paid = 0
-    paid_by_company = 0
-    nearly_cc_paid = 0
-    cash_paid = 0
-    other_paid = 0
-    rental_income = 0
+    alias_to_prop = _build_prop_alias_map(path.parent)
+    expense_keys: set[str] = set()
+    deposit_keys: set[str] = set()
+    resident_keys: set[str] = set()
+    owner_keys: set[str] = set()
+    mip_keys: set[str] = set()
+    nearly_keys: set[str] = set()
+    cash_keys: set[str] = set()
+    other_keys: set[str] = set()
+    rental_keys: set[str] = set()
     sheets_parsed = 0
+
+    # Register sheet-name aliases like the importer does when creating ledger props
+    for sheet_name in wb.sheetnames:
+        lower = sheet_name.strip().lower()
+        if lower in META_SHEETS and lower != "buffer":
+            continue
+        if sheet_name.strip() in {"801-618- 619", "801-618-619"}:
+            continue
+        if lower == "buffer":
+            continue
+        canonical = normalize_prop_key(sheet_name)
+        if not canonical:
+            continue
+        alias_to_prop.setdefault(canonical, canonical)
+        for alias in prop_key_aliases(sheet_name):
+            alias_to_prop.setdefault(alias, canonical)
 
     for sheet_name in wb.sheetnames:
         lower = sheet_name.strip().lower()
@@ -147,6 +200,10 @@ def count_management_rows(path: Path) -> dict[str, int]:
         if lower in META_SHEETS and lower != "buffer":
             continue
 
+        default_prop_id = _sheet_default_prop_id(sheet_name)
+        if default_prop_id:
+            default_prop_id = alias_to_prop.get(default_prop_id, default_prop_id)
+        sheet_slug = re.sub(r"[^A-Za-z0-9]+", "", sheet_name).lower() or "sheet"
         ws = wb[sheet_name]
         header = None
         for row in ws.iter_rows(values_only=True):
@@ -165,6 +222,10 @@ def count_management_rows(path: Path) -> dict[str, int]:
                     return None
                 return values[idx]
 
+            prop_id = _resolve_verify_prop_id(col("prop_id"), default_prop_id, alias_to_prop)
+            if prop_id is None:
+                continue
+
             tx_date = _parse_date(col("date"))
             amount = _parse_amount(col("amount"))
             inflow = _parse_amount(col("inflow"))
@@ -177,44 +238,61 @@ def count_management_rows(path: Path) -> dict[str, int]:
             rental = _parse_amount(col("rental_income"))
             if tx_date is None:
                 continue
+
+            section_raw = col("section") if col("section") is not None else col("type")
+            section = str(section_raw).strip() if section_raw is not None else ""
+            section = (section or "other")[:40]
+            date_key = tx_date.isoformat()
+
+            def add_expense(kind: str, exp_amount: Any, bucket: set[str] | None = None) -> None:
+                key = (
+                    f"mgmt:{sheet_slug}:{kind}:{date_key}:{exp_amount}:"
+                    f"{prop_id}:{section}"
+                )
+                expense_keys.add(key)
+                if bucket is not None:
+                    bucket.add(key)
+
+            def add_deposit(kind: str, dep_amount: Any, bucket: set[str] | None = None) -> None:
+                key = (
+                    f"mgmt:{sheet_slug}:{kind}:{date_key}:{dep_amount}:"
+                    f"{prop_id}:{section}"
+                )
+                deposit_keys.add(key)
+                if bucket is not None:
+                    bucket.add(key)
+
             if amount is not None:
-                expenses += 1
+                add_expense("expense", amount)
             if resident is not None:
-                expenses += 1
-                resident_paid += 1
+                add_expense("resident", resident, resident_keys)
             if owner is not None:
-                expenses += 1
-                owner_paid += 1
+                add_expense("owner", owner, owner_keys)
             if mip is not None:
-                expenses += 1
-                paid_by_company += 1
+                add_expense("mip", mip, mip_keys)
             if nearly_cc is not None:
-                expenses += 1
-                nearly_cc_paid += 1
+                add_expense("nearlycc", nearly_cc, nearly_keys)
             if cash is not None:
-                expenses += 1
-                cash_paid += 1
+                add_expense("cash", cash, cash_keys)
             if other is not None:
-                expenses += 1
-                other_paid += 1
+                add_expense("other", other, other_keys)
             if inflow is not None:
-                deposits += 1
+                add_deposit("inflow", inflow)
             if rental is not None:
-                deposits += 1
-                rental_income += 1
+                add_deposit("rental", rental, rental_keys)
         if header is not None:
             sheets_parsed += 1
 
     return {
-        "mgmt_expense_rows": expenses,
-        "mgmt_deposit_rows": deposits,
-        "mgmt_resident_paid_rows": resident_paid,
-        "mgmt_owner_paid_rows": owner_paid,
-        "mgmt_mip_paid_rows": paid_by_company,
-        "mgmt_nearly_cc_rows": nearly_cc_paid,
-        "mgmt_cash_rows": cash_paid,
-        "mgmt_other_rows": other_paid,
-        "mgmt_rental_income_rows": rental_income,
+        "mgmt_expense_rows": len(expense_keys),
+        "mgmt_deposit_rows": len(deposit_keys),
+        "mgmt_resident_paid_rows": len(resident_keys),
+        "mgmt_owner_paid_rows": len(owner_keys),
+        "mgmt_mip_paid_rows": len(mip_keys),
+        "mgmt_nearly_cc_rows": len(nearly_keys),
+        "mgmt_cash_rows": len(cash_keys),
+        "mgmt_other_rows": len(other_keys),
+        "mgmt_rental_income_rows": len(rental_keys),
         "sheets_parsed": sheets_parsed,
     }
 
@@ -338,12 +416,14 @@ def verify_against_excel(db: Session, data_dir: Path) -> dict[str, Any]:
         )
         or 0
     )
-    # management_ledger + credit_card method mapped sources also count; count by import_key prefix
+    # Complete mgmt rows only — incomplete/needs_review keys are not in Excel unique counts
+    mgmt_complete = not_(Expense.import_key.like("%:incomplete:%"))
+    mgmt_dep_complete = not_(Deposit.import_key.like("%:incomplete:%"))
     mgmt_exp_db = (
         db.scalar(
             select(func.count())
             .select_from(Expense)
-            .where(Expense.import_key.like("mgmt:%"))
+            .where(Expense.import_key.like("mgmt:%"), mgmt_complete)
         )
         or 0
     )
@@ -351,7 +431,7 @@ def verify_against_excel(db: Session, data_dir: Path) -> dict[str, Any]:
         db.scalar(
             select(func.count())
             .select_from(Deposit)
-            .where(Deposit.import_key.like("mgmt:%"))
+            .where(Deposit.import_key.like("mgmt:%"), mgmt_dep_complete)
         )
         or 0
     )
@@ -360,7 +440,7 @@ def verify_against_excel(db: Session, data_dir: Path) -> dict[str, Any]:
         db.scalar(
             select(func.count())
             .select_from(Expense)
-            .where(Expense.paid_by_resident.is_(True))
+            .where(Expense.paid_by_resident.is_(True), mgmt_complete)
         )
         or 0
     )
@@ -369,7 +449,7 @@ def verify_against_excel(db: Session, data_dir: Path) -> dict[str, Any]:
         db.scalar(
             select(func.count())
             .select_from(Deposit)
-            .where(Deposit.is_rental_income.is_(True))
+            .where(Deposit.is_rental_income.is_(True), mgmt_dep_complete)
         )
         or 0
     )
@@ -378,7 +458,7 @@ def verify_against_excel(db: Session, data_dir: Path) -> dict[str, Any]:
         db.scalar(
             select(func.count())
             .select_from(Expense)
-            .where(Expense.paid_by_company.is_(True))
+            .where(Expense.paid_by_company.is_(True), mgmt_complete)
         )
         or 0
     )
@@ -387,7 +467,7 @@ def verify_against_excel(db: Session, data_dir: Path) -> dict[str, Any]:
         db.scalar(
             select(func.count())
             .select_from(Expense)
-            .where(Expense.paid_by_owner.is_(True))
+            .where(Expense.paid_by_owner.is_(True), mgmt_complete)
         )
         or 0
     )
@@ -396,7 +476,7 @@ def verify_against_excel(db: Session, data_dir: Path) -> dict[str, Any]:
         db.scalar(
             select(func.count())
             .select_from(Expense)
-            .where(Expense.ledger_column == "nearly_cc")
+            .where(Expense.ledger_column == "nearly_cc", mgmt_complete)
         )
         or 0
     )
@@ -404,7 +484,7 @@ def verify_against_excel(db: Session, data_dir: Path) -> dict[str, Any]:
         db.scalar(
             select(func.count())
             .select_from(Expense)
-            .where(Expense.ledger_column == "cash")
+            .where(Expense.ledger_column == "cash", mgmt_complete)
         )
         or 0
     )
@@ -412,7 +492,7 @@ def verify_against_excel(db: Session, data_dir: Path) -> dict[str, Any]:
         db.scalar(
             select(func.count())
             .select_from(Expense)
-            .where(Expense.ledger_column == "other")
+            .where(Expense.ledger_column == "other", mgmt_complete)
         )
         or 0
     )

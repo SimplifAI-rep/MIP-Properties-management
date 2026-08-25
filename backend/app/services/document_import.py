@@ -4,6 +4,7 @@ import base64
 import json
 import logging
 import re
+import unicodedata
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
@@ -576,6 +577,75 @@ class DocumentImportService:
             logger.exception("Failed to extract PDF text")
             return ""
 
+    @staticmethod
+    def _readable_notes(text: str | None, *, max_len: int = 240) -> str | None:
+        """Keep short readable notes; drop PDF/OCR glyph soup (common with Hebrew fonts)."""
+        if not text:
+            return None
+        # Strip C0/C1 controls (except tab/newline) before judging readability.
+        cleaned_chars: list[str] = []
+        control_hits = 0
+        for ch in str(text):
+            if ch in "\t\n\r":
+                cleaned_chars.append(" ")
+                continue
+            category = unicodedata.category(ch)
+            if category.startswith("C"):
+                control_hits += 1
+                continue
+            cleaned_chars.append(ch)
+        cleaned = " ".join("".join(cleaned_chars).split())
+        if not cleaned:
+            return None
+        if "(cid:" in cleaned.lower():
+            return None
+        # Hebrew custom encodings often inject many SOH/control markers between glyphs.
+        if control_hits >= 3:
+            return None
+
+        sample = cleaned[: max(max_len * 2, 400)]
+        if sample.count("\ufffd") >= 2:
+            return None
+
+        pua = sum(1 for ch in sample if 0xE000 <= ord(ch) <= 0xF8FF)
+        if pua / max(len(sample), 1) > 0.05:
+            return None
+
+        def _ok_char(ch: str) -> bool:
+            if ch.isalnum() or ch.isspace():
+                return True
+            if ch in ".,;:!?-/()[]'\"₪$€%+&@#*_=<>":
+                return True
+            name = unicodedata.name(ch, "")
+            return name.startswith(("HEBREW", "ARABIC", "CURRENCY"))
+
+        ok_ratio = sum(1 for ch in sample if _ok_char(ch)) / max(len(sample), 1)
+        if ok_ratio < 0.7:
+            return None
+
+        hebrew = sum(1 for ch in sample if 0x0590 <= ord(ch) <= 0x05FF)
+        latin1_supp = sum(1 for ch in sample if 0x00C0 <= ord(ch) <= 0x00FF)
+        ascii_letters = sum(1 for ch in sample if ("A" <= ch <= "Z") or ("a" <= ch <= "z"))
+        # Classic UTF-8→Latin-1 mojibake without real Hebrew letters
+        if latin1_supp > 8 and hebrew == 0 and ascii_letters < latin1_supp:
+            return None
+
+        letters = sum(1 for ch in sample if ch.isalpha())
+        if letters < 3 and len(sample) > 20:
+            return None
+
+        # Glyph-mapped Hebrew PDFs often look like "O@;MD O9;DH" — high punct/digit noise.
+        if hebrew == 0:
+            punct = sum(1 for ch in sample if not ch.isalnum() and not ch.isspace())
+            if punct / max(len(sample), 1) > 0.18 and letters / max(len(sample), 1) < 0.55:
+                return None
+            # Few spaces + mixed case soup is usually undecoded PDF text, not a note.
+            spaces = sample.count(" ")
+            if len(sample) > 40 and spaces < 3:
+                return None
+
+        return cleaned[:max_len]
+
     def _property_catalog(self) -> list[dict]:
         rows = self.db.scalars(
             select(Property).options(joinedload(Property.owner), joinedload(Property.bank_accounts))
@@ -629,6 +699,7 @@ class DocumentImportService:
             "Match the document to the most likely property/client from the catalog using "
             "property name, owner name, address, client_prop_id, or bank account number. "
             "Use null for fields you cannot determine. "
+            "If Hebrew (or other) text is garbled, unreadable, or OCR garbage, leave description null. "
             f"Allowed categories: {', '.join(EXPENSE_CATEGORIES)}. "
             f"Allowed sources: {', '.join(EXPENSE_SOURCES)}. "
             f"Allowed payment methods: {', '.join(PAYMENT_METHODS)}."
@@ -746,7 +817,8 @@ class DocumentImportService:
             account_number=hints.get("account_number"),
             vendor_name=None,
             reference=None,
-            description=text[:240] if text else None,
+            # Never dump raw PDF extract into Notes — Hebrew PDFs often decode as glyph soup.
+            description=None,
             category="other" if txn_type == "expense" else None,
             source="manual_company" if txn_type == "expense" else None,
             payment_method="company_account" if txn_type == "expense" else None,
@@ -836,7 +908,7 @@ class DocumentImportService:
             account_number=self._optional_str(data.get("account_number")),
             vendor_name=self._optional_str(data.get("vendor_name")),
             reference=self._optional_str(data.get("reference")),
-            description=self._optional_str(data.get("description")),
+            description=self._readable_notes(self._optional_str(data.get("description"))),
             category=self._optional_str(data.get("category")) or "other",
             source=self._optional_str(data.get("source")) or "manual_company",
             payment_method=self._optional_str(data.get("payment_method")) or "company_account",
@@ -1208,7 +1280,7 @@ class DocumentImportService:
             amount=draft.amount,
             currency=draft.currency or self.settings.default_currency,
             reference=draft.reference,
-            description=draft.description,
+            description=self._readable_notes(draft.description),
             source=draft.source or "file_upload",
             receipt_ref=str(document.id),
             source_file=document.filename,
@@ -1252,7 +1324,7 @@ class DocumentImportService:
             payment_method=draft.payment_method,
             vendor_name=draft.vendor_name,
             reference=draft.reference,
-            description=draft.description,
+            description=self._readable_notes(draft.description),
             receipt_ref=str(document.id),
             source_file=document.filename,
             import_key=import_key,

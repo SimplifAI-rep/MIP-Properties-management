@@ -348,3 +348,22 @@ def test_spreadsheet_still_requires_property_id(client):
         },
     )
     assert response.status_code == 400
+
+
+def test_readable_notes_keeps_hebrew_and_english_drops_mojibake():
+    from app.services.document_import import DocumentImportService
+
+    readable = DocumentImportService._readable_notes
+    assert readable("Invoice Electric Co — plumber visit") == "Invoice Electric Co — plumber visit"
+    he = "\u05e7\u05d1\u05dc\u05d4 \u05de\u05e1\u05e4\u05e8 123"
+    assert readable(he) == he
+    assert readable(None) is None
+    assert readable("") is None
+    assert readable("(cid:12)(cid:45) garbage") is None
+    # UTF-8 Hebrew bytes misread as Latin-1 (×©×œ×•× …)
+    mojibake = ("\xd7\xa9\xd7\x9c\xd7\x95\xd7\x9d " * 4).strip()
+    assert readable(mojibake) is None
+    assert readable("\ufffd\ufffd\ufffd broken extraction text") is None
+    # Hebrew PDF custom encoding: letters interleaved with SOH controls
+    glyph_soup = "O\x01@;MD\x01O\x019;DH\x01\x01w\x01\x01RNOWW\x01:JGH\x01E;7L="
+    assert readable(glyph_soup) is None

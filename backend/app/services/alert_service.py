@@ -71,6 +71,10 @@ def _clear_recovered_low_balance_dismissals(
     db.commit()
 
 
+def _property_is_active(prop: Property | None) -> bool:
+    return prop is not None and prop.status == "active"
+
+
 def _append_low_balance_alerts(
     db: Session,
     alerts: list[AlertRead],
@@ -93,7 +97,10 @@ def _append_low_balance_alerts(
         return
 
     props = db.scalars(
-        select(Property).options(joinedload(Property.owner)).order_by(Property.client_prop_id)
+        select(Property)
+        .options(joinedload(Property.owner))
+        .where(Property.status == "active")
+        .order_by(Property.client_prop_id)
     ).unique().all()
     if not props:
         return
@@ -217,7 +224,7 @@ def list_alerts(db: Session) -> AlertListResponse:
         )
 
     pending_uploads = db.execute(
-        select(UploadedDocument, Property.name, Owner.name)
+        select(UploadedDocument, Property.name, Owner.name, Property.status)
         .outerjoin(Property, UploadedDocument.property_id == Property.id)
         .outerjoin(Owner, UploadedDocument.owner_id == Owner.id)
         .where(
@@ -226,7 +233,10 @@ def list_alerts(db: Session) -> AlertListResponse:
         .order_by(UploadedDocument.created_at.desc())
     ).all()
 
-    for document, property_name, owner_name in pending_uploads:
+    for document, property_name, owner_name, property_status in pending_uploads:
+        # Skip uploads tied to inactive properties (unmatched uploads still show)
+        if document.property_id is not None and property_status != "active":
+            continue
         alert_id = _upload_alert_key(document.id)
         if alert_id in closed_keys:
             continue
@@ -290,6 +300,8 @@ def list_alerts(db: Session) -> AlertListResponse:
     ).unique().all()
 
     for expense in incomplete_expenses:
+        if not _property_is_active(expense.property):
+            continue
         alert_id = _incomplete_expense_key(expense.id)
         if alert_id in closed_keys:
             continue
@@ -329,6 +341,8 @@ def list_alerts(db: Session) -> AlertListResponse:
     ).unique().all()
 
     for deposit in incomplete_deposits:
+        if not _property_is_active(deposit.property):
+            continue
         alert_id = _incomplete_deposit_key(deposit.id)
         if alert_id in closed_keys:
             continue

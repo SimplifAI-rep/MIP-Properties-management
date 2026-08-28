@@ -441,12 +441,18 @@ export interface ClientDataImportJobStatus {
 
 export interface DepositCreate {
   property_id: string;
-  bank_account_id: string;
+  bank_account_id?: string;
   transaction_date: string;
   amount: string;
   currency?: string;
   reference?: string;
   description?: string;
+  source?: string;
+  is_rental_income?: boolean;
+  /** UI-only helpers mapped into description/reference on save */
+  category?: string;
+  payment_method?: string;
+  vendor_name?: string;
 }
 
 export interface AlertItem {

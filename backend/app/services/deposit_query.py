@@ -265,7 +265,10 @@ def find_deposit_gaps(
         select(ExpectedDeposit, Property, Owner)
         .join(Property, ExpectedDeposit.property_id == Property.id)
         .join(Owner, Property.owner_id == Owner.id)
-        .where(ExpectedDeposit.active.is_(True))
+        .where(
+            ExpectedDeposit.active.is_(True),
+            Property.status == "active",
+        )
     )
     if property_id:
         expected_stmt = expected_stmt.where(Property.id == property_id)
@@ -351,7 +354,8 @@ def create_deposit(db: Session, payload: DepositCreate) -> DepositRead:
         currency=payload.currency,
         reference=payload.reference,
         description=payload.description,
-        source="manual_entry",
+        source=payload.source or "manual_entry",
+        is_rental_income=bool(payload.is_rental_income),
     )
     db.add(deposit)
     db.commit()

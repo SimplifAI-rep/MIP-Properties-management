@@ -28,6 +28,7 @@ type AlertTypeFilter =
   | 'missing_amount'
   | 'needs_review';
 type SeverityFilter = AlertItem['severity'];
+type PropertyStatusFilter = 'active' | 'inactive';
 
 const REASON_LABELS: Record<string, string> = {
   missing_date: 'Missing date',
@@ -35,6 +36,11 @@ const REASON_LABELS: Record<string, string> = {
   no_money_columns: 'Missing amount',
   needs_review: 'Needs review',
 };
+
+const PROPERTY_STATUS_OPTIONS: { value: PropertyStatusFilter; label: string }[] = [
+  { value: 'active', label: 'Active' },
+  { value: 'inactive', label: 'Inactive' },
+];
 
 const ALERT_TYPE_OPTIONS: { value: AlertTypeFilter; label: string }[] = [
   { value: 'missing_deposit', label: 'Missing deposit' },
@@ -161,14 +167,24 @@ export function AlertsPage() {
   const [fixAmount, setFixAmount] = useState('');
   const [types, setTypes] = useState<AlertTypeFilter[]>([]);
   const [severities, setSeverities] = useState<SeverityFilter[]>([]);
+  const [propertyStatuses, setPropertyStatuses] = useState<PropertyStatusFilter[]>([
+    'active',
+  ]);
   const [propertyIds, setPropertyIds] = useState<string[]>([]);
   const [owners, setOwners] = useState<string[]>([]);
   const [dateFrom, setDateFrom] = useState<string | undefined>();
   const [dateTo, setDateTo] = useState<string | undefined>();
 
+  const apiPropertyStatus: 'active' | 'inactive' | 'all' =
+    propertyStatuses.length === 1
+      ? propertyStatuses[0]
+      : propertyStatuses.length === 0
+        ? 'all'
+        : 'all';
+
   const alertsQuery = useQuery({
-    queryKey: ['alerts'],
-    queryFn: api.getAlerts,
+    queryKey: ['alerts', apiPropertyStatus],
+    queryFn: () => api.getAlerts({ property_status: apiPropertyStatus }),
   });
 
   const alerts = alertsQuery.data?.items ?? [];
@@ -224,7 +240,9 @@ export function AlertsPage() {
   }, [alerts, types, severities, propertyIds, owners, dateFrom, dateTo]);
 
   const hasActiveFilters = Boolean(
-    types.length ||
+    propertyStatuses.length !== 1 ||
+      propertyStatuses[0] !== 'active' ||
+      types.length ||
       severities.length ||
       propertyIds.length ||
       owners.length ||
@@ -233,6 +251,7 @@ export function AlertsPage() {
   );
 
   const clearFilters = () => {
+    setPropertyStatuses(['active']);
     setTypes([]);
     setSeverities([]);
     setPropertyIds([]);
@@ -484,6 +503,18 @@ export function AlertsPage() {
       </div>
 
       <section className="filter-panel shrink-0 md:grid-cols-2 xl:grid-cols-3">
+        <SearchableMultiSelect
+          label="Property status"
+          tip="Show alerts for active and/or inactive properties. Default is active only."
+          options={PROPERTY_STATUS_OPTIONS}
+          selected={propertyStatuses}
+          onChange={(next) => {
+            setPropertyStatuses(next as PropertyStatusFilter[]);
+            setPropertyIds([]);
+          }}
+          placeholder="All statuses"
+          searchPlaceholder="Search status…"
+        />
         <SearchableMultiSelect
           label="Type"
           tip="Missing deposit, low balance, missing date/amount, duplicate, or upload review."

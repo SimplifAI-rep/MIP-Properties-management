@@ -235,6 +235,7 @@ def find_deposit_gaps(
     property_id: UUID | None = None,
     client_prop_id: str | None = None,
     owner_id: UUID | None = None,
+    property_status: str | None = "active",
 ) -> list[DepositGap]:
     settings = get_settings()
     tolerance = Decimal(str(settings.import_amount_tolerance))
@@ -265,11 +266,10 @@ def find_deposit_gaps(
         select(ExpectedDeposit, Property, Owner)
         .join(Property, ExpectedDeposit.property_id == Property.id)
         .join(Owner, Property.owner_id == Owner.id)
-        .where(
-            ExpectedDeposit.active.is_(True),
-            Property.status == "active",
-        )
+        .where(ExpectedDeposit.active.is_(True))
     )
+    if property_status in {"active", "inactive"}:
+        expected_stmt = expected_stmt.where(Property.status == property_status)
     if property_id:
         expected_stmt = expected_stmt.where(Property.id == property_id)
     if client_prop_id:

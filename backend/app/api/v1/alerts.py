@@ -1,6 +1,6 @@
 from urllib.parse import unquote
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db
@@ -23,8 +23,16 @@ router = APIRouter(prefix="/alerts", tags=["alerts"])
 
 
 @router.get("", response_model=AlertListResponse)
-def get_alerts(db: Session = Depends(get_db)) -> AlertListResponse:
-    return list_alerts(db)
+def get_alerts(
+    property_status: str = Query(
+        "active",
+        pattern="^(active|inactive|all)$",
+        description="Filter alerts by property status. Default: active only.",
+    ),
+    db: Session = Depends(get_db),
+) -> AlertListResponse:
+    status_filter: str | None = None if property_status == "all" else property_status
+    return list_alerts(db, property_status=status_filter)
 
 
 @router.get("/summary", response_model=AlertSummary)

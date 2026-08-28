@@ -180,3 +180,30 @@ def test_inactive_property_alerts_are_ignored(client, db):
     gaps = find_deposit_gaps(db, property_id=PROPERTY_ROTHSCHILD_ID)
     assert gaps == []
     assert all(gap.property_id != PROPERTY_ROTHSCHILD_ID for gap in find_deposit_gaps(db))
+
+
+def test_alerts_can_include_inactive_properties(client, db):
+    from app.models.property import Property
+
+    prop = db.get(Property, PROPERTY_ROTHSCHILD_ID)
+    assert prop is not None
+    prop.status = "inactive"
+    db.commit()
+
+    active_only = client.get("/api/v1/alerts?property_status=active").json()
+    assert all(
+        item.get("property_id") != str(PROPERTY_ROTHSCHILD_ID)
+        for item in active_only["items"]
+    )
+
+    inactive_only = client.get("/api/v1/alerts?property_status=inactive").json()
+    assert any(
+        item.get("property_id") == str(PROPERTY_ROTHSCHILD_ID)
+        for item in inactive_only["items"]
+    )
+
+    all_alerts = client.get("/api/v1/alerts?property_status=all").json()
+    assert any(
+        item.get("property_id") == str(PROPERTY_ROTHSCHILD_ID)
+        for item in all_alerts["items"]
+    )

@@ -71,14 +71,25 @@ def _clear_recovered_low_balance_dismissals(
     db.commit()
 
 
-def _property_is_active(prop: Property | None) -> bool:
-    return prop is not None and prop.status == "active"
+def _include_property_status(
+    prop_status: str | None,
+    *,
+    property_status: str | None,
+) -> bool:
+    """Filter by property status. None filter = all. Unmatched (no status) only when active or all."""
+    if property_status is None:
+        return True
+    if prop_status is None:
+        return property_status == "active"
+    return prop_status == property_status
 
 
 def _append_low_balance_alerts(
     db: Session,
     alerts: list[AlertRead],
     closed_keys: set[str],
+    *,
+    property_status: str | None = "active",
 ) -> None:
     rules = db.scalars(
         select(AlertRule).where(
@@ -96,12 +107,14 @@ def _append_low_balance_alerts(
     if not global_rule and not property_rules:
         return
 
-    props = db.scalars(
+    prop_stmt = (
         select(Property)
         .options(joinedload(Property.owner))
-        .where(Property.status == "active")
         .order_by(Property.client_prop_id)
-    ).unique().all()
+    )
+    if property_status in {"active", "inactive"}:
+        prop_stmt = prop_stmt.where(Property.status == property_status)
+    props = db.scalars(prop_stmt).unique().all()
     if not props:
         return
 
@@ -197,11 +210,15 @@ def _missing_fields_message(
     return "Imported row needs review: " + " and ".join(parts)
 
 
-def list_alerts(db: Session) -> AlertListResponse:
+def list_alerts(
+    db: Session,
+    *,
+    property_status: str | None = "active",
+) -> AlertListResponse:
     closed_keys = _load_closed_keys(db)
     alerts: list[AlertRead] = []
 
-    for gap in find_deposit_gaps(db):
+    for gap in find_deposit_gaps(db, property_status=property_status):
         alert_id = _gap_alert_key(gap.property_id, gap.period_start)
         if alert_id in closed_keys:
             continue
@@ -233,9 +250,11 @@ def list_alerts(db: Session) -> AlertListResponse:
         .order_by(UploadedDocument.created_at.desc())
     ).all()
 
-    for document, property_name, owner_name, property_status in pending_uploads:
-        # Skip uploads tied to inactive properties (unmatched uploads still show)
-        if document.property_id is not None and property_status != "active":
+    for document, property_name, owner_name, row_property_status in pending_uploads:
+        if not _include_property_status(
+            row_property_status if document.property_id is not None else None,
+            property_status=property_status,
+        ):
             continue
         alert_id = _upload_alert_key(document.id)
         if alert_id in closed_keys:
@@ -300,12 +319,15 @@ def list_alerts(db: Session) -> AlertListResponse:
     ).unique().all()
 
     for expense in incomplete_expenses:
-        if not _property_is_active(expense.property):
+        prop = expense.property
+        if not _include_property_status(
+            prop.status if prop else None,
+            property_status=property_status,
+        ):
             continue
         alert_id = _incomplete_expense_key(expense.id)
         if alert_id in closed_keys:
             continue
-        prop = expense.property
         prop_label = prop.client_prop_id if prop else "Unknown"
         reason_title = _missing_fields_title(
             expense.review_reasons, expense.transaction_date, expense.amount
@@ -341,12 +363,15 @@ def list_alerts(db: Session) -> AlertListResponse:
     ).unique().all()
 
     for deposit in incomplete_deposits:
-        if not _property_is_active(deposit.property):
+        prop = deposit.property
+        if not _include_property_status(
+            prop.status if prop else None,
+            property_status=property_status,
+        ):
             continue
         alert_id = _incomplete_deposit_key(deposit.id)
         if alert_id in closed_keys:
             continue
-        prop = deposit.property
         prop_label = prop.client_prop_id if prop else "Unknown"
         reason_title = _missing_fields_title(
             deposit.review_reasons, deposit.transaction_date, deposit.amount
@@ -374,7 +399,9 @@ def list_alerts(db: Session) -> AlertListResponse:
             )
         )
 
-    _append_low_balance_alerts(db, alerts, closed_keys)
+    _append_low_balance_alerts(
+        db, alerts, closed_keys, property_status=property_status
+    )
 
     alerts.sort(
         key=lambda alert: (
@@ -392,7 +419,8 @@ def list_alerts(db: Session) -> AlertListResponse:
 
 
 def get_alert_summary(db: Session) -> AlertSummary:
-    data = list_alerts(db)
+    # Badge / nav count stays active-only by default
+    data = list_alerts(db, property_status="active")
     return AlertSummary(
         open_count=data.total,
         error_count=data.error_count,
@@ -401,7 +429,7 @@ def get_alert_summary(db: Session) -> AlertSummary:
 
 
 def dismiss_alert(db: Session, alert_id: str) -> AlertRead:
-    alerts = list_alerts(db)
+    alerts = list_alerts(db, property_status=None)
     alert = next((item for item in alerts.items if item.id == alert_id), None)
     if alert is None:
         raise HTTPException(status_code=404, detail="Alert not found or already closed")
@@ -478,7 +506,7 @@ def fix_incomplete_transaction(db: Session, payload: FixIncompletePayload) -> di
 
 
 def resolve_alert(db: Session, alert_id: str, payload: AlertResolveRequest) -> AlertRead:
-    alerts = list_alerts(db)
+    alerts = list_alerts(db, property_status=None)
     alert = next((item for item in alerts.items if item.id == alert_id), None)
     if alert is None:
         raise HTTPException(status_code=404, detail="Alert not found or already closed")

@@ -413,7 +413,12 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ drafts }),
     }),
-  getAlerts: () => request<AlertListResponse>('/alerts'),
+  getAlerts: (filters: { property_status?: 'active' | 'inactive' | 'all' } = {}) =>
+    request<AlertListResponse>(
+      `/alerts${toQuery({
+        property_status: filters.property_status ?? 'active',
+      })}`,
+    ),
   getAlertSummary: () => request<AlertSummary>('/alerts/summary'),
   dismissAlert: (alertId: string) =>
     request<AlertItem>(`/alerts/${encodeURIComponent(alertId)}/dismiss`, {

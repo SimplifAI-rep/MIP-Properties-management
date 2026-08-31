@@ -34,7 +34,7 @@ This document proposes goals, concepts, UX, data ideas, and open decisions. **No
 
 **Key mindset shift:** the bank file is not “another way to create transactions.” It is the **verification pass** over work already in the system.
 
-**Ideal outcome when uploading bank Excel:** almost every bank row **matches** an existing transaction (what today looks like “duplicates”). That match should mean **verified**, not “error / ignore.”
+**Ideal outcome when uploading bank Excel:** almost every bank row **matches** an existing transaction and is **marked Verified** (with bank אסמכתא). That must **not** be labeled or treated as a “duplicate.” The word **duplicate** is reserved for **true duplicate app rows** (same money entered twice in SimplifAI), not for “bank line already has a matching receipt.”
 
 ---
 
@@ -80,7 +80,7 @@ When SimplifAI goes to **production** for this client, she should start in a **f
 
 She always knows: “Books are verified through **this date**; everything after that still needs bank confirmation.”
 
-**Proposal:** opening bank amount + **last verification date** are first-class settings (same cutover moment), editable by admin, visible on Dashboard and Bank reconcile.
+**Proposal:** opening bank amount + **last verification date** are first-class settings (same cutover moment), **editable by anyone** in v1 (§21b Q5), visible on Dashboard and Bank reconcile. **Gap tolerance** is a separate admin-editable amount (§21b Q7).
 
 ---
 
@@ -88,8 +88,8 @@ She always knows: “Books are verified through **this date**; everything after 
 
 | Area | Today | Gap |
 |------|--------|-----|
-| Bank upload | Creates/reviews deposit & expense drafts (`source=bank_statement`); duplicates flagged with default **Ignore** | Treated as import, not reconcile |
-| “Duplicate” | Soft match (±3 days, amount, ref/text) | Should become **Match → Verified** |
+| Bank upload | Creates/reviews deposit & expense drafts (`source=bank_statement`); soft matches flagged as **duplicates** with default **Ignore** | Wrong UX — soft match must become **Match → Verified**, not “duplicate” |
+| Soft match vs bank | Labeled “Duplicate” | After redesign: **Matched / Verified**. “Duplicate” only if two **app** txs are the same real-world spend |
 | Verified flag | Only `Expense.reconciled` from management ledger; unused in workflow | No per-transaction **bank-verified** state |
 | Bank balance | Not stored; UI “Balance” = company-float Inflow − Expenses | No bank balance / opening balance / last verification date |
 | Credit cards | CC Excel creates BUFFER expenses; bank later shows settlement | Double-count risk; no CC-verify → bank-group-confirm path |
@@ -143,7 +143,8 @@ She always knows: “Books are verified through **this date**; everything after 
 | **Last verification date** | Latest date through which books are considered bank-verified; set at go-live, updated when a reconcile session completes cleanly |
 | **Go-live cutover** | Production start: balance + files loaded; all txs ≤ D₀ marked Verified; last verification date = D₀ |
 | **Reconcile session** | One upload + period + results (matches, leftovers, gap) |
-| **Reconcile alert** | High-priority alert when a bank upload leaves unmatched app rows, unmatched bank lines, and/or Gap ≠ 0 |
+| **Reconcile ignore** | Client action (reason required) that clears a bank line or app tx from blocking complete; audited |
+| **Reconcile alert** | High-priority alert when a bank/CC upload leaves unmatched rows and/or Gap outside tolerance; dismiss requires exception reason |
 | **CC settlement** | Bank debit that pays the credit-card bill (e.g. `לאומי מאסטרקרד`) — must not double-count with CC merchant rows |
 
 ---
@@ -205,7 +206,7 @@ Let:
 Then:
 
 > **Gap = B − (O + N)**  
-> Success when **|Gap| ≤ tolerance** (e.g. ₪0.01 or ₪1).
+> Success when **|Gap| ≤ admin gap tolerance** (configurable ILS amount; see §21b Q7).
 
 ### Why exclusions matter (owner-paid + CC + deposits)
 
@@ -213,12 +214,11 @@ Then:
 - **Owner paid the provider** never hits the operating account → must **not** sit in unmatched-app or in **N**, or Gap will be wrong forever.  
 - **CC merchant rows** do not appear one-for-one on the bank Excel; only the **settlement debit** does. Without a rule, either Gap breaks or spend is counted twice.
 
-### Open product choices (need confirmation)
+### Locked choices (see §21b)
 
-1. Does success Gap use only **bank-verified** rows in **N**, or all bank-scoped rows in the period?  
-   - *Recommendation:* show both; success uses verified (plus explicit exclusions).  
-2. Is **B** the file header **היתרה**, last row **היתרה בש״ח**, or balance on a chosen date?  
-3. Company operating account only for v1? (*Recommendation: yes.*)  
+1. Success Gap uses **verified-only** net; UI also shows **all bank-scoped** net. Client may **manually ignore** a transaction (with reason).  
+2. **B** = latest row **היתרה בש״ח** in the uploaded file.  
+3. Company operating account only for v1.  
 
 ### Why opening balance matters
 
@@ -234,6 +234,7 @@ Add a clear **verification state** on each deposit/expense:
 
 - **Unverified** (default for new bank-scoped manual/PDF/ledger entries)  
 - **Verified** (matched to a bank line, or go-live baseline)  
+- **Ignored (reconcile)** — client manually ignored this row for bank/CC reconcile **with a reason**; does not block clean complete (§21b Q2)  
 - **CC-pending / CC-verified / CC bank-confirmed** (card path — see §12)  
 - **Excluded from bank reconcile**: **owner-paid**, rental-only, resident-paid, or other non-bank — so they don’t pollute unmatched lists or Gap **N**
 
@@ -274,11 +275,7 @@ Every deposit and expense gets a human-usable unique reference when created (man
 | Visible | Shown on Transactions table, detail panel, export CSV, and reconcile screens |
 | Assigned at create | Including Add expense / Add deposit / PDF confirm / imports |
 
-**Format options (pick at implementation):**
-
-- Prefixed opaque id: `TX-A7K2M9`, `DEP-…` / `EXP-…`  
-- Or date-based: `20260708-0042` (still must guarantee uniqueness)  
-- UUID remains the internal primary key; **transaction_ref** is the operational identifier.
+**Format (locked — §21b Q6):** date-based, e.g. `20260708-0042`, uniqueness guaranteed (sequence or suffix). UUID remains the internal primary key; **transaction_ref** is the operational identifier.
 
 **Not the same as:** existing `import_key` (idempotency for Excel re-import) or deposit `reference` (free-text / pre-verify receipt notes). Those can remain; `transaction_ref` is the product-facing unique id.
 
@@ -308,8 +305,9 @@ Display on Transactions:
 | Today | Tomorrow |
 |-------|----------|
 | Bank row → draft Add/Ignore | Bank row → **Match** / **Add missing** / **Ignore (with reason)** |
-| Duplicate warning feels like a problem | Match is the **success** path |
-| Confirm often creates more rows | Confirm primarily **links** and sets **Verified** |
+| Soft match shown as **Duplicate** (feels like a problem) | Soft match shown as **Matched → confirm → Verified** (success path) |
+| Confirm often creates more rows | Confirm primarily **links** and sets **Verified** + bank אסמכתא; **does not** create a second copy |
+| “Duplicate” used for bank↔app matches | **Duplicate** only for true duplicate **app** transactions (same spend entered twice) |
 | Balance column unused | Balance column drives **B** and Gap |
 
 ### Matching rules (v1 suggestion)
@@ -328,10 +326,11 @@ One bank line ↔ one app transaction in v1 for normal cash rows (CC settlement 
 
 ### Session output UI (sketch)
 
-1. Summary cards: Matched / Unmatched bank / Unmatched app / Gap  
-2. Tables for each bucket with actions  
-3. Opening balance editor (if missing or wrong)  
-4. “Complete reconcile” enabled only when Gap ≈ 0 **or** user explicitly accepts remaining exceptions  
+1. Summary cards: Matched / Unmatched bank / Unmatched app / Ignored / Gap  
+2. Show **both** nets: all bank-scoped vs verified-only; success uses verified-only (§21b Q2)  
+3. Tables for each bucket with actions including **Ignore (reason required)**  
+4. Opening balance editor + **gap tolerance** (admin field)  
+5. “Complete reconcile” enabled only when every leftover is matched, added, or ignored — **no silent leftovers** (§21b Q4); then last verification date may advance (§21b Q3)
 
 ---
 
@@ -412,7 +411,7 @@ Bank: לאומי מאסטרקרד ───────────────�
 | Paid-by-card merchant | No (as individual) | No* (if settlement is the bank event) | No for bank; yes for CC reconcile until CC-verified |
 | Bank CC settlement line | Yes (one debit) | Yes as cash event* | Matched to CC **group**, not to one merchant |
 
-\*Exact once-only rule locked in §21.
+\*Exact once-only rule locked in §21a.6.
 
 Without this split, Gap cannot reach 0 even when she did everything right.
 
@@ -429,15 +428,18 @@ Without this split, Gap cannot reach 0 even when she did everything right.
 | Account | Company operating bank account |
 | Note | Optional (“Balance from Leumi on …”) |
 | Audit | Who set/changed it and when |
+| Who may edit | **Anyone** with app access (v1 — §21b Q5) |
+| Gap tolerance | Separate **admin-editable** `gap_tolerance_amount` (ILS) — §21b Q7 |
 
 **UX:**
 
 - Prompt on first bank reconcile if missing.  
-- Editable under Settings / Bank reconcile header.  
-- Changing **O** recalculates Gap (does not rewrite transactions).
+- Editable under Settings / Bank reconcile header (same access as anyone for O).  
+- Changing **O** recalculates Gap (does not rewrite transactions).  
+- Admin (or settings) UI for **minimum Gap tolerance**.  
 
 **Migration / existing ClientData:**  
-At production cutover, set **O** + **D₀**, mark all existing rows ≤ D₀ as Verified (baseline), set last verification date = D₀. New activity after D₀ starts Unverified until bank-confirmed.
+At production cutover, set **O** + **D₀**, mark all existing rows ≤ D₀ as Verified (baseline, **no bank אסמכתא required** — §21b Q8), set last verification date = D₀. New activity after D₀ starts Unverified until bank-confirmed.
 
 ---
 
@@ -447,13 +449,14 @@ At production cutover, set **O** + **D₀**, mark all existing rows ≤ D₀ as 
 |-------|--------|
 | Date | Calendar date through which the operating account is considered verified |
 | Set at | Go-live cutover (= opening balance as-of **D₀**) |
-| Updated when | A bank reconcile session is **completed successfully** (Gap ≈ 0 and no remaining unmatched requiring action — exact rule in §21) |
-| Not updated when | Session abandoned; leftovers remain; user only partially matches |
+| Updated when | Session is **completed**: every in-scope bank line and bank-scoped app row is matched, added, or **ignored/excepted with reason**, and **|Gap| ≤ admin tolerance** (§21b Q3–Q4, Q7) |
+| Not updated when | Session abandoned; any leftover still unresolved (not ignored) |
 
 **Dashboard (required in v1, not optional):**
 
 - Show **Last verification date** prominently (e.g. “Bank verified through **DD/MM/YYYY**”).  
 - Optional companion metrics: unverified count since that date; open reconcile alerts; current Gap if a session is in progress.  
+- Show both **verified net** and **all bank-scoped net** when Gap is displayed (§21b Q2).  
 
 **Bank reconcile header:** same date + “Verify through …” for the current upload.
 
@@ -465,17 +468,17 @@ When a bank statement is uploaded (or a reconcile session is saved/finished with
 
 | Trigger | Alert (severity: **error** / high) | Cleared when |
 |---------|-----------------------------------|--------------|
-| Unmatched **bank** line(s) remain | “Bank line(s) not in app” — count + link to reconcile session | Lines matched, added, or explicitly excepted |
-| Unmatched **app** transaction(s) in period | “App transaction(s) not in bank” — count + link (**bank-scoped only**; never owner-paid) | Matched, corrected, or explicitly excepted |
-| Gap ≠ 0 after she attempts to complete | “Bank balance does not reconcile” — show Gap | Gap within tolerance |
-| Unmatched **CC** file lines or unpaid-by-card app rows | “Credit card reconcile incomplete” | Matched or excepted |
+| Unmatched **bank** line(s) remain | “Bank line(s) not in app” — count + link to reconcile session | Lines matched, added, or **ignored with reason** |
+| Unmatched **app** transaction(s) in period | “App transaction(s) not in bank” — count + link (**bank-scoped only**; never owner-paid) | Matched, corrected, or **ignored with reason** |
+| Gap ≠ 0 after she attempts to complete | “Bank balance does not reconcile” — show Gap | **|Gap| ≤ admin tolerance** |
+| Unmatched **CC** file lines or unpaid-by-card app rows | “Credit card reconcile incomplete” | Matched or ignored with reason |
 | Optional: unverified txs older than N days since last verification | “Unverified activity past due” | Verified or last verification advances past them |
 
 **Behavior notes:**
 
 - Alerts are **automatic** — she should not have to remember to check a reconcile screen.  
 - Deep-link into the Bank reconcile session / unmatched lists (same pattern as other alert → Transactions deep links).  
-- Dismissing without fixing should be discouraged for these types (or only allow dismiss with an “exception reason” that still audits the leftover).  
+- **Dismiss only with an exception reason** (audited) — §21b Q9.  
 - Nav badge / Alerts page already support severity; use **error** for these so they stand out.  
 
 ---
@@ -492,25 +495,33 @@ When a bank statement is uploaded (or a reconcile session is saved/finished with
 2. **Bank reconcile** (new page or strong mode inside Transactions upload)  
    - Upload bank Excel (ground truth for operating account)  
    - Match review for **bank-scoped** rows (deposits + company expenses)  
+   - **Ignore** action (reason required) for bank lines or app txs the client chooses to skip  
    - CC settlement lines → confirm **CC date groups** (not 1:1 merchant match)  
    - Owner-paid never appears as unmatched-app  
-   - Gap = Bank balance − (Opening + bank-scoped net)  
-   - Opening balance + last verification date  
-   - Completing with leftovers → auto high-priority alerts  
+   - Gap = Bank balance − (Opening + bank-scoped net); show verified vs all nets  
+   - **B** = latest row היתרה בש״ח; Gap within **admin tolerance**  
+   - Opening balance + last verification date (editable by anyone in v1)  
+   - Complete only when nothing unresolved remains; then advance date  
 
-3. **Credit card reconcile** (mode or sibling flow)  
+3. **Settings / admin**  
+   - **Gap tolerance** (minimum ILS amount)  
+   - Opening balance / last verification date (also reachable from Dashboard / reconcile)  
+
+4. **Credit card reconcile** (mode or sibling flow)  
    - Upload CC Excel  
    - Match **paid-by-card** receipts → CC-verified  
    - Show pending card receipts waiting for next CC file  
 
-4. **Dashboard (v1)**  
+5. **Dashboard (v1)**  
    - **Last verification date** (required)  
    - Unverified / CC-pending counts since that date  
    - Open bank-reconcile alert count / Gap hint  
+   - Show verified net vs all bank-scoped net when Gap is shown  
 
-5. **Alerts**  
+6. **Alerts**  
    - Auto high-priority items for unmatched bank / unmatched app / Gap ≠ 0  
    - CC unmatched (file vs paid-by-card app)  
+   - Dismiss only with exception reason  
    - Filterable; deep-link to reconcile  
 
 ---
@@ -521,18 +532,20 @@ Not binding — for feasibility discussion:
 
 - `bank_accounts.opening_balance` + `opening_balance_as_of` (or separate `bank_opening_balances` table)  
 - Account- or company-level **`last_verification_date`** (updated on successful reconcile; set at go-live)  
+- Company/settings **`gap_tolerance_amount`** (ILS, admin-editable — §21b Q7)  
 - `deposits` / `expenses`:  
-  - **`transaction_ref`** (string, unique, assigned at create — SimplifAI’s own אסמכתא)  
+  - **`transaction_ref`** (string, unique, **date-based** e.g. `20260708-0042`, assigned at create)  
   - `bank_verified_at`, `bank_verified_by`  
-  - **`bank_asmachta`** (string — the bank **אסמכתא** attached on verify; not unique by itself)  
+  - **`bank_asmachta`** (string — the bank **אסמכתא** attached on verify; nullable for cutover baseline — §21b Q8)  
   - `bank_match_fingerprint` / `reconcile_session_id`  
   - **`bank_reconcile_exclude`** (owner-paid / non-bank — required for Gap)  
+  - reconcile **ignore** metadata when ignored in a session (reason, who, when) — or store on session line items  
   - **paid-by-card** flag (may reuse `payment_method`) + **`cc_verified_at`**, optional **`cc_settlement_group_id`** / bank settlement fingerprint  
-- `bank_reconcile_sessions`: upload id, period, bank_balance_snapshot, opening_used, net_used, gap, status (`in_progress` / `completed` / `completed_with_exceptions`)  
-- `bank_reconcile_matches`: session_id, bank_line_fingerprint, **bank_asmachta**, deposit_id or expense_id (and denormalized `transaction_ref`), confidence, user_action  
+- `bank_reconcile_sessions`: upload id, period, **bank_balance_B** (from latest row היתרה בש״ח), opening_used, verified_net, all_scoped_net, gap, tolerance_used, status (`in_progress` / `completed`)  
+- `bank_reconcile_matches` / line actions: session_id, bank_line_fingerprint, **bank_asmachta**, deposit_id or expense_id, confidence, user_action (`match` | `add` | `ignore`), **ignore_reason**  
 - `cc_reconcile_sessions` / matches (CC Excel ↔ paid-by-card app rows)  
 - `cc_settlement_groups`: billing window + linked bank settlement line + member expense ids  
-- Alert keys for reconcile leftovers (e.g. `bank_reconcile:unmatched_bank:{session_id}`, `…:unmatched_app:…`, `…:gap:…`, `cc_reconcile:…`) so they clear when the session is fixed  
+- Alert keys for reconcile leftovers; dismiss requires **exception reason** (§21b Q9)  
 - Optional: store raw bank / CC lines so she can reopen a session  
 
 **Go-live helper (ops):** one-shot “cutover” action — set O + D₀, mark all txs ≤ D₀ verified, set last verification date — rather than hand-editing thousands of rows. 
@@ -568,24 +581,73 @@ Also note: deposits already have a generic `reference` field (sometimes filled f
 
 ---
 
-## 21. Decisions needed from bosses / client
+## 21. Agreed product rules vs open questions
 
-Please confirm or rewrite:
+### 21a. Agreed (do not re-litigate unless bosses change course)
 
-1. **Equation:** Is `Gap = BankBalance − (Opening + BankScopedNet)` correct, with BankScopedNet including **deposits** and excluding **owner-paid**?  
-2. **Net scope:** Verified-only vs all bank-scoped rows for the success check?  
-3. **Account scope:** Company operating account only for v1?  
-4. **CC Gap once-only:** Confirm Zoom flow — merchant rows out of bank **N**, settlement is the bank cash event; CC Excel verifies merchants; bank settlement confirms the **date group**.  
-5. **Duplicates today:** Confirm that “everything duplicated on bank upload” is the desired happy path (= all matched/verified).  
-6. **Opening balance + go-live:** Who may edit O / last verification date? Confirm cutover marks **all existing txs ≤ D₀ as Verified**.  
-7. **Bank balance (B):** Use file header **היתרה**, **first/latest row’s היתרה בש״ח**, or balance on a chosen date?  
-8. **When does last verification date advance?** Only on fully clean session, or also when leftovers are explicitly excepted with a reason?  
-9. **Unmatched policy:** Can she “complete” a session with leftovers if she marks exceptions (and do alerts still fire)?  
-10. **Bank אסמכתא:** Confirm every bank-verified transaction must store the bank אסמכתא. Confirm composite fingerprint when bank אסמכתא repeats.  
-11. **SimplifAI transaction ref:** Confirm every deposit/expense gets our own unique readable id (format preference: `TX-…` vs date-based). Confirm backfill for existing ClientData rows.  
-12. **CC detection:** Confirm bank descriptions like `לאומי מאסטרקרד` identify settlement lines that confirm a CC group.  
-13. **Owner-paid:** Confirm excluded from bank match lists and Gap **N** (still visible on property/owner views).  
-14. **Alerts:** Confirm severity = error/high for unmatched bank, unmatched app, Gap ≠ 0, and CC unmatched; confirm dismiss rules.  
+These are **statements** we will build against:
+
+1. **Gap equation:** `Gap = B − (O + N)` where **N** is bank-scoped net: includes **deposits** and company/bank-path expenses; **excludes owner-paid** (and other existing non-bank float exclusions such as resident-paid / rental-only as applicable).  
+2. **Bank Excel is ground truth** for cash that hits the operating account: upload primarily **matches and verifies**, not invents a second copy of every row.  
+3. **No “duplicate” UX for bank confirmation:** when a bank line matches an existing app transaction, the UI shows **Matched / Verified**, not Duplicate. Confirming sets **Verified** + stores bank **אסמכתא**. A second app row is **not** created.  
+4. **“Duplicate” means true app doubles only:** two (or more) SimplifAI transactions that represent the same real-world spend — not “this already exists because the bank file found it.”  
+5. **Owner-paid** stays in property/owner views but is **out** of bank match lists and Gap **N**.  
+6. **Credit cards (Zoom):** paid-by-card receipts → CC Excel verifies merchants → bank CC settlement (e.g. lines like `לאומי מאסטרקרד`) confirms that **date group**; count CC cash **once** in bank Gap (settlement as bank event; merchant lines not also in bank **N**).  
+7. **Every** deposit/expense gets a unique SimplifAI **`transaction_ref`**; bank-verified rows also store **`bank_asmachta`**. Match identity uses a **composite fingerprint** when bank אסמכתא repeats.  
+8. Incomplete bank/CC reconcile (unmatched bank, unmatched bank-scoped app, Gap ≠ 0, unmatched CC) raises **high-priority (error) alerts**.  
+9. **v1 account scope:** company **operating account** reconcile (not multi-bank treasury).  
+10. Go-live cutover sets **O** + **D₀**, marks existing txs ≤ D₀ as baseline Verified, and sets **last verification date = D₀**.
+
+### 21b. Decisions locked (answered 2026-08-31)
+
+| # | Decision |
+|---|----------|
+| **Q1** | **B** = **latest row** **היתרה בש״ח** in the uploaded bank Excel. |
+| **Q2** | UI shows **both** nets (all bank-scoped vs verified-only); **success / clean complete uses verified-only net**. Client can **manually ignore** a transaction (with reason) so it no longer blocks match lists / clean complete — ignored rows are treated like an explicit exception for that session (and audited). |
+| **Q3** | **Last verification date may advance** after a completed session even if some leftovers were **ignored/excepted with a reason** (not only when the unmatched lists were empty without any ignores). Gap must still be within **admin tolerance**. |
+| **Q4** | She **cannot** “complete” a session while unresolved leftovers remain. Everything must be **matched, added, cleared, or explicitly ignored/excepted with a reason** first. (Then Q3 applies for advancing the date.) |
+| **Q5** | **Anyone** with access to the app may edit opening bank amount **O** and **last verification date** (v1; tighten roles later if needed). |
+| **Q6** | **`transaction_ref` format = date-based** (e.g. `20260708-0042`), uniqueness guaranteed. Backfill existing rows on migrate. |
+| **Q7** | Gap “≈ 0” uses an **admin-configurable minimum tolerance amount** (editable setting), not a hard-coded ₪0.01/₪1. Default value at ship TBD (suggest ₪0.01 until admin changes it). |
+| **Q8** | Cutover baseline Verified (txs ≤ D₀) **may have no bank אסמכתא** — verified by cutover, not by a bank line. |
+| **Q9** | Bank/CC reconcile alerts: **dismiss only with an exception reason** (still audited). |
+| **Q10** | No disagreement with §21a recorded. |
+
+### 21c. Implications for build (from Q2–Q4 + Q7)
+
+- **Ignore transaction:** first-class reconcile action (app row and/or bank line) requiring a **reason**; removes it from “blocking unmatched”; does not delete the underlying app tx unless product later says so.  
+- **Complete session:** enabled only when every bank line and every bank-scoped app row in scope is matched, added, or ignored/excepted — **no silent leftovers**.  
+- **Advance last verification date:** allowed after a completable session where Gap is within **admin tolerance**, including sessions that used ignores/exceptions.  
+- **Admin setting:** `gap_tolerance_amount` (ILS) — used wherever Gap ≈ 0 is evaluated.
+
+---
+
+### 21d. Historical question list (answered — kept for audit)
+
+<details>
+<summary>Original Q1–Q10 wording</summary>
+
+**Q1.** Which number is bank balance B for Gap? → **(b)** latest row היתרה בש״ח  
+
+**Q2.** For clean complete, which net N? → **(c)** show both, success = verified-only; **plus manual ignore**  
+
+**Q3.** When may last verification date advance? → **(b)** also when leftovers excepted/ignored with reason  
+
+**Q4.** Complete with leftovers remaining? → **(a)** No — must clear or except/ignore everything first  
+
+**Q5.** Who edits O / last verification date? → **(a)** Anyone  
+
+**Q6.** Ref format? → **(b)** Date-based  
+
+**Q7.** Gap tolerance? → **Admin field** for minimum tolerance amount  
+
+**Q8.** Cutover without אסמכתא OK? → **(a)** Yes  
+
+**Q9.** Alert dismiss? → **(a)** Only with exception reason  
+
+**Q10.** Disagree with §21a? → none recorded  
+
+</details>
 
 ---
 
@@ -593,12 +655,13 @@ Please confirm or rewrite:
 
 - At production cutover she can set balance + files, start with **everything verified**, and see **last verification date** on the Dashboard.  
 - She works **verification → verification**: after each clean bank reconcile, the date advances.  
-- Weekly bank Excel upload mostly **verifies** existing rows instead of creating duplicates.  
+- Weekly bank Excel upload **verifies** existing rows (Matched → Verified); UI must **not** call those matches “duplicates.”  
+- **Duplicate** labeling is reserved for true double-entry of the same spend in the app.  
 - **Deposits** match bank credits and count in Gap; **owner-paid** never breaks Gap or unmatched-app.  
 - **Paid-by-card** receipts verify on CC Excel upload; bank CC settlement confirms that **date group** without double-counting.  
 - Each transaction has a **unique SimplifAI ref**; bank-verified rows also show **bank אסמכתא**.  
 - Missing pieces on either side (app or bank / CC) create **high-priority alerts** automatically until resolved.  
-- After a good week: Gap ≈ 0 and unmatched lists empty (or explicitly excepted).  
+- After a good week: Gap within **admin tolerance** and unmatched lists empty (or explicitly **ignored** with reason).  
 
 ---
 
@@ -628,7 +691,7 @@ Source folder: `data/ClientData/`.
 
 **CC settlement signal in this file:** rows with description **`לאומי מאסטרקרד`** (debit) — candidates for “do not double-count with credit-card merchant expenses.”
 
-**Implication for Gap / opening balance:** the file exposes (1) header snapshot **היתרה** and (2) per-row **היתרה בש״ח**. Design must pick which drives **B** (§21.7). Opening amount **O** remains required so Gap can start at 0 when history predates SimplifAI.
+**Implication for Gap / opening balance:** **B** is the **latest row’s היתרה בש״ח** (§21b Q1). Header **היתרה** may still be shown for context but does not drive Gap. Opening amount **O** remains required so Gap can start at 0 when history predates SimplifAI.
 
 ### 23.2 `credit card 1 example.xlsx` (Leumi Mastercard detail)
 
@@ -668,4 +731,205 @@ Source folder: `data/ClientData/`.
 
 ---
 
-**Next step after approval:** turn §19 phases into tickets with UX mock acceptance criteria, then implement P0 → P1.
+## 25. Implementation plan (small, testable steps)
+
+**How we work:** one step ≈ one PR. After each step you manually test with the checklist, then push. We do **not** jump ahead to CC settlement until bank verify + Gap feel right to you and your bosses.
+
+**Locked build decisions** (from §21a + §21b):
+
+| Topic | Decision |
+|-------|----------|
+| Gap | `B − (O + N)`; owner-paid out; deposits in |
+| **B** | Latest row **היתרה בש״ח** |
+| Success **N** | **Verified-only**; UI also shows all bank-scoped |
+| Ignore | Client may **manually ignore** a tx/line **with reason** |
+| Complete | **No** complete while unresolved leftovers remain |
+| Advance date | After complete; allowed when leftovers were ignored/excepted (§21b Q3) |
+| Edit O / last verification | **Anyone** (v1) |
+| `transaction_ref` | **Date-based** (`YYYYMMDD-####`), backfill |
+| Gap tolerance | **Admin-editable** `gap_tolerance_amount` |
+| Cutover Verified | **No אסמכתא required** |
+| Alert dismiss | **Only with exception reason** |
+| Bank match UX | **Matched / Verified**, never “duplicate” |
+
+---
+
+### Step 0 — Freeze shared vision (no code)
+
+**Status: done** (answers recorded in §21b, 2026-08-31).
+
+**Next:** Step 1.
+
+---
+
+### Step 1 — Schema: identity + bank-verify fields
+
+**Build**
+
+- Add `transaction_ref` (unique, **date-based** `YYYYMMDD-####`) on deposits + expenses; generate on create; backfill migration.  
+- Add bank-verify fields (do **not** reuse `Expense.reconciled`): e.g. `bank_verified_at`, `bank_asmachta` (nullable), exclude flags as needed.  
+- Add company-level `opening_balance`, `opening_balance_as_of`, `last_verification_date`, and **`gap_tolerance_amount`**.
+
+**You test**
+
+1. Migrate local DB; app still boots.  
+2. Create Add expense / Add deposit → each has a visible **Ref**.  
+3. Existing rows have refs after backfill (spot-check Transactions).  
+4. Company float / Dashboard still behave as before (no Gap UI yet).
+
+**Push when:** refs show in API + Transactions table; no regressions on float.
+
+---
+
+### Step 2 — Opening balance + last verification date (Dashboard)
+
+**Build**
+
+- API to get/set opening bank amount + as-of date + last verification date.  
+- Dashboard card: **“Bank verified through …”** + opening amount (admin/edit for now).  
+- Simple **go-live cutover** action (or scripted admin endpoint): set O + D₀, mark all txs with `transaction_date ≤ D₀` as bank-verified (baseline), set last verification = D₀.  
+  - For baseline, `bank_asmachta` may be null (“cutover verified”) — product note in UI.
+
+**You test**
+
+1. Set opening balance + D₀.  
+2. Run cutover → Dashboard shows last verification = D₀.  
+3. Old txs ≤ D₀ show Verified; a new expense after D₀ shows Unverified.  
+4. Company float still separate from “Bank verified through”.
+
+**Push when:** cutover is repeatable on a fresh DB / demo data without breaking Transactions.
+
+---
+
+### Step 3 — Bank-scoped Gap (read-only)
+
+**Build**
+
+- Service: compute **N** (bank-scoped net after D₀), parse **B** from a bank Excel upload **without** changing match behavior yet (or paste B manually in UI for this step).  
+- Show **Gap = B − (O + N)** on Dashboard or a thin “Bank reconcile” panel.  
+- Confirm owner-paid (and existing float exclusions) are **out** of **N**.
+
+**You test**
+
+1. With known O and a sample bank file, Gap number is explainable on paper.  
+2. Toggle/create an owner-paid expense → Gap **does not** move.  
+3. Add a company expense / deposit → Gap moves as expected.  
+4. Labeling never confuses Gap with company-float Balance.
+
+**Push when:** you trust the Gap number with `Bank Account example.xlsx` + your opening balance.
+
+---
+
+### Step 4 — Bank upload = match / verify (core loop)
+
+**Build**
+
+- Reuse parse + duplicate heuristics; change product meaning: high-confidence duplicate → **proposed Match** (not “ignore”).  
+- Reconcile session UI: Matched / Unmatched bank / Unmatched app / Gap.  
+- Confirm match → set Verified + store **bank אסמכתא** (composite fingerprint for match identity).  
+- Unmatched bank → Add missing (creates tx + Verified + אסמכתא) or **Ignore with reason**.  
+- Unmatched app → fix or **Ignore with reason**.  
+- Skip owner-paid from unmatched-app.  
+- Deposits match credits (בזכות).  
+- Show verified net + all-scoped net; **B** from latest היתרה בש״ח; Gap vs **admin tolerance**.  
+- **Complete** only when nothing unresolved remains → advance `last_verification_date`.
+
+**You test (happy path)**
+
+1. Enter a few receipts that exist in the sample bank file.  
+2. Upload bank Excel → those rows appear under Matched (not as errors).  
+3. Confirm → Verified + אסמכתא on the tx; Ref unchanged.  
+4. Gap → ~0; Complete → Dashboard date advances.  
+5. Re-upload same file → no duplicate expense rows created for already-verified matches.
+
+**You test (unhappy path)**
+
+6. Leave one unmatched bank line **without** ignore → cannot complete.  
+7. Ignore that line with a reason → can complete if Gap within tolerance; date may advance.  
+8. Unmatched app (company expense not in file) stays visible until matched or ignored.
+
+**Push when:** weekly “verification → verification” works with sample data and feels right in a boss demo.
+
+---
+
+### Step 5 — High-priority reconcile alerts
+
+**Build**
+
+- Auto-create error alerts for unmatched bank, unmatched app (bank-scoped), Gap ≠ 0.  
+- Deep-link to the reconcile session.  
+- Clear when fixed.
+
+**You test**
+
+1. Incomplete session → Alerts badge shows errors.  
+2. Fix matches / Gap → alerts clear.  
+3. Owner-paid never generates “not in bank”.
+
+**Push when:** alerts are noisy enough to notice, not spammy on every partial click.
+
+---
+
+### Step 6 — Paid-by-card entry + CC Excel verify
+
+**Build**
+
+- Clear **paid by card** on Add expense (use / align `payment_method=credit_card`).  
+- CC-pending status; bank reconcile ignores these as individual bank debits.  
+- CC upload path: **match** existing paid-by-card rows first (same “match = success” mindset); stop default mass create-when-duplicate.  
+- Mark **CC-verified**.
+
+**You test**
+
+1. Add two card receipts → CC-pending; Gap/bank unmatched unchanged.  
+2. Upload `credit card 1 example.xlsx` → matches → CC-verified.  
+3. Unmatched CC lines still visible.  
+4. Re-upload → no duplicate expenses for matched merchants.
+
+**Push when:** card receipts verify against CC file without polluting bank Gap.
+
+---
+
+### Step 7 — Bank CC settlement confirms date group
+
+**Build**
+
+- Detect settlement lines (e.g. `לאומי מאסטרקרד`).  
+- Link settlement → group of CC-verified txs in the billing window.  
+- Bank Gap: settlement is cash event; merchant CC amounts not also in **N**.  
+- Optional: store settlement אסמכתא on the group.
+
+**You test**
+
+1. CC-verified merchants for a period; bank file with Mastercard debit.  
+2. Settlement matches group; Gap still closes.  
+3. Merchant amounts + settlement do not double-count in **N**.
+
+**Push when:** full Zoom CC story works end-to-end on sample files.
+
+---
+
+### Step 8 — Polish (only after Steps 4–7 feel solid)
+
+- Auto-confirm very high-confidence matches.  
+- Exception reasons + complete-with-exceptions policy.  
+- Search by Ref / אסמכתא; filters.  
+- Split one bank line → many txs (if still needed).
+
+---
+
+### Demo / git cadence (suggested)
+
+| After step | Good demo for bosses |
+|------------|----------------------|
+| 1 | “Every row has our Ref” |
+| 2 | “Verified through date on Dashboard + cutover” |
+| 3 | “Gap number we trust” |
+| **4** | **Main vision: bank Excel verifies receipts** |
+| 5 | “Leftovers chase you via Alerts” |
+| 6–7 | “Cards don’t break the bank story” |
+
+**Start here:** Step 1 (Step 0 complete).
+
+**Out of scope until later steps:** multi-bank, OCR perfection, replacing management-ledger import, auto-pay vendors.
+

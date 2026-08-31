@@ -82,6 +82,10 @@ class DepositRead(BaseModel):
     balance_after: Decimal | None = None
     needs_review: bool = False
     review_reasons: str | None = None
+    transaction_ref: str | None = None
+    bank_verified_at: datetime | None = None
+    bank_asmachta: str | None = None
+    bank_reconcile_exclude: bool = False
 
 
 class PropertyRead(BaseModel):
@@ -320,6 +324,10 @@ class TransactionRead(BaseModel):
     paid_by_company: bool | None = None
     ledger_column: str | None = None
     from_bank_statement: bool = False
+    transaction_ref: str | None = None
+    bank_verified_at: datetime | None = None
+    bank_asmachta: str | None = None
+    bank_reconcile_exclude: bool | None = None
 
 
 class ExpenseRead(BaseModel):
@@ -350,6 +358,10 @@ class ExpenseRead(BaseModel):
     ledger_column: str | None = None
     needs_review: bool = False
     review_reasons: str | None = None
+    transaction_ref: str | None = None
+    bank_verified_at: datetime | None = None
+    bank_asmachta: str | None = None
+    bank_reconcile_exclude: bool = False
 
 
 class ExpenseCreate(BaseModel):

@@ -764,6 +764,8 @@ Source folder: `data/ClientData/`.
 
 ### Step 1 — Schema: identity + bank-verify fields
 
+**Status: implemented (pending your manual test + push)**
+
 **Build**
 
 - Add `transaction_ref` (unique, **date-based** `YYYYMMDD-####`) on deposits + expenses; generate on create; backfill migration.  

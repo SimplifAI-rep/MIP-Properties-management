@@ -194,6 +194,9 @@ export function TransactionTableHeader({ showActions = true }: { showActions?: b
     <thead className="table-head">
       <tr>
         <th className="px-2 py-3 font-medium">
+          <Tooltip content="SimplifAI unique transaction id (date-based).">Ref</Tooltip>
+        </th>
+        <th className="px-2 py-3 font-medium">
           <Tooltip content="Deposit = Inflow — Expense = Amount (Excel money columns).">
             Type
           </Tooltip>
@@ -236,17 +239,18 @@ export function TransactionTableHeader({ showActions = true }: { showActions?: b
 export function TransactionTableColgroup({ showActions = true }: { showActions?: boolean }) {
   return (
     <colgroup>
-      <col className="w-[11%]" />
-      <col className="w-[6%]" />
-      <col className="w-[7%]" />
       <col className="w-[8%]" />
       <col className="w-[10%]" />
-      <col className="w-[8%]" />
-      <col className="w-[8%]" />
-      <col className="w-[8%]" />
+      <col className="w-[5%]" />
+      <col className="w-[7%]" />
+      <col className="w-[7%]" />
       <col className="w-[9%]" />
+      <col className="w-[7%]" />
+      <col className="w-[7%]" />
+      <col className="w-[7%]" />
       <col className="w-[8%]" />
       <col className="w-[7%]" />
+      <col className="w-[6%]" />
       <col className="w-[5%]" />
       {showActions ? <col className="w-[5%]" /> : null}
     </colgroup>
@@ -266,6 +270,12 @@ export function TransactionDisplayCells({
 
   return (
     <>
+      <td
+        className="px-2 py-3 font-mono text-xs tabular-nums truncate"
+        title={row.transaction_ref ?? undefined}
+      >
+        {row.transaction_ref || '—'}
+      </td>
       <td className="px-2 py-3">
         <TransactionTypeBadges row={row} reviewMarker={marker} />
       </td>

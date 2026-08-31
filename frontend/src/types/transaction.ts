@@ -12,6 +12,11 @@ export interface UnifiedTransaction {
   owner_name: string;
   amount: string;
   currency: string;
+  /** SimplifAI unique readable id (date-based), e.g. 20260708-0042 */
+  transaction_ref?: string | null;
+  bank_verified_at?: string | null;
+  bank_asmachta?: string | null;
+  bank_reconcile_exclude?: boolean;
   /** Excel "Section" (expense category / deposit account cue). */
   section: string;
   /** Excel "Notes". */

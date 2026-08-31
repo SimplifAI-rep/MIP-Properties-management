@@ -91,6 +91,8 @@ def test_create_manual_expense(client):
     assert body["category"] == "maintenance"
     assert body["source"] == "manual_owner"
     assert body["property_name"] == "Rothschild 12"
+    assert body.get("transaction_ref")
+    assert body["transaction_ref"].startswith("20260310-")
 
 
 def test_create_expense_allows_free_text_category(client):

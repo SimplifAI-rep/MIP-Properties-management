@@ -53,6 +53,10 @@ def deposit_dict_to_transaction(item: dict[str, Any]) -> dict[str, Any]:
         paid_by_company=None,
         ledger_column=None,
         from_bank_statement=source == "bank_statement",
+        transaction_ref=item.get("transaction_ref"),
+        bank_verified_at=item.get("bank_verified_at"),
+        bank_asmachta=item.get("bank_asmachta"),
+        bank_reconcile_exclude=bool(item.get("bank_reconcile_exclude")),
     ).model_dump(mode="json")
 
 
@@ -85,6 +89,10 @@ def expense_dict_to_transaction(item: dict[str, Any]) -> dict[str, Any]:
         paid_by_company=bool(item.get("paid_by_company")),
         ledger_column=item.get("ledger_column"),
         from_bank_statement=source == "bank_statement",
+        transaction_ref=item.get("transaction_ref"),
+        bank_verified_at=item.get("bank_verified_at"),
+        bank_asmachta=item.get("bank_asmachta"),
+        bank_reconcile_exclude=bool(item.get("bank_reconcile_exclude")),
     ).model_dump(mode="json")
 
 

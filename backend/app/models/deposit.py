@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import uuid
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy import (
     Boolean,
     Date,
+    DateTime,
     ForeignKey,
     Index,
     Numeric,
@@ -24,6 +25,7 @@ class Deposit(Base, TimestampMixin):
     __tablename__ = "deposits"
     __table_args__ = (
         UniqueConstraint("import_key", name="uq_deposits_import_key"),
+        UniqueConstraint("transaction_ref", name="uq_deposits_transaction_ref"),
         Index("ix_deposits_property_date", "property_id", "transaction_date"),
         Index("ix_deposits_date", "transaction_date"),
         Index("ix_deposits_source_file", "source_file"),
@@ -34,6 +36,7 @@ class Deposit(Base, TimestampMixin):
             "is_rental_income",
             "transaction_date",
         ),
+        Index("ix_deposits_transaction_ref", "transaction_ref"),
     )
 
     id: Mapped[uuid.UUID] = uuid_pk()
@@ -65,6 +68,14 @@ class Deposit(Base, TimestampMixin):
     # Incomplete Excel import (missing date and/or money) awaiting user fix
     needs_review: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     review_reasons: Mapped[str | None] = mapped_column(String(255))
+    # SimplifAI unique readable id (date-based), e.g. 20260708-0042
+    transaction_ref: Mapped[str | None] = mapped_column(String(40))
+    # Bank reconcile (separate from any ledger concepts)
+    bank_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    bank_asmachta: Mapped[str | None] = mapped_column(String(100))
+    bank_reconcile_exclude: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
 
     bank_account: Mapped["BankAccount | None"] = relationship(back_populates="deposits")
     property: Mapped["Property"] = relationship(back_populates="deposits")

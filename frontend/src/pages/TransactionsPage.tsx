@@ -1039,6 +1039,7 @@ export function TransactionsPage() {
             onClick={() =>
               downloadCsv(
                 items.map((row) => ({
+                  Ref: row.transaction_ref ?? '',
                   'Prop ID': row.client_prop_id,
                   Date: row.transaction_date,
                   Section: row.section,

@@ -1447,6 +1447,28 @@ export function TransactionsPage() {
                 ))}
               </select>
             </label>
+            <label className="text-sm flex items-end gap-2 pb-2">
+              <input
+                type="checkbox"
+                checked={form.payment_method === 'credit_card'}
+                onChange={(event) =>
+                  setForm((current) => ({
+                    ...current,
+                    payment_method: event.target.checked
+                      ? 'credit_card'
+                      : current.payment_method === 'credit_card'
+                        ? 'company_account'
+                        : current.payment_method,
+                    source: event.target.checked ? 'credit_card' : current.source,
+                  }))
+                }
+              />
+              <span className="label-text mb-0">
+                <Tooltip content="Paid on the company credit card — awaits CC Excel verify (excluded from bank Gap as a merchant debit).">
+                  Paid by card
+                </Tooltip>
+              </span>
+            </label>
             <label className="text-sm">
               <span className="label-text">
                 <Tooltip content="How this expense was recorded (e.g. standing order).">

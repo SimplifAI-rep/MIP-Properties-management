@@ -114,5 +114,12 @@ class Expense(Base, TimestampMixin):
     bank_reconcile_exclude: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False
     )
+    # Credit-card reconcile (Stage A — merchant verify against CC Excel)
+    cc_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Stage C — bank settlement confirmed this merchant as part of a group
+    cc_bank_confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    cc_settlement_group_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("cc_settlement_groups.id"), nullable=True
+    )
 
     property: Mapped["Property"] = relationship(back_populates="expenses")

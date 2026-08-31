@@ -333,7 +333,12 @@ def _ensure_sqlite_bank_reconcile_columns() -> None:
         "bank_asmachta": "VARCHAR(100)",
         "bank_reconcile_exclude": "BOOLEAN NOT NULL DEFAULT 0",
     }
-    expense_cols = dict(deposit_cols)
+    expense_cols = {
+        **deposit_cols,
+        "cc_verified_at": "DATETIME",
+        "cc_bank_confirmed_at": "DATETIME",
+        "cc_settlement_group_id": "CHAR(36)",
+    }
 
     with engine.begin() as conn:
         for table, cols in (("deposits", deposit_cols), ("expenses", expense_cols)):

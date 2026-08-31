@@ -362,6 +362,9 @@ class ExpenseRead(BaseModel):
     bank_verified_at: datetime | None = None
     bank_asmachta: str | None = None
     bank_reconcile_exclude: bool = False
+    cc_verified_at: datetime | None = None
+    cc_bank_confirmed_at: datetime | None = None
+    cc_settlement_group_id: UUID | None = None
 
 
 class ExpenseCreate(BaseModel):
@@ -489,6 +492,11 @@ class AlertRead(BaseModel):
         "duplicate_deposit",
         "incomplete_import",
         "low_balance",
+        "bank_unmatched",
+        "app_unmatched",
+        "bank_gap",
+        "cc_unmatched",
+        "cc_app_unmatched",
     ]
     severity: Literal["error", "warning", "info"]
     title: str
@@ -509,6 +517,12 @@ class AlertRead(BaseModel):
     created_at: datetime | None = None
     gap: DepositGap | None = None
     drafts: list[TransactionDraft] = Field(default_factory=list)
+    reconcile_session_id: UUID | None = None
+    link_path: str | None = None
+
+
+class AlertDismissRequest(BaseModel):
+    reason: str | None = None
 
 
 class AlertListResponse(BaseModel):
@@ -574,3 +588,121 @@ class AlertRuleUpdate(BaseModel):
     threshold_amount: Decimal | None = None
     currency: str | None = None
 
+
+class CompanyBankSettingsRead(BaseModel):
+    opening_balance: Decimal | None = None
+    opening_balance_as_of: date | None = None
+    last_verification_date: date | None = None
+    gap_tolerance_amount: Decimal = Decimal("0.01")
+    unverified_count: int = 0
+
+
+class CompanyBankSettingsUpdate(BaseModel):
+    opening_balance: Decimal | None = None
+    opening_balance_as_of: date | None = None
+    last_verification_date: date | None = None
+    gap_tolerance_amount: Decimal | None = Field(default=None, ge=0)
+    clear_opening_balance: bool = False
+    clear_opening_balance_as_of: bool = False
+    clear_last_verification_date: bool = False
+
+
+class BankCutoverRequest(BaseModel):
+    opening_balance: Decimal
+    as_of_date: date
+    gap_tolerance_amount: Decimal | None = Field(default=None, ge=0)
+
+
+class BankCutoverResponse(BaseModel):
+    settings: CompanyBankSettingsRead
+    deposits_marked: int
+    expenses_marked: int
+
+
+class BankBalanceParseResponse(BaseModel):
+    bank_balance: Decimal
+    statement_start_date: date | None = None
+    statement_end_date: date | None = None
+    movement_row_count: int = 0
+
+
+class BankGapResponse(BaseModel):
+    opening_balance: Decimal | None = None
+    opening_balance_as_of: date | None = None
+    last_verification_date: date | None = None
+    gap_tolerance_amount: Decimal = Decimal("0.01")
+    after_date: date | None = None
+    date_to: date | None = None
+    bank_balance: Decimal | None = None
+    all_scoped_net: Decimal
+    verified_net: Decimal
+    all_scoped_deposits: Decimal
+    all_scoped_expenses: Decimal
+    gap_all_scoped: Decimal | None = None
+    gap_verified: Decimal | None = None
+    within_tolerance_verified: bool | None = None
+
+
+class BankReconcileAction(BaseModel):
+    action: Literal[
+        "confirm_match",
+        "confirm_settlement",
+        "ignore_bank",
+        "ignore_app",
+        "add_from_bank",
+    ]
+    fingerprint: str | None = None
+    kind: Literal["deposit", "expense"] | None = None
+    tx_id: UUID | None = None
+    reason: str | None = None
+    property_id: UUID | None = None
+    member_ids: list[UUID] | None = None
+
+
+class BankReconcileActionsRequest(BaseModel):
+    actions: list[BankReconcileAction]
+
+
+class BankReconcileSessionResponse(BaseModel):
+    id: str
+    status: str
+    filename: str | None = None
+    bank_balance: str | None = None
+    statement_start_date: str | None = None
+    statement_end_date: str | None = None
+    opening_balance: str | None = None
+    after_date: str | None = None
+    gap_tolerance_amount: str
+    verified_net: str
+    all_scoped_net: str
+    gap_verified: str | None = None
+    within_tolerance_verified: bool | None = None
+    counts: dict
+    can_complete: bool
+    lines: list[dict]
+    unmatched_app: list[dict]
+
+
+class CcReconcileAction(BaseModel):
+    action: Literal["confirm_match", "ignore_cc", "ignore_app", "add_from_cc"]
+    fingerprint: str | None = None
+    tx_id: UUID | None = None
+    reason: str | None = None
+    property_id: UUID | None = None
+
+
+class CcReconcileActionsRequest(BaseModel):
+    actions: list[CcReconcileAction]
+
+
+class CcReconcileSessionResponse(BaseModel):
+    id: str
+    status: str
+    filename: str | None = None
+    card_last4: str | None = None
+    statement_start_date: str | None = None
+    statement_end_date: str | None = None
+    counts: dict
+    can_complete: bool
+    lines: list[dict]
+    unmatched_app: list[dict]

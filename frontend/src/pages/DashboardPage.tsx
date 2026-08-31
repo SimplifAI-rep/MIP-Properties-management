@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
 import type { DepositGap, Property } from '../types';
+import { BankVerificationSummaryCard } from '../components/BankVerificationSummaryCard';
 import { TransactionTable } from '../components/TransactionTable';
 import {
   Card,
@@ -435,6 +436,8 @@ export function DashboardPage() {
           Ask AI
         </Link>
       </section>
+
+      <BankVerificationSummaryCard />
 
       {/* Financial snapshot */}
       <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">

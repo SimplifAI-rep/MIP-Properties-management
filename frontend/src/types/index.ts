@@ -235,6 +235,9 @@ export interface Expense {
   bank_verified_at?: string | null;
   bank_asmachta?: string | null;
   bank_reconcile_exclude?: boolean;
+  cc_verified_at?: string | null;
+  cc_bank_confirmed_at?: string | null;
+  cc_settlement_group_id?: string | null;
 }
 
 export interface ExpenseListResponse {
@@ -470,7 +473,12 @@ export interface AlertItem {
     | 'upload_pending'
     | 'duplicate_deposit'
     | 'incomplete_import'
-    | 'low_balance';
+    | 'low_balance'
+    | 'bank_unmatched'
+    | 'app_unmatched'
+    | 'bank_gap'
+    | 'cc_unmatched'
+    | 'cc_app_unmatched';
   severity: 'error' | 'warning' | 'info';
   title: string;
   message: string;
@@ -490,6 +498,8 @@ export interface AlertItem {
   created_at?: string | null;
   gap?: DepositGap | null;
   drafts: TransactionDraft[];
+  reconcile_session_id?: string | null;
+  link_path?: string | null;
 }
 
 export interface AlertListResponse {
@@ -564,3 +574,161 @@ export interface FixIncompleteResponse {
 
 export type { TransactionKind, UnifiedTransaction } from './transaction';
 
+
+export interface CompanyBankSettings {
+  opening_balance: string | null;
+  opening_balance_as_of: string | null;
+  last_verification_date: string | null;
+  gap_tolerance_amount: string;
+  unverified_count: number;
+}
+
+export interface CompanyBankSettingsUpdate {
+  opening_balance?: string | null;
+  opening_balance_as_of?: string | null;
+  last_verification_date?: string | null;
+  gap_tolerance_amount?: string | null;
+  clear_opening_balance?: boolean;
+  clear_opening_balance_as_of?: boolean;
+  clear_last_verification_date?: boolean;
+}
+
+export interface BankCutoverRequest {
+  opening_balance: string;
+  as_of_date: string;
+  gap_tolerance_amount?: string | null;
+}
+
+export interface BankCutoverResponse {
+  settings: CompanyBankSettings;
+  deposits_marked: number;
+  expenses_marked: number;
+}
+
+export interface BankBalanceParseResponse {
+  bank_balance: string;
+  statement_start_date: string | null;
+  statement_end_date: string | null;
+  movement_row_count: number;
+}
+
+export interface BankGapResponse {
+  opening_balance: string | null;
+  opening_balance_as_of: string | null;
+  last_verification_date: string | null;
+  gap_tolerance_amount: string;
+  after_date: string | null;
+  date_to: string | null;
+  bank_balance: string | null;
+  all_scoped_net: string;
+  verified_net: string;
+  all_scoped_deposits: string;
+  all_scoped_expenses: string;
+  gap_all_scoped: string | null;
+  gap_verified: string | null;
+  within_tolerance_verified: boolean | null;
+}
+
+export interface BankReconcileAction {
+  action:
+    | 'confirm_match'
+    | 'confirm_settlement'
+    | 'ignore_bank'
+    | 'ignore_app'
+    | 'add_from_bank';
+  fingerprint?: string;
+  kind?: 'deposit' | 'expense';
+  tx_id?: string;
+  reason?: string;
+  property_id?: string;
+  member_ids?: string[];
+}
+
+export interface BankReconcileLine {
+  fingerprint: string;
+  row_number: number;
+  transaction_date: string | null;
+  side: 'debit' | 'credit';
+  amount: string;
+  asmachta: string | null;
+  description: string | null;
+  status: string;
+  proposed_kind?: string | null;
+  proposed_tx_id?: string | null;
+  proposed_tx_ref?: string | null;
+  proposed_summary?: string | null;
+  proposed_member_ids?: string[] | null;
+  proposed_group_total?: string | null;
+  proposed_window_start?: string | null;
+  proposed_window_end?: string | null;
+  settlement_group_id?: string | null;
+  match_confidence?: string | null;
+  ignore_reason?: string | null;
+}
+
+export interface BankReconcileAppRow {
+  kind: 'deposit' | 'expense';
+  id: string;
+  transaction_ref?: string | null;
+  transaction_date: string | null;
+  amount: string;
+  description?: string | null;
+  status: string;
+  ignore_reason?: string | null;
+}
+
+export interface BankReconcileSession {
+  id: string;
+  status: string;
+  filename: string | null;
+  bank_balance: string | null;
+  statement_start_date: string | null;
+  statement_end_date: string | null;
+  opening_balance: string | null;
+  after_date: string | null;
+  gap_tolerance_amount: string;
+  verified_net: string;
+  all_scoped_net: string;
+  gap_verified: string | null;
+  within_tolerance_verified: boolean | null;
+  counts: Record<string, number>;
+  can_complete: boolean;
+  lines: BankReconcileLine[];
+  unmatched_app: BankReconcileAppRow[];
+}
+
+export interface CcReconcileAction {
+  action: 'confirm_match' | 'ignore_cc' | 'ignore_app' | 'add_from_cc';
+  fingerprint?: string;
+  tx_id?: string;
+  reason?: string;
+  property_id?: string;
+}
+
+export interface CcReconcileLine {
+  fingerprint: string;
+  row_number?: number;
+  transaction_date: string | null;
+  amount: string;
+  merchant?: string | null;
+  details?: string | null;
+  status: string;
+  proposed_tx_id?: string | null;
+  proposed_tx_ref?: string | null;
+  proposed_summary?: string | null;
+  match_confidence?: string | null;
+  ignore_reason?: string | null;
+}
+
+export interface CcReconcileSession {
+  id: string;
+  status: string;
+  filename: string | null;
+  card_last4: string | null;
+  statement_start_date: string | null;
+  statement_end_date: string | null;
+  counts: Record<string, number>;
+  can_complete: boolean;
+  lines: CcReconcileLine[];
+  unmatched_app: BankReconcileAppRow[];
+}

@@ -14,6 +14,7 @@ const navItems = [
   { to: '/properties', label: 'Properties' },
   { to: '/owners', label: 'Owners' },
   { to: '/transactions', label: 'Transactions' },
+  { to: '/verification', label: 'Verification' },
   { to: '/alerts', label: 'Alerts', showCount: true },
   { to: '/reports', label: 'Reports' },
   { to: '/data-import', label: 'Data import', adminOnly: true },

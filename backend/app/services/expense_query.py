@@ -67,6 +67,9 @@ def expense_to_read(
         bank_reconcile_exclude=bool(
             getattr(expense, "bank_reconcile_exclude", False)
         ),
+        cc_verified_at=getattr(expense, "cc_verified_at", None),
+        cc_bank_confirmed_at=getattr(expense, "cc_bank_confirmed_at", None),
+        cc_settlement_group_id=getattr(expense, "cc_settlement_group_id", None),
     )
 
 

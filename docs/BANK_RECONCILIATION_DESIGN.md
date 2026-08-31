@@ -112,7 +112,7 @@ She always knows: “Books are verified through **this date**; everything after 
 9. **Owner-paid** (and similar non-bank pays) are **excluded from bank totals** / bank match scope.  
 10. **Deposits** are always part of bank reconciliation (must match bank credits); exclusions + CC rules keep Gap consistent when some app rows never appear on the bank file.  
 11. Unmatched bank rows and unmatched app rows remain visible until resolved — and raise **high-priority alerts** automatically.  
-12. Keep manual receipt entry as the daily habit; bank (and CC) work is periodic.
+12. Keep manual receipt entry as the daily habit on **Transactions**; bank (and CC) work is periodic on the **Verification** tab.
 
 ### Non-goals (for this redesign phase)
 
@@ -486,43 +486,35 @@ When a bank statement is uploaded (or a reconcile session is saved/finished with
 ## 17. Suggested UI surfaces
 
 1. **Transactions**  
-   - Column: **Ref** (`transaction_ref` — our unique id)  
-   - Verified / Unverified / Excluded / CC-status badges + filters  
-   - Entry flags: **owner-paid**, **paid by card** (clear at Add expense)  
+   - Daily habit: Add expense / Add deposit / Import receipts & non-bank files  
+   - Column: **Ref**; Verified / Unverified / Excluded / CC-status badges + filters  
    - Show bank **אסמכתא** on bank-verified rows  
-   - Keep Add expense / Add deposit / Import as today for receipts & non-bank files  
+   - Does **not** host the bank reconcile workspace  
 
-2. **Bank reconcile** (new page or strong mode inside Transactions upload)  
-   - Upload bank Excel (ground truth for operating account)  
+2. **Verification** (**dedicated nav tab** — required end state)  
+   - Route e.g. `/verification` with its own top-nav label **Verification**  
+   - Opening bank amount, last verification date, gap tolerance, go-live cutover  
+   - Upload **bank Excel** (ground truth) → Matched / Unmatched / Ignore / Gap / Complete  
    - Match review for **bank-scoped** rows (deposits + company expenses)  
-   - **Ignore** action (reason required) for bank lines or app txs the client chooses to skip  
-   - CC settlement lines → confirm **CC date groups** (not 1:1 merchant match)  
+   - CC settlement lines → confirm **CC date groups**  
+   - Credit-card Excel match (section or sub-mode on the same tab)  
    - Owner-paid never appears as unmatched-app  
    - Gap = Bank balance − (Opening + bank-scoped net); show verified vs all nets  
    - **B** = latest row היתרה בש״ח; Gap within **admin tolerance**  
-   - Opening balance + last verification date (editable by anyone in v1)  
    - Complete only when nothing unresolved remains; then advance date  
+   - Alerts deep-link here  
 
-3. **Settings / admin**  
-   - **Gap tolerance** (minimum ILS amount)  
-   - Opening balance / last verification date (also reachable from Dashboard / reconcile)  
+3. **Settings / admin** (optional later)  
+   - Gap tolerance / rare ops may also live under Verification for v1  
 
-4. **Credit card reconcile** (mode or sibling flow)  
-   - Upload CC Excel  
-   - Match **paid-by-card** receipts → CC-verified  
-   - Show pending card receipts waiting for next CC file  
+4. **Dashboard**  
+   - Summary only: **Last verification date**, unverified count, open reconcile alerts / Gap hint  
+   - CTA → **Verification** tab (not a second full reconcile UI)  
 
-5. **Dashboard (v1)**  
-   - **Last verification date** (required)  
-   - Unverified / CC-pending counts since that date  
-   - Open bank-reconcile alert count / Gap hint  
-   - Show verified net vs all bank-scoped net when Gap is shown  
-
-6. **Alerts**  
-   - Auto high-priority items for unmatched bank / unmatched app / Gap ≠ 0  
-   - CC unmatched (file vs paid-by-card app)  
+5. **Alerts**  
+   - Auto high-priority items for unmatched bank / unmatched app / Gap ≠ 0 / CC unmatched  
    - Dismiss only with exception reason  
-   - Filterable; deep-link to reconcile  
+   - Deep-link to **Verification** session  
 
 ---
 
@@ -560,12 +552,12 @@ Also note: deposits already have a generic `reference` field (sometimes filled f
 
 | Phase | Scope | Outcome |
 |-------|--------|---------|
-| **P0** | Opening bank amount + **last verification date** on Dashboard; go-live cutover; **transaction_ref**; read bank balance / Gap; **bank-scoped net excludes owner-paid** | She can start production verified; Gap isn’t poisoned by owner-paid |
-| **P1** | Bank upload as match/verify; Verified badge; **attach bank אסמכתא**; unmatched lists; **deposits in bank match**; advance last verification date on clean complete | Weekly verification → verification loop works |
-| **P2** | **High-priority auto alerts** for unmatched bank / unmatched app / Gap ≠ 0 | She is pushed to fix leftovers |
-| **P3** | **Paid-by-card** entry + **CC Excel match → CC-verified**; stop blind duplicate create on CC upload | Card receipts verify against the card file |
+| **P0** | Opening bank amount + **last verification date**; go-live cutover; **transaction_ref**; **Verification nav tab** + Gap; **bank-scoped net excludes owner-paid** | She has a Verification home; Gap isn’t poisoned by owner-paid |
+| **P1** | Bank upload as match/verify **on Verification**; Verified badge; **attach bank אסמכתא**; unmatched lists; **deposits in bank match**; advance last verification date on clean complete | Weekly verification → verification loop works |
+| **P2** | **High-priority auto alerts** for unmatched bank / unmatched app / Gap ≠ 0 (deep-link Verification) | She is pushed to fix leftovers |
+| **P3** | **Paid-by-card** entry + **CC Excel match → CC-verified** on Verification; stop blind duplicate create on CC upload | Card receipts verify against the card file |
 | **P4** | Bank **CC settlement → confirm date group**; once-only Gap rule | Settlement confirms the group; no double-count |
-| **P5** | Auto-confirm high-confidence matches; polish | Less clicking |
+| **P5** | Auto-confirm high-confidence matches; polish Verification IA | Less clicking |
 | **P6** | Split one bank line → many txs; richer CC edge cases | Edge cases |
 
 ---
@@ -596,7 +588,8 @@ These are **statements** we will build against:
 7. **Every** deposit/expense gets a unique SimplifAI **`transaction_ref`**; bank-verified rows also store **`bank_asmachta`**. Match identity uses a **composite fingerprint** when bank אסמכתא repeats.  
 8. Incomplete bank/CC reconcile (unmatched bank, unmatched bank-scoped app, Gap ≠ 0, unmatched CC) raises **high-priority (error) alerts**.  
 9. **v1 account scope:** company **operating account** reconcile (not multi-bank treasury).  
-10. Go-live cutover sets **O** + **D₀**, marks existing txs ≤ D₀ as baseline Verified, and sets **last verification date = D₀**.
+10. Go-live cutover sets **O** + **D₀**, marks existing txs ≤ D₀ as baseline Verified, and sets **last verification date = D₀**.  
+11. **Verification is its own nav tab** when the feature is complete — the reconcile workspace (settings, bank/CC upload, match, Gap) lives there; Dashboard only summarizes and links in.
 
 ### 21b. Decisions locked (answered 2026-08-31)
 
@@ -727,7 +720,9 @@ Source folder: `data/ClientData/`.
 - Company float rules: `backend/app/services/transaction_filters.py`, `running_balance.py`  
 - Transactions UI: `frontend/src/pages/TransactionsPage.tsx`, `TransactionUploadPanel.tsx`  
 - Ledger `Expense.reconciled` only (not bank-verified)  
-- Sample files: `data/ClientData/Bank Account example.xlsx`, `data/ClientData/credit card 1 example.xlsx`
+- Sample files: `data/ClientData/Bank Account example.xlsx`, `data/ClientData/credit card 1 example.xlsx`  
+- Verification UI: `frontend/src/pages/VerificationPage.tsx`, `BankVerificationPanel.tsx`, `BankVerificationSummaryCard.tsx`  
+- Gap math: `backend/app/services/bank_reconcile_gap.py`, `GET/POST /api/v1/bank-settings/gap|parse-bank-balance`
 
 ---
 
@@ -751,6 +746,28 @@ Source folder: `data/ClientData/`.
 | Cutover Verified | **No אסמכתא required** |
 | Alert dismiss | **Only with exception reason** |
 | Bank match UX | **Matched / Verified**, never “duplicate” |
+| **Verification IA** | End state: **Verification is its own app nav tab** (not buried in Transactions upload or only on Dashboard). Dashboard keeps a short summary + deep link. |
+
+---
+
+### Navigation end state (locked)
+
+When bank reconcile is complete, primary chrome includes a dedicated tab, e.g.:
+
+`Dashboard · … · Transactions · **Verification** · Alerts · …`
+
+**Verification tab owns:**
+
+- Opening bank amount, last verification date, gap tolerance, go-live cutover  
+- Bank Excel upload → match / verify / ignore / Gap / complete session  
+- Credit-card Excel verify + settlement group confirm (same tab, clear sections or sub-modes)  
+- Session leftovers that alerts deep-link into  
+
+**Dashboard owns (summary only):** “Bank verified through …”, unverified count, link **Open Verification**.
+
+**Transactions owns:** daily receipt entry; Ref + Verified badges; not the reconcile workspace.
+
+**Interim (Step 2):** bank settings live on Dashboard until the Verification tab is introduced in **Step 3**.
 
 ---
 
@@ -783,13 +800,15 @@ Source folder: `data/ClientData/`.
 
 ---
 
-### Step 2 — Opening balance + last verification date (Dashboard)
+### Step 2 — Opening balance + last verification date (Dashboard interim)
+
+**Status: implemented (pending your manual test + push)**
 
 **Build**
 
 - API to get/set opening bank amount + as-of date + last verification date.  
-- Dashboard card: **“Bank verified through …”** + opening amount (admin/edit for now).  
-- Simple **go-live cutover** action (or scripted admin endpoint): set O + D₀, mark all txs with `transaction_date ≤ D₀` as bank-verified (baseline), set last verification = D₀.  
+- **Interim UI on Dashboard:** “Bank verified through …” + opening amount + cutover (until Verification tab exists in Step 3).  
+- Simple **go-live cutover** action: set O + D₀, mark all txs with `transaction_date ≤ D₀` as bank-verified (baseline), set last verification = D₀.  
   - For baseline, `bank_asmachta` may be null (“cutover verified”) — product note in UI.
 
 **You test**
@@ -801,32 +820,43 @@ Source folder: `data/ClientData/`.
 
 **Push when:** cutover is repeatable on a fresh DB / demo data without breaking Transactions.
 
+**Follow-up in Step 3:** move this UI onto the **Verification** tab; leave only a summary card on Dashboard.
+
 ---
 
-### Step 3 — Bank-scoped Gap (read-only)
+### Step 3 — Verification tab + bank-scoped Gap (read-only)
+
+**Status: implemented (pending your manual test + push)**
 
 **Build**
 
-- Service: compute **N** (bank-scoped net after D₀), parse **B** from a bank Excel upload **without** changing match behavior yet (or paste B manually in UI for this step).  
-- Show **Gap = B − (O + N)** on Dashboard or a thin “Bank reconcile” panel.  
+- Add top-nav tab **Verification** (`/verification`) — primary home for bank/CC reconcile work (§17).  
+- Move opening balance / last verification / gap tolerance / cutover from Dashboard into this tab.  
+- Dashboard: keep a compact summary (“Bank verified through …”, unverified count) + link to Verification.  
+- Service: compute **N** (bank-scoped net after D₀), parse **B** from a bank Excel upload **without** changing match behavior yet (or paste B manually).  
+- Show **Gap = B − (O + N)** on the **Verification** tab.  
 - Confirm owner-paid (and existing float exclusions) are **out** of **N**.
 
 **You test**
 
-1. With known O and a sample bank file, Gap number is explainable on paper.  
-2. Toggle/create an owner-paid expense → Gap **does not** move.  
-3. Add a company expense / deposit → Gap moves as expected.  
-4. Labeling never confuses Gap with company-float Balance.
+1. Nav shows **Verification**; settings/cutover work there (not only on Dashboard).  
+2. Dashboard summary still accurate and links to the tab.  
+3. With known O and a sample bank file, Gap number is explainable on paper.  
+4. Toggle/create an owner-paid expense → Gap **does not** move.  
+5. Add a company expense / deposit → Gap moves as expected.  
+6. Labeling never confuses Gap with company-float Balance.
 
-**Push when:** you trust the Gap number with `Bank Account example.xlsx` + your opening balance.
+**Push when:** Verification tab is the place you open for bank work; Gap number trusted with sample file.
 
 ---
 
 ### Step 4 — Bank upload = match / verify (core loop)
 
+**Status: implemented (pending your manual test + push)**
+
 **Build**
 
-- Reuse parse + duplicate heuristics; change product meaning: high-confidence duplicate → **proposed Match** (not “ignore”).  
+- On the **Verification** tab: reuse parse + duplicate heuristics; high-confidence soft match → **proposed Match** (not “duplicate” / not default Ignore).  
 - Reconcile session UI: Matched / Unmatched bank / Unmatched app / Gap.  
 - Confirm match → set Verified + store **bank אסמכתא** (composite fingerprint for match identity).  
 - Unmatched bank → Add missing (creates tx + Verified + אסמכתא) or **Ignore with reason**.  
@@ -834,14 +864,15 @@ Source folder: `data/ClientData/`.
 - Skip owner-paid from unmatched-app.  
 - Deposits match credits (בזכות).  
 - Show verified net + all-scoped net; **B** from latest היתרה בש״ח; Gap vs **admin tolerance**.  
+- Gap **Net through date** defaults to the **earliest** movement date in the uploaded bank Excel.  
 - **Complete** only when nothing unresolved remains → advance `last_verification_date`.
 
 **You test (happy path)**
 
 1. Enter a few receipts that exist in the sample bank file.  
-2. Upload bank Excel → those rows appear under Matched (not as errors).  
+2. On **Verification**, upload bank Excel → those rows appear under Matched (not as errors).  
 3. Confirm → Verified + אסמכתא on the tx; Ref unchanged.  
-4. Gap → ~0; Complete → Dashboard date advances.  
+4. Gap → ~0; Complete → last verification date advances (Dashboard summary updates).  
 5. Re-upload same file → no duplicate expense rows created for already-verified matches.
 
 **You test (unhappy path)**
@@ -856,16 +887,20 @@ Source folder: `data/ClientData/`.
 
 ### Step 5 — High-priority reconcile alerts
 
+**Status: implemented (pending your manual test + push)**
+
 **Build**
 
 - Auto-create error alerts for unmatched bank, unmatched app (bank-scoped), Gap ≠ 0.  
-- Deep-link to the reconcile session.  
-- Clear when fixed.
+- Auto-create error alerts for unmatched CC charges and unmatched paid-by-card app rows.  
+- Deep-link to the **Verification** session (not Transactions upload).  
+- Clear when fixed.  
+- Dismiss requires an **exception reason** (stored on the alert action).
 
 **You test**
 
 1. Incomplete session → Alerts badge shows errors.  
-2. Fix matches / Gap → alerts clear.  
+2. Fix matches / Gap on Verification → alerts clear.  
 3. Owner-paid never generates “not in bank”.
 
 **Push when:** alerts are noisy enough to notice, not spammy on every partial click.
@@ -874,17 +909,19 @@ Source folder: `data/ClientData/`.
 
 ### Step 6 — Paid-by-card entry + CC Excel verify
 
+**Status: implemented (pending your manual test + push)**
+
 **Build**
 
 - Clear **paid by card** on Add expense (use / align `payment_method=credit_card`).  
 - CC-pending status; bank reconcile ignores these as individual bank debits.  
-- CC upload path: **match** existing paid-by-card rows first (same “match = success” mindset); stop default mass create-when-duplicate.  
+- On **Verification** tab: CC upload path **match** existing paid-by-card rows first (same “match = success” mindset); stop default mass create-when-duplicate.  
 - Mark **CC-verified**.
 
 **You test**
 
 1. Add two card receipts → CC-pending; Gap/bank unmatched unchanged.  
-2. Upload `credit card 1 example.xlsx` → matches → CC-verified.  
+2. Upload `credit card 1 example.xlsx` on Verification → matches → CC-verified.  
 3. Unmatched CC lines still visible.  
 4. Re-upload → no duplicate expenses for matched merchants.
 
@@ -894,9 +931,11 @@ Source folder: `data/ClientData/`.
 
 ### Step 7 — Bank CC settlement confirms date group
 
+**Status: implemented (pending your manual test + push)**
+
 **Build**
 
-- Detect settlement lines (e.g. `לאומי מאסטרקרד`).  
+- On **Verification** (bank session): detect settlement lines (e.g. `לאומי מאסטרקרד`).  
 - Link settlement → group of CC-verified txs in the billing window.  
 - Bank Gap: settlement is cash event; merchant CC amounts not also in **N**.  
 - Optional: store settlement אסמכתא on the group.
@@ -916,7 +955,8 @@ Source folder: `data/ClientData/`.
 - Auto-confirm very high-confidence matches.  
 - Exception reasons + complete-with-exceptions policy.  
 - Search by Ref / אסמכתא; filters.  
-- Split one bank line → many txs (if still needed).
+- Split one bank line → many txs (if still needed).  
+- Polish Verification tab IA (bank vs CC sections) once workflows are stable.
 
 ---
 
@@ -925,13 +965,14 @@ Source folder: `data/ClientData/`.
 | After step | Good demo for bosses |
 |------------|----------------------|
 | 1 | “Every row has our Ref” |
-| 2 | “Verified through date on Dashboard + cutover” |
-| 3 | “Gap number we trust” |
-| **4** | **Main vision: bank Excel verifies receipts** |
-| 5 | “Leftovers chase you via Alerts” |
+| 2 | “Verified through date + cutover” (Dashboard interim) |
+| **3** | **“Verification tab” + Gap we trust** |
+| **4** | **Main vision: bank Excel verifies receipts on Verification** |
+| 5 | “Leftovers chase you via Alerts → Verification” |
 | 6–7 | “Cards don’t break the bank story” |
 
-**Start here:** Step 1 (Step 0 complete).
+**Start here:** Step 7 manual test (Steps 1–7 implemented). Next: **Step 8 (polish)** only after 4–7 feel solid.
 
 **Out of scope until later steps:** multi-bank, OCR perfection, replacing management-ledger import, auto-pay vendors.
+
 

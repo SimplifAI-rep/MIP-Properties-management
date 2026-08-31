@@ -61,6 +61,39 @@ export function TransactionTypeBadges({
           <span className="badge-rental-income">Rental income</span>
         </Tooltip>
       ) : null}
+      {row.bank_verified_at ? (
+        <Tooltip
+          content={
+            row.bank_asmachta
+              ? `Bank verified — אסמכתא ${row.bank_asmachta}`
+              : 'Bank verified (cutover or matched; no bank אסמכתא yet).'
+          }
+        >
+          <span className="badge-bank-verified">Verified</span>
+        </Tooltip>
+      ) : row.payment_method === 'credit_card' ? (
+        row.cc_bank_confirmed_at ? (
+          <Tooltip content="Bank CC settlement confirmed this merchant in a billing group.">
+            <span className="badge-cc-bank-confirmed">CC bank-confirmed</span>
+          </Tooltip>
+        ) : row.cc_verified_at ? (
+          <Tooltip content="Matched to a credit-card statement charge.">
+            <span className="badge-cc-verified">CC-verified</span>
+          </Tooltip>
+        ) : (
+          <Tooltip content="Paid by card — awaits credit-card Excel verify (not a bank debit yet).">
+            <span className="badge-cc-pending">CC-pending</span>
+          </Tooltip>
+        )
+      ) : row.bank_reconcile_exclude || row.paid_by_owner || row.paid_by_resident ? (
+        <Tooltip content="Excluded from bank reconcile (non-bank pay path).">
+          <span className="badge-neutral">Excluded</span>
+        </Tooltip>
+      ) : (
+        <Tooltip content="Not yet verified against the bank statement.">
+          <span className="badge-bank-unverified">Unverified</span>
+        </Tooltip>
+      )}
       {row.from_bank_statement ? (
         <Tooltip content="Imported from the company bank statement.">
           <span className="badge-bank-statement">Bank statement</span>

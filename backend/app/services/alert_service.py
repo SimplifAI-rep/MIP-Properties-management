@@ -10,6 +10,8 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.models.alert_action import AlertAction
 from app.models.alert_rule import AlertRule
+from app.models.bank_reconcile_session import BankReconcileSession
+from app.models.cc_reconcile_session import CcReconcileSession
 from app.models.deposit import Deposit
 from app.models.expense import Expense
 from app.models.owner import Owner
@@ -24,9 +26,21 @@ from app.schemas import (
     FixIncompletePayload,
     TransactionDraft,
 )
+from app.services.bank_reconcile import session_summary as bank_session_summary
+from app.services.cc_reconcile import session_summary as cc_session_summary
 from app.services.deposit_query import create_deposit, find_deposit_gaps
 from app.services.document_import import DocumentImportService
 from app.services.running_balance import property_float_totals
+
+RECONCILE_ALERT_TYPES = frozenset(
+    {
+        "bank_unmatched",
+        "app_unmatched",
+        "bank_gap",
+        "cc_unmatched",
+        "cc_app_unmatched",
+    }
+)
 
 
 def _load_closed_keys(db: Session) -> set[str]:
@@ -54,6 +68,33 @@ def _low_balance_key(property_id: UUID) -> str:
     return f"low_balance:{property_id}"
 
 
+def _bank_unmatched_key(session_id: UUID) -> str:
+    return f"bank_unmatched:{session_id}"
+
+
+def _app_unmatched_key(session_id: UUID) -> str:
+    return f"app_unmatched:{session_id}"
+
+
+def _bank_gap_key(session_id: UUID) -> str:
+    return f"bank_gap:{session_id}"
+
+
+def _verification_link(session_id: UUID) -> str:
+    return f"/verification?session={session_id}"
+
+
+def _clear_alert_actions(db: Session, keys: list[str]) -> None:
+    if not keys:
+        return
+    rows = db.scalars(select(AlertAction).where(AlertAction.alert_key.in_(keys))).all()
+    if not rows:
+        return
+    for row in rows:
+        db.delete(row)
+    db.commit()
+
+
 def _clear_recovered_low_balance_dismissals(
     db: Session,
     *,
@@ -62,13 +103,206 @@ def _clear_recovered_low_balance_dismissals(
     """If balance recovered above threshold, allow the alert to fire again later."""
     if not property_ids_above:
         return
-    keys = [_low_balance_key(pid) for pid in property_ids_above]
-    rows = db.scalars(select(AlertAction).where(AlertAction.alert_key.in_(keys))).all()
-    if not rows:
-        return
-    for row in rows:
-        db.delete(row)
-    db.commit()
+    _clear_alert_actions(db, [_low_balance_key(pid) for pid in property_ids_above])
+
+
+def _append_bank_reconcile_alerts(
+    db: Session,
+    alerts: list[AlertRead],
+    closed_keys: set[str],
+) -> None:
+    """High-priority errors for open bank match sessions (aggregated, not per line)."""
+    sessions = db.scalars(
+        select(BankReconcileSession)
+        .where(BankReconcileSession.status == "in_progress")
+        .order_by(BankReconcileSession.created_at.desc())
+    ).all()
+    recovered_keys: list[str] = []
+
+    for session in sessions:
+        summary = bank_session_summary(db, session)
+        sid = session.id
+        file_label = session.filename or "bank file"
+        period = ""
+        if session.statement_start_date and session.statement_end_date:
+            period = (
+                f" ({session.statement_start_date.isoformat()} → "
+                f"{session.statement_end_date.isoformat()})"
+            )
+        link = _verification_link(sid)
+        unresolved_bank = int(summary["counts"].get("unresolved_bank") or 0)
+        unresolved_app = int(summary["counts"].get("unresolved_app") or 0)
+
+        bank_key = _bank_unmatched_key(sid)
+        if unresolved_bank > 0:
+            if bank_key not in closed_keys:
+                alerts.append(
+                    AlertRead(
+                        id=bank_key,
+                        alert_type="bank_unmatched",
+                        severity="error",
+                        title=f"Unmatched bank lines — {file_label}",
+                        message=(
+                            f"{unresolved_bank} bank line(s) still unmatched or only "
+                            f"proposed{period}. Confirm matches or ignore with a reason "
+                            "on Verification."
+                        ),
+                        reconcile_session_id=sid,
+                        link_path=link,
+                        created_at=session.created_at,
+                    )
+                )
+        else:
+            recovered_keys.append(bank_key)
+
+        app_key = _app_unmatched_key(sid)
+        if unresolved_app > 0:
+            if app_key not in closed_keys:
+                alerts.append(
+                    AlertRead(
+                        id=app_key,
+                        alert_type="app_unmatched",
+                        severity="error",
+                        title=f"Unmatched app transactions — {file_label}",
+                        message=(
+                            f"{unresolved_app} bank-scoped app transaction(s) not found "
+                            f"on the bank file{period}. Owner-paid / non-bank rows are "
+                            "excluded. Match, fix, or ignore with a reason on Verification."
+                        ),
+                        reconcile_session_id=sid,
+                        link_path=link,
+                        created_at=session.created_at,
+                    )
+                )
+        else:
+            recovered_keys.append(app_key)
+
+        gap_key = _bank_gap_key(sid)
+        within = summary.get("within_tolerance_verified")
+        gap_verified = summary.get("gap_verified")
+        if within is False:
+            if gap_key not in closed_keys:
+                alerts.append(
+                    AlertRead(
+                        id=gap_key,
+                        alert_type="bank_gap",
+                        severity="error",
+                        title=f"Bank Gap outside tolerance — {file_label}",
+                        message=(
+                            f"Verified Gap is {gap_verified} (tolerance "
+                            f"{summary.get('gap_tolerance_amount')}). Resolve matches "
+                            "or adjust opening balance / tolerance on Verification."
+                        ),
+                        amount=Decimal(str(gap_verified)) if gap_verified is not None else None,
+                        threshold_amount=Decimal(str(summary["gap_tolerance_amount"])),
+                        reconcile_session_id=sid,
+                        link_path=link,
+                        created_at=session.created_at,
+                    )
+                )
+        else:
+            recovered_keys.append(gap_key)
+
+    # Completed sessions: drop any leftover dismiss records for their keys
+    completed = db.scalars(
+        select(BankReconcileSession).where(BankReconcileSession.status == "completed")
+    ).all()
+    for session in completed:
+        recovered_keys.extend(
+            [
+                _bank_unmatched_key(session.id),
+                _app_unmatched_key(session.id),
+                _bank_gap_key(session.id),
+            ]
+        )
+
+    _clear_alert_actions(db, recovered_keys)
+
+
+def _cc_unmatched_key(session_id: UUID) -> str:
+    return f"cc_unmatched:{session_id}"
+
+
+def _cc_app_unmatched_key(session_id: UUID) -> str:
+    return f"cc_app_unmatched:{session_id}"
+
+
+def _cc_verification_link(session_id: UUID) -> str:
+    return f"/verification?cc_session={session_id}"
+
+
+def _append_cc_reconcile_alerts(
+    db: Session,
+    alerts: list[AlertRead],
+    closed_keys: set[str],
+) -> None:
+    """High-priority errors for open CC match sessions."""
+    sessions = db.scalars(
+        select(CcReconcileSession)
+        .where(CcReconcileSession.status == "in_progress")
+        .order_by(CcReconcileSession.created_at.desc())
+    ).all()
+    recovered_keys: list[str] = []
+
+    for session in sessions:
+        summary = cc_session_summary(db, session)
+        sid = session.id
+        file_label = session.filename or "credit-card file"
+        link = _cc_verification_link(sid)
+        unresolved_cc = int(summary["counts"].get("unresolved_cc") or 0)
+        unresolved_app = int(summary["counts"].get("unresolved_app") or 0)
+
+        cc_key = _cc_unmatched_key(sid)
+        if unresolved_cc > 0:
+            if cc_key not in closed_keys:
+                alerts.append(
+                    AlertRead(
+                        id=cc_key,
+                        alert_type="cc_unmatched",
+                        severity="error",
+                        title=f"Unmatched CC charges — {file_label}",
+                        message=(
+                            f"{unresolved_cc} credit-card charge(s) still unmatched or only "
+                            "proposed. Confirm matches or ignore with a reason on Verification."
+                        ),
+                        reconcile_session_id=sid,
+                        link_path=link,
+                        created_at=session.created_at,
+                    )
+                )
+        else:
+            recovered_keys.append(cc_key)
+
+        app_key = _cc_app_unmatched_key(sid)
+        if unresolved_app > 0:
+            if app_key not in closed_keys:
+                alerts.append(
+                    AlertRead(
+                        id=app_key,
+                        alert_type="cc_app_unmatched",
+                        severity="error",
+                        title=f"Unmatched paid-by-card expenses — {file_label}",
+                        message=(
+                            f"{unresolved_app} paid-by-card app expense(s) not found on the "
+                            "CC file. Match, fix, or ignore with a reason on Verification."
+                        ),
+                        reconcile_session_id=sid,
+                        link_path=link,
+                        created_at=session.created_at,
+                    )
+                )
+        else:
+            recovered_keys.append(app_key)
+
+    completed = db.scalars(
+        select(CcReconcileSession).where(CcReconcileSession.status == "completed")
+    ).all()
+    for session in completed:
+        recovered_keys.extend(
+            [_cc_unmatched_key(session.id), _cc_app_unmatched_key(session.id)]
+        )
+
+    _clear_alert_actions(db, recovered_keys)
 
 
 def _include_property_status(
@@ -402,6 +636,8 @@ def list_alerts(
     _append_low_balance_alerts(
         db, alerts, closed_keys, property_status=property_status
     )
+    _append_bank_reconcile_alerts(db, alerts, closed_keys)
+    _append_cc_reconcile_alerts(db, alerts, closed_keys)
 
     alerts.sort(
         key=lambda alert: (
@@ -428,7 +664,12 @@ def get_alert_summary(db: Session) -> AlertSummary:
     )
 
 
-def dismiss_alert(db: Session, alert_id: str) -> AlertRead:
+def dismiss_alert(
+    db: Session,
+    alert_id: str,
+    *,
+    reason: str | None = None,
+) -> AlertRead:
     alerts = list_alerts(db, property_status=None)
     alert = next((item for item in alerts.items if item.id == alert_id), None)
     if alert is None:
@@ -440,11 +681,24 @@ def dismiss_alert(db: Session, alert_id: str) -> AlertRead:
     if existing:
         raise HTTPException(status_code=400, detail="Alert already closed")
 
+    cleaned_reason = (reason or "").strip()
+    if alert.alert_type in RECONCILE_ALERT_TYPES and not cleaned_reason:
+        raise HTTPException(
+            status_code=400,
+            detail="Dismissing a bank reconcile alert requires an exception reason",
+        )
+
+    metadata: dict = {"alert_type": alert.alert_type}
+    if cleaned_reason:
+        metadata["reason"] = cleaned_reason
+    if alert.reconcile_session_id:
+        metadata["reconcile_session_id"] = str(alert.reconcile_session_id)
+
     db.add(
         AlertAction(
             alert_key=alert_id,
             action="dismissed",
-            metadata_json={"alert_type": alert.alert_type},
+            metadata_json=metadata,
         )
     )
     db.commit()

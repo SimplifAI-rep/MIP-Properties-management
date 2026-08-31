@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Link } from 'react-router-dom';
 import { api } from '../api/client';
 import type { AlertItem, DepositCreate, TransactionDraft } from '../types';
 import {
@@ -50,7 +51,20 @@ const ALERT_TYPE_OPTIONS: { value: AlertTypeFilter; label: string }[] = [
   { value: 'needs_review', label: 'Needs review' },
   { value: 'duplicate_deposit', label: 'Possible duplicate' },
   { value: 'upload_pending', label: 'Upload review' },
+  { value: 'bank_unmatched', label: 'Unmatched bank' },
+  { value: 'app_unmatched', label: 'Unmatched app' },
+  { value: 'bank_gap', label: 'Bank Gap' },
+  { value: 'cc_unmatched', label: 'Unmatched CC' },
+  { value: 'cc_app_unmatched', label: 'Unmatched paid-by-card' },
 ];
+
+const RECONCILE_ALERT_TYPES = new Set<AlertItem['alert_type']>([
+  'bank_unmatched',
+  'app_unmatched',
+  'bank_gap',
+  'cc_unmatched',
+  'cc_app_unmatched',
+]);
 
 const SEVERITY_OPTIONS: { value: SeverityFilter; label: string }[] = [
   { value: 'error', label: 'Error' },
@@ -119,7 +133,26 @@ function typeLabel(alert: AlertItem): string {
   if (alert.alert_type === 'missing_deposit') return 'Missing deposit';
   if (alert.alert_type === 'low_balance') return 'Low balance';
   if (alert.alert_type === 'duplicate_deposit') return 'Possible duplicate';
+  if (alert.alert_type === 'bank_unmatched') return 'Unmatched bank';
+  if (alert.alert_type === 'app_unmatched') return 'Unmatched app';
+  if (alert.alert_type === 'bank_gap') return 'Bank Gap';
+  if (alert.alert_type === 'cc_unmatched') return 'Unmatched CC';
+  if (alert.alert_type === 'cc_app_unmatched') return 'Unmatched paid-by-card';
   return 'Upload review';
+}
+
+function isReconcileAlert(alert: AlertItem): boolean {
+  return RECONCILE_ALERT_TYPES.has(alert.alert_type);
+}
+
+function promptDismissReason(count = 1): string | null {
+  const reason = window.prompt(
+    count > 1
+      ? `Exception reason for dismissing ${count} bank reconcile alert(s)?`
+      : 'Exception reason for dismissing this bank reconcile alert?',
+  );
+  const cleaned = reason?.trim() ?? '';
+  return cleaned || null;
 }
 
 /** Prefer transaction date, then gap period, then created date (YYYY-MM-DD). */
@@ -297,7 +330,8 @@ export function AlertsPage() {
   });
 
   const dismissMutation = useMutation({
-    mutationFn: (alertId: string) => api.dismissAlert(alertId),
+    mutationFn: ({ alertId, reason }: { alertId: string; reason?: string }) =>
+      api.dismissAlert(alertId, reason ? { reason } : {}),
     onSuccess: () => {
       invalidateAlertData(queryClient);
       setSelectedId(null);
@@ -307,9 +341,11 @@ export function AlertsPage() {
   });
 
   const dismissManyMutation = useMutation({
-    mutationFn: async (alertIds: string[]) => {
+    mutationFn: async (items: { alertId: string; reason?: string }[]) => {
       const results = await Promise.allSettled(
-        alertIds.map((alertId) => api.dismissAlert(alertId)),
+        items.map((item) =>
+          api.dismissAlert(item.alertId, item.reason ? { reason: item.reason } : {}),
+        ),
       );
       const failed = results.filter((result) => result.status === 'rejected').length;
       if (failed > 0 && failed === results.length) {
@@ -317,7 +353,7 @@ export function AlertsPage() {
           `We couldn't dismiss ${failed} alert(s). Please try again.`,
         );
       }
-      return { total: alertIds.length, failed };
+      return { total: items.length, failed };
     },
     onSuccess: (result) => {
       invalidateAlertData(queryClient);
@@ -398,23 +434,48 @@ export function AlertsPage() {
 
   const dismissSelected = () => {
     if (checkedIds.length === 0) return;
+    const selected = filteredAlerts.filter((alert) => checkedIds.includes(alert.id));
+    const reconcileCount = selected.filter(isReconcileAlert).length;
+    let reason: string | undefined;
+    if (reconcileCount > 0) {
+      const prompted = promptDismissReason(reconcileCount);
+      if (!prompted) return;
+      reason = prompted;
+    }
     const confirmed = window.confirm(
       `Dismiss ${checkedIds.length} selected alert${checkedIds.length === 1 ? '' : 's'}?`,
     );
     if (!confirmed) return;
-    dismissManyMutation.mutate(checkedIds);
+    dismissManyMutation.mutate(
+      selected.map((alert) => ({
+        alertId: alert.id,
+        reason: isReconcileAlert(alert) ? reason : undefined,
+      })),
+    );
   };
 
   const dismissAll = () => {
     const targets = hasActiveFilters ? filteredAlerts : alerts;
     if (targets.length === 0) return;
+    const reconcileCount = targets.filter(isReconcileAlert).length;
+    let reason: string | undefined;
+    if (reconcileCount > 0) {
+      const prompted = promptDismissReason(reconcileCount);
+      if (!prompted) return;
+      reason = prompted;
+    }
     const confirmed = window.confirm(
       hasActiveFilters
         ? `Dismiss all ${targets.length} matching alert${targets.length === 1 ? '' : 's'}?`
         : `Dismiss all ${targets.length} open alert${targets.length === 1 ? '' : 's'}?`,
     );
     if (!confirmed) return;
-    dismissManyMutation.mutate(targets.map((alert) => alert.id));
+    dismissManyMutation.mutate(
+      targets.map((alert) => ({
+        alertId: alert.id,
+        reason: isReconcileAlert(alert) ? reason : undefined,
+      })),
+    );
   };
 
   const updateDraft = (index: number, patch: Partial<TransactionDraft>) => {
@@ -675,7 +736,34 @@ export function AlertsPage() {
                 <p className="mt-1 text-sm text-muted">{selectedAlert.message}</p>
               </div>
 
-              {selectedAlert.alert_type === 'low_balance' ? (
+              {isReconcileAlert(selectedAlert) ? (
+                <div className="space-y-4">
+                  <p className="text-sm text-muted">
+                    Fix matches and Gap on Verification. Dismissing requires an exception reason
+                    and hides this alert for the current session only.
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    <Link
+                      to={selectedAlert.link_path || '/verification'}
+                      className="btn-primary"
+                    >
+                      Open Verification
+                    </Link>
+                    <button
+                      type="button"
+                      className="btn-secondary"
+                      disabled={dismissMutation.isPending}
+                      onClick={() => {
+                        const reason = promptDismissReason();
+                        if (!reason) return;
+                        dismissMutation.mutate({ alertId: selectedAlert.id, reason });
+                      }}
+                    >
+                      Dismiss with reason
+                    </button>
+                  </div>
+                </div>
+              ) : selectedAlert.alert_type === 'low_balance' ? (
                 <div className="space-y-4">
                   <dl className="grid gap-2 text-sm sm:grid-cols-2">
                     <div>
@@ -713,7 +801,7 @@ export function AlertsPage() {
                     type="button"
                     className="btn-secondary"
                     disabled={dismissMutation.isPending}
-                    onClick={() => dismissMutation.mutate(selectedAlert.id)}
+                    onClick={() => dismissMutation.mutate({ alertId: selectedAlert.id })}
                   >
                     Dismiss
                   </button>
@@ -804,7 +892,7 @@ export function AlertsPage() {
                       type="button"
                       className="btn-secondary"
                       disabled={dismissMutation.isPending}
-                      onClick={() => dismissMutation.mutate(selectedAlert.id)}
+                      onClick={() => dismissMutation.mutate({ alertId: selectedAlert.id })}
                     >
                       Dismiss
                     </button>
@@ -1066,7 +1154,7 @@ export function AlertsPage() {
                       type="button"
                       className="btn-secondary"
                       disabled={dismissMutation.isPending}
-                      onClick={() => dismissMutation.mutate(selectedAlert.id)}
+                      onClick={() => dismissMutation.mutate({ alertId: selectedAlert.id })}
                     >
                       Dismiss
                     </button>
@@ -1078,7 +1166,7 @@ export function AlertsPage() {
                   type="button"
                   className="btn-secondary"
                   disabled={dismissMutation.isPending}
-                  onClick={() => dismissMutation.mutate(selectedAlert.id)}
+                  onClick={() => dismissMutation.mutate({ alertId: selectedAlert.id })}
                 >
                   Dismiss alert
                 </button>

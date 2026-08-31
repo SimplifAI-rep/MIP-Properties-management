@@ -339,6 +339,26 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     }),
+  createDeposit: (payload: import('../types').DepositCreate) => {
+    const section = (payload.category ?? '').trim() || 'Inflow';
+    const notes = (payload.description ?? '').trim();
+    const body = {
+      property_id: payload.property_id,
+      bank_account_id: payload.bank_account_id || null,
+      transaction_date: payload.transaction_date,
+      amount: payload.amount,
+      currency: payload.currency ?? 'ILS',
+      reference: payload.vendor_name?.trim() || payload.reference || null,
+      description: notes ? `${section} | ${notes}` : section,
+      source: payload.source || 'manual_entry',
+      is_rental_income: Boolean(payload.is_rental_income),
+    };
+    return request<import('../types').Deposit>('/deposits', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  },
   updateExpense: (id: string, payload: ExpenseUpdate) =>
     request<import('../types').Expense>(`/expenses/${id}`, {
       method: 'PATCH',
@@ -393,7 +413,12 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ drafts }),
     }),
-  getAlerts: () => request<AlertListResponse>('/alerts'),
+  getAlerts: (filters: { property_status?: 'active' | 'inactive' | 'all' } = {}) =>
+    request<AlertListResponse>(
+      `/alerts${toQuery({
+        property_status: filters.property_status ?? 'active',
+      })}`,
+    ),
   getAlertSummary: () => request<AlertSummary>('/alerts/summary'),
   dismissAlert: (alertId: string) =>
     request<AlertItem>(`/alerts/${encodeURIComponent(alertId)}/dismiss`, {

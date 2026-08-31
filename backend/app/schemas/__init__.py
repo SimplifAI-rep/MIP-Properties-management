@@ -147,6 +147,8 @@ class DepositCreate(BaseModel):
     currency: str = "ILS"
     reference: str | None = None
     description: str | None = None
+    source: str = "manual_entry"
+    is_rental_income: bool = False
 
 
 class DepositUpdate(BaseModel):
@@ -157,6 +159,7 @@ class DepositUpdate(BaseModel):
     currency: str | None = None
     reference: str | None = None
     description: str | None = None
+    source: str | None = None
     is_rental_income: bool | None = None
 
 

@@ -2,7 +2,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
-import type { ExpenseCreate } from '../types';
+import type { DepositCreate, ExpenseCreate } from '../types';
 import {
   TransactionDisplayCells,
   TransactionTableColgroup,
@@ -116,6 +116,21 @@ function makeEmptyForm(): ExpenseCreate {
   };
 }
 
+function makeEmptyDepositForm(): DepositCreate {
+  return {
+    property_id: '',
+    transaction_date: todayISO(),
+    amount: '',
+    currency: 'ILS',
+    category: '',
+    payment_method: 'company_account',
+    source: 'manual_company',
+    vendor_name: '',
+    description: '',
+    is_rental_income: false,
+  };
+}
+
 function rowToEditForm(row: UnifiedTransaction): TransactionEditForm {
   return {
     kind: row.kind,
@@ -176,8 +191,10 @@ export function TransactionsPage() {
   const [sourceFiles, setSourceFiles] = useState<string[]>([]);
   const [alertFilters, setAlertFilters] = useState<AlertFilterKind[]>([]);
   const [showForm, setShowForm] = useState(false);
+  const [showDepositForm, setShowDepositForm] = useState(false);
   const [showUpload, setShowUpload] = useState(false);
   const [form, setForm] = useState<ExpenseCreate>(() => makeEmptyForm());
+  const [depositForm, setDepositForm] = useState<DepositCreate>(() => makeEmptyDepositForm());
   const [formError, setFormError] = useState<unknown>(null);
   const [editForm, setEditForm] = useState<TransactionEditForm | null>(null);
   const [editError, setEditError] = useState<unknown>(null);
@@ -192,9 +209,11 @@ export function TransactionsPage() {
     if (state.showUpload) {
       setShowUpload(true);
       setShowForm(false);
+      setShowDepositForm(false);
     }
     if (state.showForm) {
       setShowForm(true);
+      setShowDepositForm(false);
       setShowUpload(false);
     }
 
@@ -459,6 +478,19 @@ export function TransactionsPage() {
       invalidateTransactionData(queryClient);
       setForm(makeEmptyForm());
       setShowForm(false);
+      setFormError(null);
+    },
+    onError: (error: Error) => {
+      setFormError(error);
+    },
+  });
+
+  const createDepositMutation = useMutation({
+    mutationFn: api.createDeposit,
+    onSuccess: () => {
+      invalidateTransactionData(queryClient);
+      setDepositForm(makeEmptyDepositForm());
+      setShowDepositForm(false);
       setFormError(null);
     },
     onError: (error: Error) => {
@@ -873,6 +905,7 @@ export function TransactionsPage() {
     setEditForm(rowToEditForm(row));
     setEditError(null);
     setShowForm(false);
+    setShowDepositForm(false);
     setShowUpload(false);
   }
 
@@ -956,11 +989,32 @@ export function TransactionsPage() {
             type="button"
             onClick={() => {
               setShowUpload((current) => !current);
-              if (!showUpload) setShowForm(false);
+              if (!showUpload) {
+                setShowForm(false);
+                setShowDepositForm(false);
+              }
             }}
             className="btn-secondary shrink-0"
           >
             {showUpload ? 'Cancel upload' : 'Import from file'}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setShowDepositForm((current) => {
+                const next = !current;
+                if (next) {
+                  setDepositForm(makeEmptyDepositForm());
+                  setFormError(null);
+                  setShowForm(false);
+                  setShowUpload(false);
+                }
+                return next;
+              });
+            }}
+            className="btn-primary shrink-0"
+          >
+            {showDepositForm ? 'Cancel' : 'Add deposit'}
           </button>
           <button
             type="button"
@@ -970,6 +1024,7 @@ export function TransactionsPage() {
                 if (next) {
                   setForm(makeEmptyForm());
                   setFormError(null);
+                  setShowDepositForm(false);
                   setShowUpload(false);
                 }
                 return next;
@@ -1046,6 +1101,234 @@ export function TransactionsPage() {
           properties={properties}
           onClose={() => setShowUpload(false)}
         />
+      ) : null}
+
+      {showDepositForm ? (
+        <section className="panel p-4">
+          <h3 className="subheading">New deposit</h3>
+          <p className="mt-1 text-sm text-muted">
+            Fields use the same names as your Excel sheet (Section, Notes, Method, Source,
+            Company).
+          </p>
+          <form
+            className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (
+                !depositForm.property_id ||
+                !depositForm.transaction_date ||
+                !depositForm.amount
+              ) {
+                setFormError(
+                  validationError('Please choose a property, date, and amount.'),
+                );
+                return;
+              }
+              createDepositMutation.mutate({
+                ...depositForm,
+                category: depositForm.category?.trim() || 'Inflow',
+                source: depositForm.source || 'manual_company',
+                payment_method: depositForm.payment_method || 'company_account',
+                vendor_name: depositForm.vendor_name?.trim() || undefined,
+                description: depositForm.description?.trim() || undefined,
+              });
+            }}
+          >
+            <label className="text-sm">
+              <span className="label-text">
+                <Tooltip content="Same as Prop ID in Excel — pick the property sheet.">
+                  Prop ID / Property
+                </Tooltip>
+              </span>
+              <select
+                required
+                className="field"
+                value={depositForm.property_id}
+                onChange={(event) =>
+                  setDepositForm((current) => ({
+                    ...current,
+                    property_id: event.target.value,
+                  }))
+                }
+              >
+                <option value="">Select property</option>
+                {(propertiesQuery.data ?? []).map((property) => (
+                  <option key={property.id} value={property.id}>
+                    {property.client_prop_id} — {property.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <DateInputDMY
+              label="Date"
+              required
+              value={depositForm.transaction_date || undefined}
+              onChange={(iso) =>
+                setDepositForm((current) => ({
+                  ...current,
+                  transaction_date: iso ?? '',
+                }))
+              }
+            />
+            <label className="text-sm">
+              <span className="label-text">
+                <Tooltip content="Excel Inflow column — money entering the company float.">
+                  Amount
+                </Tooltip>
+              </span>
+              <input
+                required
+                type="number"
+                min="0.01"
+                step="0.01"
+                className="field"
+                value={depositForm.amount}
+                onChange={(event) =>
+                  setDepositForm((current) => ({
+                    ...current,
+                    amount: event.target.value,
+                  }))
+                }
+              />
+            </label>
+            <label className="text-sm">
+              <span className="label-text">
+                <Tooltip content="Excel Section — what the inflow is for.">Section</Tooltip>
+              </span>
+              <input
+                list="deposit-section-suggestions"
+                type="text"
+                className="field"
+                placeholder="e.g. Owner inflow"
+                value={depositForm.category ?? ''}
+                onChange={(event) =>
+                  setDepositForm((current) => ({
+                    ...current,
+                    category: event.target.value,
+                  }))
+                }
+              />
+              <datalist id="deposit-section-suggestions">
+                {SECTION_SUGGESTIONS.map((item) => (
+                  <option key={item} value={item} />
+                ))}
+              </datalist>
+            </label>
+            <label className="text-sm">
+              <span className="label-text">
+                <Tooltip content="How the money was received (for your records).">
+                  Method
+                </Tooltip>
+              </span>
+              <select
+                className="field"
+                value={depositForm.payment_method ?? 'company_account'}
+                onChange={(event) =>
+                  setDepositForm((current) => ({
+                    ...current,
+                    payment_method: event.target.value,
+                  }))
+                }
+              >
+                {METHODS.map((item) => (
+                  <option key={item} value={item}>
+                    {label(item)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="text-sm">
+              <span className="label-text">
+                <Tooltip content="How this deposit was recorded (e.g. bank statement).">
+                  Source
+                </Tooltip>
+              </span>
+              <select
+                className="field"
+                value={depositForm.source ?? 'manual_company'}
+                onChange={(event) =>
+                  setDepositForm((current) => ({
+                    ...current,
+                    source: event.target.value,
+                  }))
+                }
+              >
+                {SOURCES.map((item) => (
+                  <option key={item} value={item}>
+                    {label(item)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="text-sm">
+              <span className="label-text">
+                <Tooltip content="Excel Company — payer or counterparty name.">
+                  Company
+                </Tooltip>
+              </span>
+              <input
+                type="text"
+                className="field"
+                placeholder="Payer / company name"
+                value={depositForm.vendor_name ?? ''}
+                onChange={(event) =>
+                  setDepositForm((current) => ({
+                    ...current,
+                    vendor_name: event.target.value,
+                  }))
+                }
+              />
+            </label>
+            <label className="text-sm flex items-end gap-2 pb-2">
+              <input
+                type="checkbox"
+                checked={Boolean(depositForm.is_rental_income)}
+                onChange={(event) =>
+                  setDepositForm((current) => ({
+                    ...current,
+                    is_rental_income: event.target.checked,
+                  }))
+                }
+              />
+              <span className="label-text mb-0">
+                <Tooltip content="Mark as rental income (tracked rent, not company-float inflow).">
+                  Rental income
+                </Tooltip>
+              </span>
+            </label>
+            <label className="text-sm md:col-span-2 xl:col-span-3">
+              <span className="label-text">
+                <Tooltip content="Excel Notes — free text about the row.">Notes</Tooltip>
+              </span>
+              <input
+                type="text"
+                className="field"
+                placeholder="Optional notes"
+                value={depositForm.description ?? ''}
+                onChange={(event) =>
+                  setDepositForm((current) => ({
+                    ...current,
+                    description: event.target.value,
+                  }))
+                }
+              />
+            </label>
+            {formError && showDepositForm ? (
+              <div className="md:col-span-2 xl:col-span-3">
+                <InlineError error={formError} />
+              </div>
+            ) : null}
+            <div className="md:col-span-2 xl:col-span-3">
+              <button
+                type="submit"
+                disabled={createDepositMutation.isPending}
+                className="btn-primary"
+              >
+                {createDepositMutation.isPending ? 'Saving...' : 'Save deposit'}
+              </button>
+            </div>
+          </form>
+        </section>
       ) : null}
 
       {showForm ? (
@@ -1211,7 +1494,7 @@ export function TransactionsPage() {
                 }
               />
             </label>
-            {formError ? (
+            {formError && showForm ? (
               <div className="md:col-span-2 xl:col-span-3">
                 <InlineError error={formError} />
               </div>

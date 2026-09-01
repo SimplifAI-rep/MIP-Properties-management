@@ -361,9 +361,7 @@ def apply_actions(db: Session, session: CcReconcileSession, actions: list[dict])
             line = lines.get(fp)
             if not line:
                 raise ValueError(f"Unknown CC line {fp}")
-            reason = (action.get("reason") or "").strip()
-            if not reason:
-                raise ValueError("ignore_cc requires a reason")
+            reason = (action.get("reason") or "").strip() or "Ignored"
             line["status"] = "ignored"
             line["ignore_reason"] = reason
 
@@ -373,9 +371,7 @@ def apply_actions(db: Session, session: CcReconcileSession, actions: list[dict])
             app = apps.get(key)
             if not app:
                 continue
-            reason = (action.get("reason") or "").strip()
-            if not reason:
-                raise ValueError("ignore_app requires a reason")
+            reason = (action.get("reason") or "").strip() or "Ignored"
             app["status"] = "ignored"
             app["ignore_reason"] = reason
 

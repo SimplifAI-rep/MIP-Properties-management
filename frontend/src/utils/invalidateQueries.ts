@@ -11,6 +11,14 @@ export function invalidateTransactionData(queryClient: QueryClient): void {
   queryClient.invalidateQueries({ queryKey: ['expense-summary-owner'] });
   queryClient.invalidateQueries({ queryKey: ['alerts'] });
   queryClient.invalidateQueries({ queryKey: ['alert-summary'] });
+  invalidateVerificationWorkspace(queryClient);
+}
+
+/** Verification tab accordion + linked transaction groups. */
+export function invalidateVerificationWorkspace(queryClient: QueryClient): void {
+  queryClient.invalidateQueries({ queryKey: ['verification-workspace'] });
+  queryClient.invalidateQueries({ queryKey: ['verification-group-txs'] });
+  queryClient.invalidateQueries({ queryKey: ['cc-pool-txs'] });
 }
 
 /** Invalidate alert list/summary only. */

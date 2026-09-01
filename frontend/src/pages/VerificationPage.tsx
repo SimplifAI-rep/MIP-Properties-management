@@ -1,24 +1,44 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
 import { api } from '../api/client';
-import { BankReconcilePanel } from '../components/BankReconcilePanel';
 import { BankVerificationPanel } from '../components/BankVerificationPanel';
-import { CcReconcilePanel } from '../components/CcReconcilePanel';
+import { VerificationWorkspace } from '../components/VerificationWorkspace';
 import { formatCurrency, formatDate } from '../components/ui/States';
-import { Tooltip } from '../components/ui/Tooltip';
 import { getUserErrorMessage } from '../utils/errors';
+
+function Stat({
+  label,
+  value,
+  hint,
+}: {
+  label: string;
+  value: string;
+  hint?: string;
+}) {
+  return (
+    <div className="min-w-0">
+      <p className="label-text truncate">{label}</p>
+      <p className="mt-0.5 text-base font-semibold tabular-nums truncate" title={hint || value}>
+        {value}
+      </p>
+    </div>
+  );
+}
 
 export function VerificationPage() {
   const queryClient = useQueryClient();
   const [bankBalanceInput, setBankBalanceInput] = useState('');
   const [dateTo, setDateTo] = useState('');
-  const [parseInfo, setParseInfo] = useState<string | null>(null);
   const [parseError, setParseError] = useState<string | null>(null);
 
   const settingsQuery = useQuery({
     queryKey: ['bank-settings'],
     queryFn: api.getBankSettings,
+  });
+
+  const workspaceQuery = useQuery({
+    queryKey: ['verification-workspace'],
+    queryFn: api.getVerificationWorkspace,
   });
 
   const gapQuery = useQuery({
@@ -38,81 +58,69 @@ export function VerificationPage() {
     mutationFn: api.parseBankBalance,
     onSuccess: (result) => {
       setBankBalanceInput(String(result.bank_balance));
-      // Default Net through date to earliest movement date in the file
       if (result.statement_start_date) {
         setDateTo(result.statement_start_date);
       }
-      const rangeBits = [
-        result.statement_start_date
-          ? `from ${formatDate(result.statement_start_date)}`
-          : null,
-        result.statement_end_date ? `to ${formatDate(result.statement_end_date)}` : null,
-      ].filter(Boolean);
-      setParseInfo(
-        `Parsed B = ${formatCurrency(result.bank_balance)} from ${result.movement_row_count} movement rows` +
-          (rangeBits.length ? ` (${rangeBits.join(' ')})` : ''),
-      );
       setParseError(null);
     },
-    onError: (err) => {
-      setParseError(getUserErrorMessage(err));
-      setParseInfo(null);
-    },
+    onError: (err) => setParseError(getUserErrorMessage(err)),
   });
 
+  const settings = settingsQuery.data;
   const gap = gapQuery.data;
-  const tolerance = Number(gap?.gap_tolerance_amount ?? 0.01);
+  const workspace = workspaceQuery.data;
+  const tolerance = Number(gap?.gap_tolerance_amount ?? settings?.gap_tolerance_amount ?? 0.01);
+  const gapOk =
+    gap?.gap_verified != null ? Math.abs(Number(gap.gap_verified)) <= tolerance : null;
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h2 className="page-heading">Verification</h2>
-        <p className="page-desc">
-          Bank reconcile workspace — opening balance, cutover, and Gap vs the operating
-          account. Daily receipt entry stays on{' '}
-          <Link to="/transactions" className="underline">
-            Transactions
-          </Link>
-          .
-        </p>
-      </div>
+    <div className="space-y-4">
+      <h2 className="page-heading">Verification</h2>
 
-      <BankVerificationPanel />
-
-      <BankReconcilePanel />
-
-      <CcReconcilePanel />
-
-      <section className="panel p-4 sm:p-5 space-y-4">
-        <div>
-          <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-            Bank Gap (read-only)
-          </h3>
-          <p className="mt-1 text-sm muted-text">
-            Gap = Bank balance (B) − (Opening O + bank-scoped net N). Success uses{' '}
-            <strong>verified-only</strong> net; all-scoped net is shown for comparison.
-            Owner-paid / He-She / rental are out of N.
-          </p>
-        </div>
-
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <label className="text-sm sm:col-span-2">
-            <span className="label-text">
-              <Tooltip content="Latest row היתרה בש״ח from the bank Excel (or paste manually).">
-                Bank balance B (ILS)
-              </Tooltip>
-            </span>
-            <div className="flex flex-wrap gap-2">
+      <section className="rounded-lg border border-slate-200 dark:border-slate-700 px-4 py-3">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6">
+          <Stat
+            label="Opening O"
+            value={
+              settings?.opening_balance != null
+                ? formatCurrency(settings.opening_balance)
+                : '—'
+            }
+            hint={
+              settings?.opening_balance_as_of
+                ? `as of ${formatDate(settings.opening_balance_as_of)}`
+                : undefined
+            }
+          />
+          <Stat
+            label="Bank verified through"
+            value={
+              settings?.last_verification_date
+                ? formatDate(settings.last_verification_date)
+                : '—'
+            }
+          />
+          <Stat
+            label="CC verified through"
+            value={
+              workspace?.last_cc_verification_date
+                ? formatDate(workspace.last_cc_verification_date)
+                : '—'
+            }
+          />
+          <div className="min-w-0">
+            <p className="label-text">Bank balance B</p>
+            <div className="mt-0.5 flex gap-1">
               <input
-                className="field min-w-[10rem] flex-1"
                 type="number"
                 step="0.01"
+                className="field py-1 text-sm tabular-nums"
                 value={bankBalanceInput}
                 onChange={(e) => setBankBalanceInput(e.target.value)}
-                placeholder="Upload file or paste"
+                placeholder="—"
               />
-              <label className="btn-secondary cursor-pointer text-sm">
-                {parseMutation.isPending ? 'Parsing…' : 'Upload bank Excel'}
+              <label className="btn-secondary cursor-pointer shrink-0 text-xs self-stretch flex items-center px-2">
+                {parseMutation.isPending ? '…' : 'Excel'}
                 <input
                   type="file"
                   accept=".xlsx,.xls"
@@ -126,108 +134,51 @@ export function VerificationPage() {
                 />
               </label>
             </div>
-          </label>
-          <label className="text-sm">
-            <span className="label-text">
-              <Tooltip content="Only include bank-scoped txs through this date. After uploading a bank Excel for Gap, defaults to the earliest movement date in the file.">
-                Net through date
-              </Tooltip>
-            </span>
-            <input
-              className="field"
-              type="date"
-              value={dateTo}
-              onChange={(e) => setDateTo(e.target.value)}
-            />
-          </label>
-          <div className="text-sm">
-            <p className="label-text">N starts after</p>
-            <p className="mt-2 font-medium tabular-nums">
-              {gap?.after_date ? formatDate(gap.after_date) : 'Not set (all dates)'}
-            </p>
+            {parseError ? <p className="text-xs text-red-600 mt-0.5">{parseError}</p> : null}
           </div>
+          <Stat
+            label="Verified Gap"
+            value={
+              gap?.gap_verified != null ? formatCurrency(gap.gap_verified) : '—'
+            }
+            hint={
+              gapOk == null ? undefined : gapOk ? 'within tolerance' : 'outside tolerance'
+            }
+          />
+          <Stat
+            label="Pending"
+            value={`${settings?.unverified_count ?? '—'} bank · ${workspace?.cc_pool.pending_count ?? '—'} CC`}
+          />
         </div>
-
-        {parseInfo ? (
-          <p className="text-sm text-emerald-700 dark:text-emerald-300">{parseInfo}</p>
-        ) : null}
-        {parseError ? <p className="text-sm text-red-600">{parseError}</p> : null}
-
-        {gapQuery.isLoading ? (
-          <p className="text-sm muted-text">Computing Gap…</p>
-        ) : gapQuery.isError ? (
-          <p className="text-sm text-red-600">{getUserErrorMessage(gapQuery.error)}</p>
-        ) : gap ? (
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            <div className="rounded-lg border border-slate-200 p-3 dark:border-slate-700">
-              <p className="label-text">Opening O</p>
-              <p className="mt-1 text-lg font-semibold tabular-nums">
-                {gap.opening_balance != null
-                  ? formatCurrency(gap.opening_balance)
-                  : 'Not set'}
-              </p>
-            </div>
-            <div className="rounded-lg border border-slate-200 p-3 dark:border-slate-700">
-              <p className="label-text">All bank-scoped net N</p>
-              <p className="mt-1 text-lg font-semibold tabular-nums">
-                {formatCurrency(gap.all_scoped_net)}
-              </p>
-              <p className="text-xs muted-text">
-                In {formatCurrency(gap.all_scoped_deposits)} − Out{' '}
-                {formatCurrency(gap.all_scoped_expenses)}
-              </p>
-            </div>
-            <div className="rounded-lg border border-slate-200 p-3 dark:border-slate-700">
-              <p className="label-text">Verified-only net N</p>
-              <p className="mt-1 text-lg font-semibold tabular-nums">
-                {formatCurrency(gap.verified_net)}
-              </p>
-            </div>
-            <div className="rounded-lg border border-slate-200 p-3 dark:border-slate-700 sm:col-span-2 lg:col-span-3">
-              <p className="label-text">
-                Gap (success = verified){' '}
-                {gap.within_tolerance_verified == null
-                  ? ''
-                  : gap.within_tolerance_verified
-                    ? '· within tolerance'
-                    : '· outside tolerance'}
-              </p>
-              <div className="mt-2 flex flex-wrap gap-6">
-                <div>
-                  <p className="text-xs muted-text">Verified Gap</p>
-                  <p
-                    className={`text-2xl font-semibold tabular-nums ${
-                      gap.gap_verified == null
-                        ? 'muted-text'
-                        : Math.abs(Number(gap.gap_verified)) <= tolerance
-                          ? 'text-emerald-700 dark:text-emerald-300'
-                          : 'text-amber-800 dark:text-amber-200'
-                    }`}
-                  >
-                    {gap.gap_verified != null
-                      ? formatCurrency(gap.gap_verified)
-                      : 'Set O and B'}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-xs muted-text">All-scoped Gap</p>
-                  <p className="text-xl font-semibold tabular-nums">
-                    {gap.gap_all_scoped != null
-                      ? formatCurrency(gap.gap_all_scoped)
-                      : 'Set O and B'}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-xs muted-text">Tolerance</p>
-                  <p className="text-xl font-semibold tabular-nums">
-                    {formatCurrency(gap.gap_tolerance_amount)}
-                  </p>
-                </div>
-              </div>
-            </div>
-          </div>
+        {dateTo ? (
+          <p className="text-xs muted-text mt-2">
+            Gap net through {formatDate(dateTo)}
+            <button
+              type="button"
+              className="ml-2 underline"
+              onClick={() => setDateTo('')}
+            >
+              clear
+            </button>
+          </p>
         ) : null}
       </section>
+
+      <details className="rounded-lg border border-slate-200 dark:border-slate-700 overflow-hidden">
+        <summary className="cursor-pointer select-none px-4 py-2.5 text-sm font-medium hover:bg-slate-50 dark:hover:bg-slate-900/40">
+          Setup
+        </summary>
+        <div className="border-t border-slate-200 dark:border-slate-700">
+          <BankVerificationPanel />
+        </div>
+      </details>
+
+      <VerificationWorkspace
+        bankBalanceInput={bankBalanceInput}
+        setBankBalanceInput={setBankBalanceInput}
+        dateTo={dateTo}
+        setDateTo={setDateTo}
+      />
     </div>
   );
 }

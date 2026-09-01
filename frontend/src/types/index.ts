@@ -732,3 +732,49 @@ export interface CcReconcileSession {
   lines: CcReconcileLine[];
   unmatched_app: BankReconcileAppRow[];
 }
+
+export interface VerificationBankGroup {
+  id: string;
+  kind: 'bank';
+  status: 'verified' | 'unverified';
+  title: string;
+  date: string | null;
+  statement_start_date: string | null;
+  statement_end_date: string | null;
+  after_date: string | null;
+  session_id: string | null;
+  filename: string | null;
+  transaction_count: number;
+  settlement_count: number;
+}
+
+export interface VerificationCcHistoryGroup {
+  id: string;
+  kind: 'cc';
+  status: 'verified';
+  title: string;
+  date: string | null;
+  statement_start_date: string | null;
+  statement_end_date: string | null;
+  session_id: string | null;
+  filename: string | null;
+  card_last4: string | null;
+  transaction_count: number;
+}
+
+export interface VerificationWorkspace {
+  last_verification_date: string | null;
+  last_cc_verification_date?: string | null;
+  bank_groups: VerificationBankGroup[];
+  cc_history?: VerificationCcHistoryGroup[];
+  cc_active_session_id?: string | null;
+  cc_pool: {
+    pending_count: number;
+    cc_verified_count: number;
+  };
+}
+
+export interface VerificationTransactionsResponse {
+  items: Record<string, unknown>[];
+  total: number;
+}

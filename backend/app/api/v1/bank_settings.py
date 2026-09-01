@@ -19,10 +19,14 @@ from app.schemas import (
     CcReconcileSessionResponse,
     CompanyBankSettingsRead,
     CompanyBankSettingsUpdate,
+    TransactionRead,
+    VerificationTransactionsResponse,
+    VerificationWorkspaceResponse,
 )
 from app.services import bank_reconcile as bank_reconcile_service
 from app.services import bank_settings as bank_settings_service
 from app.services import cc_reconcile as cc_reconcile_service
+from app.services import verification_workspace as verification_workspace_service
 from app.services.bank_reconcile_gap import parse_bank_statement_balance, sum_bank_scoped_nets
 
 router = APIRouter(prefix="/bank-settings", tags=["bank-settings"])
@@ -297,3 +301,48 @@ def complete_cc_reconcile_session(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return CcReconcileSessionResponse(**cc_reconcile_service.session_summary(db, session))
+
+@router.get("/verification-workspace", response_model=VerificationWorkspaceResponse)
+def get_verification_workspace(db: Session = Depends(get_db)) -> VerificationWorkspaceResponse:
+    """Bank period accordion groups + CC accumulate pool summary."""
+    return VerificationWorkspaceResponse(**verification_workspace_service.verification_workspace(db))
+
+
+@router.get(
+    "/verification-groups/{group_id}/transactions",
+    response_model=VerificationTransactionsResponse,
+)
+def get_verification_group_transactions(
+    group_id: str,
+    db: Session = Depends(get_db),
+    limit: int = Query(200, ge=1, le=500),
+) -> VerificationTransactionsResponse:
+    try:
+        items, total = verification_workspace_service.get_bank_group_transactions(
+            db, group_id, limit=limit
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return VerificationTransactionsResponse(
+        items=[TransactionRead.model_validate(item) for item in items],
+        total=total,
+    )
+
+
+@router.get("/cc-pool/transactions", response_model=VerificationTransactionsResponse)
+def get_cc_pool_transactions(
+    status: str = Query("pending", pattern="^(pending|cc_verified)$"),
+    db: Session = Depends(get_db),
+    limit: int = Query(200, ge=1, le=500),
+) -> VerificationTransactionsResponse:
+    """Accumulating CC pool. Bank-confirmed merchants live under bank groups."""
+    try:
+        items, total = verification_workspace_service.get_cc_pool_transactions(
+            db, status=status, limit=limit
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return VerificationTransactionsResponse(
+        items=[TransactionRead.model_validate(item) for item in items],
+        total=total,
+    )

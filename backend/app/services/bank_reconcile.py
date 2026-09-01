@@ -46,7 +46,12 @@ def _parse_iso_date(value: str | None) -> date | None:
     return date.fromisoformat(value[:10])
 
 
-def _app_candidate_filters(*, after: date | None, date_to: date | None):
+def _app_candidate_filters(*, date_from: date | None, date_to: date | None):
+    """Unverified bank-scoped app txs inside the uploaded statement date window.
+
+    Older receipts outside the Excel's first→last movement dates are intentionally
+    out of scope — retroactive statement upload is not required.
+    """
     dep = [
         deposit_company_float_clause(),
         Deposit.bank_reconcile_exclude.is_(False),
@@ -65,9 +70,9 @@ def _app_candidate_filters(*, after: date | None, date_to: date | None):
     exp.append(
         or_(Expense.payment_method.is_(None), Expense.payment_method != "credit_card")
     )
-    if after is not None:
-        dep.append(Deposit.transaction_date > after)
-        exp.append(Expense.transaction_date > after)
+    if date_from is not None:
+        dep.append(Deposit.transaction_date >= date_from)
+        exp.append(Expense.transaction_date >= date_from)
     if date_to is not None:
         dep.append(Deposit.transaction_date <= date_to)
         exp.append(Expense.transaction_date <= date_to)
@@ -199,11 +204,13 @@ def _propose_settlement_groups(db: Session, lines: list[dict]) -> None:
             prev_settlement_date = settle_date
 
 
-def _propose_matches(db: Session, lines: list[dict], *, after: date | None, date_to: date | None) -> None:
+def _propose_matches(
+    db: Session, lines: list[dict], *, date_from: date | None, date_to: date | None
+) -> None:
     # Stage C first: settlement lines are groups, not 1:1 merchant matches
     _propose_settlement_groups(db, lines)
 
-    dep_f, exp_f = _app_candidate_filters(after=after, date_to=date_to)
+    dep_f, exp_f = _app_candidate_filters(date_from=date_from, date_to=date_to)
     deposits = list(db.scalars(select(Deposit).where(and_(*dep_f))))
     expenses = list(db.scalars(select(Expense).where(and_(*exp_f))))
     used_dep: set[UUID] = set()
@@ -281,11 +288,11 @@ def _propose_matches(db: Session, lines: list[dict], *, after: date | None, date
 def _unmatched_app_rows(
     db: Session,
     *,
-    after: date | None,
+    date_from: date | None,
     date_to: date | None,
     matched_ids: set[str],
 ) -> list[dict]:
-    dep_f, exp_f = _app_candidate_filters(after=after, date_to=date_to)
+    dep_f, exp_f = _app_candidate_filters(date_from=date_from, date_to=date_to)
     out: list[dict] = []
     for row in db.scalars(select(Deposit).where(and_(*dep_f))):
         if str(row.id) in matched_ids:
@@ -331,17 +338,19 @@ def create_session_from_upload(
     parsed = parse_bank_statement_lines(content)
     settings = get_or_create_settings(db)
     after = settings.opening_balance_as_of or settings.last_verification_date
-    # Matching window: full statement span (start→end). Gap panel may use earliest as date_to.
+    # Scope matching + unmatched-app to the Excel movement window only
+    # (first → last transaction date). Older app txs stay out of this period.
+    date_from = parsed["statement_start_date"]
     date_to = parsed["statement_end_date"]
     lines = parsed["lines"]
-    _propose_matches(db, lines, after=after, date_to=date_to)
+    _propose_matches(db, lines, date_from=date_from, date_to=date_to)
     matched_ids = {
         line["proposed_tx_id"]
         for line in lines
         if line.get("status") == "proposed_match" and line.get("proposed_tx_id")
     }
     unmatched_app = _unmatched_app_rows(
-        db, after=after, date_to=date_to, matched_ids=matched_ids
+        db, date_from=date_from, date_to=date_to, matched_ids=matched_ids
     )
 
     session = BankReconcileSession(
@@ -538,9 +547,7 @@ def apply_actions(db: Session, session: BankReconcileSession, actions: list[dict
             line = lines.get(fp)
             if not line:
                 raise ValueError(f"Unknown bank line {fp}")
-            reason = (action.get("reason") or "").strip()
-            if not reason:
-                raise ValueError("ignore_bank requires a reason")
+            reason = (action.get("reason") or "").strip() or "Ignored"
             line["status"] = "ignored"
             line["ignore_reason"] = reason
 
@@ -552,9 +559,7 @@ def apply_actions(db: Session, session: BankReconcileSession, actions: list[dict
             if not app:
                 # Allow ignoring even if not in list (already matched)
                 continue
-            reason = (action.get("reason") or "").strip()
-            if not reason:
-                raise ValueError("ignore_app requires a reason")
+            reason = (action.get("reason") or "").strip() or "Ignored"
             app["status"] = "ignored"
             app["ignore_reason"] = reason
 

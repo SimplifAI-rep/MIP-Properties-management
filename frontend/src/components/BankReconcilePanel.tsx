@@ -2,10 +2,113 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { api } from '../api/client';
-import type { BankReconcileSession } from '../types';
+import type { BankReconcileLine, BankReconcileSession } from '../types';
+import {
+  formatVerifyAmount,
+  formatVerifyDate,
+  VerifyGroupSection,
+  VerifyRowTable,
+} from './verifyGroups';
 import { formatCurrency, formatDate } from './ui/States';
 import { getUserErrorMessage } from '../utils/errors';
-import { invalidateAlertData } from '../utils/invalidateQueries';
+import {
+  invalidateAlertData,
+  invalidateVerificationWorkspace,
+} from '../utils/invalidateQueries';
+
+type AppPeriodStatus = 'in_excel' | 'verified' | 'not_in_excel' | 'ignored';
+
+type AppPeriodRow = {
+  key: string;
+  kind: 'deposit' | 'expense';
+  id: string;
+  transaction_ref?: string | null;
+  transaction_date: string | null;
+  amount: string;
+  description?: string | null;
+  status: AppPeriodStatus;
+  fingerprint?: string;
+  bank_asmachta?: string | null;
+  bank_date?: string | null;
+  match_confidence?: string | null;
+};
+
+function buildAppPeriodRows(session: BankReconcileSession): AppPeriodRow[] {
+  const rows: AppPeriodRow[] = [];
+  const seen = new Set<string>();
+
+  for (const line of session.lines) {
+    if (!line.proposed_tx_id) continue;
+    if (line.status !== 'proposed_match' && line.status !== 'matched' && line.status !== 'added') {
+      continue;
+    }
+    if (line.proposed_kind !== 'deposit' && line.proposed_kind !== 'expense') continue;
+    const key = `${line.proposed_kind}:${line.proposed_tx_id}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    rows.push({
+      key,
+      kind: line.proposed_kind,
+      id: line.proposed_tx_id,
+      transaction_ref: line.proposed_tx_ref,
+      transaction_date: line.transaction_date,
+      amount: line.amount,
+      description: line.proposed_summary || line.description,
+      status: line.status === 'proposed_match' ? 'in_excel' : 'verified',
+      fingerprint: line.fingerprint,
+      bank_asmachta: line.asmachta,
+      bank_date: line.transaction_date,
+      match_confidence: line.match_confidence,
+    });
+  }
+
+  for (const app of session.unmatched_app) {
+    const key = `${app.kind}:${app.id}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    rows.push({
+      key,
+      kind: app.kind,
+      id: app.id,
+      transaction_ref: app.transaction_ref,
+      transaction_date: app.transaction_date,
+      amount: app.amount,
+      description: app.description,
+      status: app.status === 'ignored' ? 'ignored' : 'not_in_excel',
+    });
+  }
+
+  const order: Record<AppPeriodStatus, number> = {
+    in_excel: 0,
+    not_in_excel: 1,
+    verified: 2,
+    ignored: 3,
+  };
+  rows.sort((a, b) => {
+    const byStatus = order[a.status] - order[b.status];
+    if (byStatus !== 0) return byStatus;
+    return (b.transaction_date || '').localeCompare(a.transaction_date || '');
+  });
+  return rows;
+}
+
+function statusBadge(status: AppPeriodStatus) {
+  switch (status) {
+    case 'in_excel':
+      return <span className="badge-bank-verified">Able to verify</span>;
+    case 'verified':
+      return <span className="badge-bank-verified">Verified</span>;
+    case 'not_in_excel':
+      return <span className="badge-bank-unverified">Not in Excel</span>;
+    case 'ignored':
+      return <span className="badge-bank-unverified">Ignored</span>;
+  }
+}
+
+function draftKindLabel(line: BankReconcileLine): string {
+  if (line.side === 'credit') return 'Deposit draft';
+  return 'Expense draft';
+}
 
 export function BankReconcilePanel() {
   const queryClient = useQueryClient();
@@ -31,19 +134,20 @@ export function BankReconcilePanel() {
 
   const createMutation = useMutation({
     mutationFn: api.createBankReconcileSession,
-    onSuccess: (session) => {
-      setSessionId(session.id);
+    onSuccess: (created) => {
+      setSessionId(created.id);
       setSearchParams((prev) => {
         const next = new URLSearchParams(prev);
-        next.set('session', session.id);
+        next.set('session', created.id);
         return next;
       });
       setMessage(
-        `Reconcile session opened from ${session.filename || 'bank file'} — proposed matches are ready to confirm (not duplicates).`,
+        `Period opened from ${created.filename || 'bank file'}. Review app transactions below — confirm ones found in the Excel to mark Verified.`,
       );
       setError(null);
       void queryClient.invalidateQueries({ queryKey: ['bank-reconcile-session'] });
       invalidateAlertData(queryClient);
+      invalidateVerificationWorkspace(queryClient);
     },
     onError: (err) => {
       setError(getUserErrorMessage(err));
@@ -66,6 +170,7 @@ export function BankReconcilePanel() {
       void queryClient.invalidateQueries({ queryKey: ['deposits'] });
       void queryClient.invalidateQueries({ queryKey: ['expenses'] });
       invalidateAlertData(queryClient);
+      invalidateVerificationWorkspace(queryClient);
       setError(null);
     },
     onError: (err) => setError(getUserErrorMessage(err)),
@@ -73,14 +178,23 @@ export function BankReconcilePanel() {
 
   const completeMutation = useMutation({
     mutationFn: (id: string) => api.completeBankReconcileSession(id),
-    onSuccess: (session) => {
+    onSuccess: (completed) => {
       void queryClient.invalidateQueries({ queryKey: ['bank-reconcile-session', sessionId] });
       void queryClient.invalidateQueries({ queryKey: ['bank-settings'] });
       void queryClient.invalidateQueries({ queryKey: ['bank-gap'] });
+      void queryClient.invalidateQueries({ queryKey: ['deposits'] });
+      void queryClient.invalidateQueries({ queryKey: ['expenses'] });
       invalidateAlertData(queryClient);
+      invalidateVerificationWorkspace(queryClient);
+      setSessionId(null);
+      setSearchParams((prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete('session');
+        return next;
+      });
       setMessage(
-        `Session completed. Last verification date → ${
-          session.statement_end_date ? formatDate(session.statement_end_date) : 'updated'
+        `Period completed and moved to history. Last verification date → ${
+          completed.statement_end_date ? formatDate(completed.statement_end_date) : 'updated'
         }.`,
       );
       setError(null);
@@ -96,17 +210,41 @@ export function BankReconcilePanel() {
   const session: BankReconcileSession | undefined = sessionQuery.data;
   const busy =
     createMutation.isPending || actionsMutation.isPending || completeMutation.isPending;
+  const activeSession = session?.status === 'in_progress' ? session : undefined;
 
-  const proposed = session?.lines.filter((l) => l.status === 'proposed_match') ?? [];
+  useEffect(() => {
+    if (!session || session.status === 'in_progress') return;
+    setSessionId(null);
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.delete('session');
+      return next;
+    });
+  }, [session, setSearchParams]);
+
+  const proposed =
+    activeSession?.lines.filter((l) => l.status === 'proposed_match') ?? [];
   const proposedSettlements =
-    session?.lines.filter((l) => l.status === 'proposed_settlement') ?? [];
-  const unmatchedBank = session?.lines.filter((l) => l.status === 'unmatched') ?? [];
-  const unmatchedApp = session?.unmatched_app.filter((a) => a.status === 'unmatched') ?? [];
+    activeSession?.lines.filter((l) => l.status === 'proposed_settlement') ?? [];
+  const draftFromBank =
+    activeSession?.lines.filter((l) => l.status === 'unmatched') ?? [];
+  const notInBankLines =
+    activeSession?.lines.filter((l) =>
+      ['unmatched', 'ignored', 'added'].includes(l.status),
+    ) ?? [];
+  const appPeriodRows = activeSession ? buildAppPeriodRows(activeSession) : [];
+  const ableRows = appPeriodRows.filter(
+    (r) => r.status === 'in_excel' || r.status === 'verified',
+  );
+  const notInExcelRows = appPeriodRows.filter(
+    (r) => r.status === 'not_in_excel' || r.status === 'ignored',
+  );
+  const pendingConfirm = ableRows.filter((r) => r.status === 'in_excel');
 
   function confirmAllProposed() {
-    if (!session || proposed.length === 0) return;
+    if (!activeSession || proposed.length === 0) return;
     actionsMutation.mutate({
-      id: session.id,
+      id: activeSession.id,
       actions: proposed.map((line) => ({
         action: 'confirm_match' as const,
         fingerprint: line.fingerprint,
@@ -117,9 +255,9 @@ export function BankReconcilePanel() {
   }
 
   function confirmAllSettlements() {
-    if (!session || proposedSettlements.length === 0) return;
+    if (!activeSession || proposedSettlements.length === 0) return;
     actionsMutation.mutate({
-      id: session.id,
+      id: activeSession.id,
       actions: proposedSettlements.map((line) => ({
         action: 'confirm_settlement' as const,
         fingerprint: line.fingerprint,
@@ -129,17 +267,15 @@ export function BankReconcilePanel() {
   }
 
   function ignoreBank(fingerprint: string) {
-    if (!session) return;
-    const reason = window.prompt('Reason to ignore this bank line?');
-    if (!reason?.trim()) return;
+    if (!activeSession) return;
     actionsMutation.mutate({
-      id: session.id,
-      actions: [{ action: 'ignore_bank', fingerprint, reason: reason.trim() }],
+      id: activeSession.id,
+      actions: [{ action: 'ignore_bank', fingerprint }],
     });
   }
 
   function addFromBank(fingerprint: string) {
-    if (!session) return;
+    if (!activeSession) return;
     const props = propertiesQuery.data ?? [];
     if (props.length === 0) {
       setError('No properties available to attach a new transaction.');
@@ -150,7 +286,7 @@ export function BankReconcilePanel() {
       .map((p, i) => `${i + 1}. ${p.client_prop_id} — ${p.name}`)
       .join('\n');
     const pick = window.prompt(
-      `Add missing from bank as a new verified transaction.\nChoose property number:\n${choices}`,
+      `Create this as a new verified transaction in the app.\nChoose property number:\n${choices}`,
     );
     if (!pick?.trim()) return;
     const index = Number(pick.trim()) - 1;
@@ -160,36 +296,39 @@ export function BankReconcilePanel() {
       return;
     }
     actionsMutation.mutate({
-      id: session.id,
+      id: activeSession.id,
       actions: [{ action: 'add_from_bank', fingerprint, property_id: prop.id }],
     });
   }
 
   function ignoreApp(kind: 'deposit' | 'expense', txId: string) {
-    if (!session) return;
-    const reason = window.prompt('Reason to ignore this app transaction?');
-    if (!reason?.trim()) return;
+    if (!activeSession) return;
     actionsMutation.mutate({
-      id: session.id,
-      actions: [{ action: 'ignore_app', kind, tx_id: txId, reason: reason.trim() }],
+      id: activeSession.id,
+      actions: [{ action: 'ignore_app', kind, tx_id: txId }],
+    });
+  }
+
+  function confirmOne(row: AppPeriodRow) {
+    if (!activeSession || !row.fingerprint) return;
+    actionsMutation.mutate({
+      id: activeSession.id,
+      actions: [
+        {
+          action: 'confirm_match',
+          fingerprint: row.fingerprint,
+          kind: row.kind,
+          tx_id: row.id,
+        },
+      ],
     });
   }
 
   return (
-    <section className="panel p-4 sm:p-5 space-y-4">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-            Bank match / verify
-          </h3>
-          <p className="mt-1 text-sm muted-text">
-            Upload the bank Excel as ground truth. Soft matches become{' '}
-            <strong>Proposed match → Verified</strong>, not duplicates. Confirming attaches
-            bank אסמכתא and does not create a second copy.
-          </p>
-        </div>
-        <label className="btn-primary cursor-pointer shrink-0 text-sm">
-          {createMutation.isPending ? 'Opening…' : 'Upload bank Excel to verify'}
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <label className="btn-primary cursor-pointer text-sm">
+          {createMutation.isPending ? 'Opening…' : 'Upload bank Excel'}
           <input
             type="file"
             accept=".xlsx,.xls"
@@ -202,97 +341,179 @@ export function BankReconcilePanel() {
             }}
           />
         </label>
+        {message ? (
+          <p className="text-sm text-emerald-700 dark:text-emerald-300">{message}</p>
+        ) : null}
+        {error ? <p className="text-sm text-red-600">{error}</p> : null}
       </div>
 
-      {message ? (
-        <p className="text-sm text-emerald-700 dark:text-emerald-300">{message}</p>
-      ) : null}
-      {error ? <p className="text-sm text-red-600">{error}</p> : null}
-
       {sessionQuery.isLoading && sessionId ? (
-        <p className="text-sm muted-text">Loading session…</p>
+        <p className="text-sm muted-text">Loading…</p>
       ) : null}
 
-      {session ? (
+      {activeSession ? (
         <>
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 text-sm">
-            <div>
-              <p className="label-text">File</p>
-              <p className="font-medium truncate">{session.filename || session.id}</p>
-            </div>
-            <div>
-              <p className="label-text">Period</p>
-              <p className="font-medium tabular-nums">
-                {session.statement_start_date
-                  ? formatDate(session.statement_start_date)
-                  : '—'}{' '}
-                →{' '}
-                {session.statement_end_date ? formatDate(session.statement_end_date) : '—'}
-              </p>
-            </div>
-            <div>
-              <p className="label-text">Verified Gap</p>
-              <p className="font-medium tabular-nums">
-                {session.gap_verified != null
-                  ? formatCurrency(session.gap_verified)
-                  : 'Set opening balance'}
-              </p>
-            </div>
-            <div>
-              <p className="label-text">Unresolved</p>
-              <p className="font-medium tabular-nums">
-                bank {session.counts.unresolved_bank ?? 0} · app{' '}
-                {session.counts.unresolved_app ?? 0}
-              </p>
-            </div>
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
+            <span className="tabular-nums muted-text">
+              {formatDate(activeSession.statement_start_date)} →{' '}
+              {formatDate(activeSession.statement_end_date)}
+            </span>
+            <span className="tabular-nums">
+              {pendingConfirm.length} able ·{' '}
+              {notInExcelRows.filter((r) => r.status === 'not_in_excel').length} not in Excel ·{' '}
+              {draftFromBank.length} not in bank
+            </span>
+            {activeSession.gap_verified != null ? (
+              <span className="tabular-nums">
+                Gap {formatCurrency(activeSession.gap_verified)}
+              </span>
+            ) : null}
           </div>
 
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
               className="btn-primary text-sm"
-              disabled={busy || proposed.length === 0 || session.status !== 'in_progress'}
+              disabled={busy || proposed.length === 0}
               onClick={confirmAllProposed}
             >
-              Confirm all proposed matches ({proposed.length})
+              Confirm able ({proposed.length})
             </button>
-            <button
-              type="button"
-              className="btn-primary text-sm"
-              disabled={
-                busy || proposedSettlements.length === 0 || session.status !== 'in_progress'
-              }
-              onClick={confirmAllSettlements}
-            >
-              Confirm CC settlements ({proposedSettlements.length})
-            </button>
+            {proposedSettlements.length > 0 ? (
+              <button
+                type="button"
+                className="btn-primary text-sm"
+                disabled={busy}
+                onClick={confirmAllSettlements}
+              >
+                Confirm CC settlements ({proposedSettlements.length})
+              </button>
+            ) : null}
             <button
               type="button"
               className="btn-secondary text-sm"
-              disabled={busy || !session.can_complete || session.status !== 'in_progress'}
-              onClick={() => completeMutation.mutate(session.id)}
+              disabled={busy || !activeSession.can_complete}
+              onClick={() => completeMutation.mutate(activeSession.id)}
             >
-              {completeMutation.isPending ? 'Completing…' : 'Complete session'}
+              {completeMutation.isPending ? 'Completing…' : 'Complete'}
             </button>
           </div>
-          {!session.can_complete && session.status === 'in_progress' ? (
-            <p className="text-xs muted-text">
-              Complete stays disabled until every bank line and bank-scoped app row is
-              matched, settled, added, or ignored with a reason, and Gap is within tolerance
-              (when O and B are set). CC settlements confirm a merchant date group — they do
-              not create duplicate expenses.
-            </p>
-          ) : null}
+
+          <VerifyGroupSection
+            title="Able to verify"
+            subtitle="App transactions found in the bank Excel — confirm to mark Verified."
+            count={ableRows.length}
+            tone="ok"
+          >
+            <VerifyRowTable
+              headers={['Status', 'Date', 'Type', 'Amount', 'App transaction', 'Action']}
+            >
+              {ableRows.map((row) => (
+                <tr
+                  key={row.key}
+                  className="border-t border-slate-200 dark:border-slate-700 align-top"
+                >
+                  <td className="px-3 py-2">{statusBadge(row.status)}</td>
+                  <td className="px-3 py-2 tabular-nums whitespace-nowrap">
+                    {formatVerifyDate(row.transaction_date)}
+                  </td>
+                  <td className="px-3 py-2">
+                    <span className={row.kind === 'deposit' ? 'badge-deposit' : 'badge-expense'}>
+                      {row.kind === 'deposit' ? 'Deposit' : 'Expense'}
+                    </span>
+                  </td>
+                  <td className="px-3 py-2 tabular-nums whitespace-nowrap">
+                    {formatVerifyAmount(row.amount)}
+                  </td>
+                  <td className="px-3 py-2">
+                    <span className="font-mono text-xs">{row.transaction_ref || row.id}</span>
+                    <div className="text-xs muted-text truncate max-w-md">{row.description}</div>
+                    {row.bank_asmachta ? (
+                      <div className="text-xs muted-text mt-0.5">אסמכתא {row.bank_asmachta}</div>
+                    ) : null}
+                  </td>
+                  <td className="px-3 py-2">
+                    {row.status === 'in_excel' ? (
+                      <button
+                        type="button"
+                        className="btn-secondary text-xs"
+                        disabled={busy}
+                        onClick={() => confirmOne(row)}
+                      >
+                        Confirm → Verified
+                      </button>
+                    ) : (
+                      <span className="text-xs muted-text">Done</span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </VerifyRowTable>
+          </VerifyGroupSection>
+
+          <VerifyGroupSection
+            title="Not in Excel"
+            subtitle="App transactions in this period with no matching bank Excel line."
+            count={notInExcelRows.length}
+            tone="warn"
+          >
+            <VerifyRowTable
+              headers={['Status', 'Date', 'Type', 'Amount', 'App transaction', 'Action']}
+            >
+              {notInExcelRows.map((row) => (
+                <tr
+                  key={row.key}
+                  className="border-t border-slate-200 dark:border-slate-700 align-top"
+                >
+                  <td className="px-3 py-2">{statusBadge(row.status)}</td>
+                  <td className="px-3 py-2 tabular-nums whitespace-nowrap">
+                    {formatVerifyDate(row.transaction_date)}
+                  </td>
+                  <td className="px-3 py-2">
+                    <span className={row.kind === 'deposit' ? 'badge-deposit' : 'badge-expense'}>
+                      {row.kind === 'deposit' ? 'Deposit' : 'Expense'}
+                    </span>
+                  </td>
+                  <td className="px-3 py-2 tabular-nums whitespace-nowrap">
+                    {formatVerifyAmount(row.amount)}
+                  </td>
+                  <td className="px-3 py-2">
+                    <span className="font-mono text-xs">{row.transaction_ref || row.id}</span>
+                    <div className="text-xs muted-text truncate max-w-md">{row.description}</div>
+                  </td>
+                  <td className="px-3 py-2">
+                    {row.status === 'not_in_excel' ? (
+                      <button
+                        type="button"
+                        className="btn-secondary text-xs"
+                        disabled={busy}
+                        onClick={() => ignoreApp(row.kind, row.id)}
+                      >
+                        Ignore
+                      </button>
+                    ) : (
+                      <span className="text-xs muted-text">Skipped</span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </VerifyRowTable>
+          </VerifyGroupSection>
 
           {proposedSettlements.length > 0 ? (
-            <div className="overflow-x-auto">
-              <h4 className="text-sm font-medium mb-2">Proposed CC settlements</h4>
+            <div className="overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-700">
+              <div className="px-3 py-2 border-b border-slate-200 dark:border-slate-700">
+                <h4 className="text-sm font-medium">CC settlement groups</h4>
+                <p className="text-xs muted-text mt-0.5">
+                  Bank Mastercard settlement debits linked to CC-verified merchant groups.
+                </p>
+              </div>
               <table className="w-full text-sm">
                 <thead className="table-head">
                   <tr>
-                    <th className="px-2 py-2 text-left">Bank settlement</th>
-                    <th className="px-2 py-2 text-left">CC-verified group</th>
-                    <th className="px-2 py-2 text-left">Action</th>
+                    <th className="px-3 py-2 text-left">Settlement</th>
+                    <th className="px-3 py-2 text-left">Merchant group</th>
+                    <th className="px-3 py-2 text-left">Action</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -301,36 +522,22 @@ export function BankReconcilePanel() {
                       key={line.fingerprint}
                       className="border-t border-slate-200 dark:border-slate-700"
                     >
-                      <td className="px-2 py-2">
-                        {line.transaction_date ? formatDate(line.transaction_date) : '—'} · −
+                      <td className="px-3 py-2">
+                        {formatVerifyDate(line.transaction_date)} · −
                         {formatCurrency(line.amount)}
                         {line.asmachta ? ` · אסמכתא ${line.asmachta}` : ''}
-                        <div className="text-xs muted-text truncate max-w-xs">
-                          {line.description}
-                        </div>
                       </td>
-                      <td className="px-2 py-2">
+                      <td className="px-3 py-2">
                         <div className="text-xs muted-text">{line.proposed_summary}</div>
-                        {line.proposed_window_start && line.proposed_window_end ? (
-                          <div className="text-xs muted-text">
-                            Window {formatDate(line.proposed_window_start)} →{' '}
-                            {formatDate(line.proposed_window_end)}
-                          </div>
-                        ) : null}
-                        {line.proposed_group_total != null ? (
-                          <div className="text-xs tabular-nums">
-                            Group total {formatCurrency(line.proposed_group_total)}
-                          </div>
-                        ) : null}
                       </td>
-                      <td className="px-2 py-2">
+                      <td className="px-3 py-2">
                         <button
                           type="button"
                           className="btn-secondary text-xs"
                           disabled={busy}
                           onClick={() =>
                             actionsMutation.mutate({
-                              id: session.id,
+                              id: activeSession.id,
                               actions: [
                                 {
                                   action: 'confirm_settlement',
@@ -351,160 +558,76 @@ export function BankReconcilePanel() {
             </div>
           ) : null}
 
-          {proposed.length > 0 ? (
-            <div className="overflow-x-auto">
-              <h4 className="text-sm font-medium mb-2">Proposed matches</h4>
-              <table className="w-full text-sm">
-                <thead className="table-head">
-                  <tr>
-                    <th className="px-2 py-2 text-left">Bank</th>
-                    <th className="px-2 py-2 text-left">App match</th>
-                    <th className="px-2 py-2 text-left">Action</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {proposed.slice(0, 50).map((line) => (
-                    <tr key={line.fingerprint} className="border-t border-slate-200 dark:border-slate-700">
-                      <td className="px-2 py-2">
-                        {line.transaction_date ? formatDate(line.transaction_date) : '—'} ·{' '}
-                        {line.side === 'credit' ? '+' : '−'}
-                        {formatCurrency(line.amount)}
-                        {line.asmachta ? ` · אסמכתא ${line.asmachta}` : ''}
-                        <div className="text-xs muted-text truncate max-w-xs">
-                          {line.description}
-                        </div>
-                      </td>
-                      <td className="px-2 py-2">
-                        <span className="font-mono text-xs">{line.proposed_tx_ref}</span>
-                        <div className="text-xs muted-text">{line.proposed_summary}</div>
-                      </td>
-                      <td className="px-2 py-2">
+          <VerifyGroupSection
+            title="Not in bank"
+            subtitle="Bank Excel movements with no matching app transaction — create a draft in the app or ignore."
+            count={notInBankLines.length}
+            tone="warn"
+          >
+            <VerifyRowTable headers={['Draft', 'Date', 'Amount', 'Details', 'Action']}>
+              {notInBankLines.map((line) => (
+                <tr
+                  key={line.fingerprint}
+                  className="border-t border-slate-200 dark:border-slate-700 align-top"
+                >
+                  <td className="px-3 py-2">
+                    <span className={line.side === 'credit' ? 'badge-deposit' : 'badge-expense'}>
+                      {draftKindLabel(line)}
+                    </span>
+                    {line.status === 'added' ? (
+                      <span className="badge-bank-verified ml-1">Created</span>
+                    ) : null}
+                    {line.status === 'ignored' ? (
+                      <span className="badge-bank-unverified ml-1">Ignored</span>
+                    ) : null}
+                  </td>
+                  <td className="px-3 py-2 tabular-nums whitespace-nowrap">
+                    {formatVerifyDate(line.transaction_date)}
+                  </td>
+                  <td className="px-3 py-2 tabular-nums whitespace-nowrap">
+                    {formatVerifyAmount(line.amount, line.side)}
+                  </td>
+                  <td className="px-3 py-2">
+                    {line.asmachta ? (
+                      <div className="text-xs font-mono">אסמכתא {line.asmachta}</div>
+                    ) : null}
+                    <div className="text-xs muted-text truncate max-w-md">{line.description}</div>
+                    {line.proposed_tx_ref ? (
+                      <div className="text-xs muted-text">→ {line.proposed_tx_ref}</div>
+                    ) : null}
+                  </td>
+                  <td className="px-3 py-2">
+                    {line.status === 'unmatched' ? (
+                      <div className="flex flex-wrap gap-1">
+                        <button
+                          type="button"
+                          className="btn-primary text-xs"
+                          disabled={busy || propertiesQuery.isLoading}
+                          onClick={() => addFromBank(line.fingerprint)}
+                        >
+                          Create transaction…
+                        </button>
                         <button
                           type="button"
                           className="btn-secondary text-xs"
                           disabled={busy}
-                          onClick={() =>
-                            actionsMutation.mutate({
-                              id: session.id,
-                              actions: [
-                                {
-                                  action: 'confirm_match',
-                                  fingerprint: line.fingerprint,
-                                  kind: (line.proposed_kind as 'deposit' | 'expense') || undefined,
-                                  tx_id: line.proposed_tx_id || undefined,
-                                },
-                              ],
-                            })
-                          }
+                          onClick={() => ignoreBank(line.fingerprint)}
                         >
-                          Confirm → Verified
+                          Ignore
                         </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              {proposed.length > 50 ? (
-                <p className="text-xs muted-text mt-1">Showing 50 of {proposed.length}</p>
-              ) : null}
-            </div>
-          ) : null}
-
-          {unmatchedBank.length > 0 ? (
-            <div className="overflow-x-auto">
-              <h4 className="text-sm font-medium mb-2">
-                Unmatched bank lines ({unmatchedBank.length})
-              </h4>
-              <table className="w-full text-sm">
-                <thead className="table-head">
-                  <tr>
-                    <th className="px-2 py-2 text-left">Line</th>
-                    <th className="px-2 py-2 text-left">Action</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {unmatchedBank.slice(0, 30).map((line) => (
-                    <tr key={line.fingerprint} className="border-t border-slate-200 dark:border-slate-700">
-                      <td className="px-2 py-2">
-                        {line.transaction_date ? formatDate(line.transaction_date) : '—'} ·{' '}
-                        {line.side === 'credit' ? '+' : '−'}
-                        {formatCurrency(line.amount)}
-                        <div className="text-xs muted-text truncate max-w-md">
-                          {line.description}
-                        </div>
-                      </td>
-                      <td className="px-2 py-2">
-                        <div className="flex flex-wrap gap-1">
-                          <button
-                            type="button"
-                            className="btn-secondary text-xs"
-                            disabled={busy || propertiesQuery.isLoading}
-                            onClick={() => addFromBank(line.fingerprint)}
-                          >
-                            Add missing…
-                          </button>
-                          <button
-                            type="button"
-                            className="btn-secondary text-xs"
-                            disabled={busy}
-                            onClick={() => ignoreBank(line.fingerprint)}
-                          >
-                            Ignore…
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : null}
-
-          {unmatchedApp.length > 0 ? (
-            <div className="overflow-x-auto">
-              <h4 className="text-sm font-medium mb-2">
-                Unmatched app transactions ({unmatchedApp.length})
-              </h4>
-              <table className="w-full text-sm">
-                <thead className="table-head">
-                  <tr>
-                    <th className="px-2 py-2 text-left">Transaction</th>
-                    <th className="px-2 py-2 text-left">Action</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {unmatchedApp.slice(0, 30).map((row) => (
-                    <tr
-                      key={`${row.kind}:${row.id}`}
-                      className="border-t border-slate-200 dark:border-slate-700"
-                    >
-                      <td className="px-2 py-2">
-                        <span className="font-mono text-xs">{row.transaction_ref}</span> ·{' '}
-                        {row.kind} ·{' '}
-                        {row.transaction_date ? formatDate(row.transaction_date) : '—'} ·{' '}
-                        {formatCurrency(row.amount)}
-                        <div className="text-xs muted-text truncate max-w-md">
-                          {row.description}
-                        </div>
-                      </td>
-                      <td className="px-2 py-2">
-                        <button
-                          type="button"
-                          className="btn-secondary text-xs"
-                          disabled={busy}
-                          onClick={() => ignoreApp(row.kind, row.id)}
-                        >
-                          Ignore…
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : null}
+                      </div>
+                    ) : (
+                      <span className="text-xs muted-text">
+                        {line.status === 'added' ? 'Created' : 'Skipped'}
+                      </span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </VerifyRowTable>
+          </VerifyGroupSection>
         </>
       ) : null}
-    </section>
+    </div>
   );
 }

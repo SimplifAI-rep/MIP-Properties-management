@@ -57,6 +57,9 @@ def deposit_dict_to_transaction(item: dict[str, Any]) -> dict[str, Any]:
         bank_verified_at=item.get("bank_verified_at"),
         bank_asmachta=item.get("bank_asmachta"),
         bank_reconcile_exclude=bool(item.get("bank_reconcile_exclude")),
+        cc_verified_at=None,
+        cc_bank_confirmed_at=None,
+        cc_settlement_group_id=None,
     ).model_dump(mode="json")
 
 
@@ -93,6 +96,9 @@ def expense_dict_to_transaction(item: dict[str, Any]) -> dict[str, Any]:
         bank_verified_at=item.get("bank_verified_at"),
         bank_asmachta=item.get("bank_asmachta"),
         bank_reconcile_exclude=bool(item.get("bank_reconcile_exclude")),
+        cc_verified_at=item.get("cc_verified_at"),
+        cc_bank_confirmed_at=item.get("cc_bank_confirmed_at"),
+        cc_settlement_group_id=item.get("cc_settlement_group_id"),
     ).model_dump(mode="json")
 
 

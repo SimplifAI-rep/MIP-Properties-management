@@ -43,6 +43,7 @@ export function BankVerificationPanel() {
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['bank-settings'] });
       void queryClient.invalidateQueries({ queryKey: ['bank-gap'] });
+      void queryClient.invalidateQueries({ queryKey: ['verification-workspace'] });
       setEditing(false);
       setMessage('Bank settings saved.');
       setError(null);
@@ -61,6 +62,9 @@ export function BankVerificationPanel() {
       void queryClient.invalidateQueries({ queryKey: ['deposits'] });
       void queryClient.invalidateQueries({ queryKey: ['expenses'] });
       void queryClient.invalidateQueries({ queryKey: ['transactions'] });
+      void queryClient.invalidateQueries({ queryKey: ['verification-workspace'] });
+      void queryClient.invalidateQueries({ queryKey: ['verification-group-txs'] });
+      void queryClient.invalidateQueries({ queryKey: ['cc-pool-txs'] });
       setEditing(false);
       setMessage(
         `Cutover done. Marked ${result.deposits_marked} deposits and ${result.expenses_marked} expenses as Verified through ${formatDate(result.settings.last_verification_date!)}.`,
@@ -116,11 +120,11 @@ export function BankVerificationPanel() {
   }
 
   return (
-    <section className="panel p-4 sm:p-5">
+    <section className="p-4 sm:p-5">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-            Bank verification
+            Opening balance & cutover
           </h3>
           <p className="mt-1 text-sm muted-text">
             Separate from company float. Opening balance + last verification date for the

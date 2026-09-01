@@ -328,6 +328,9 @@ class TransactionRead(BaseModel):
     bank_verified_at: datetime | None = None
     bank_asmachta: str | None = None
     bank_reconcile_exclude: bool | None = None
+    cc_verified_at: datetime | None = None
+    cc_bank_confirmed_at: datetime | None = None
+    cc_settlement_group_id: UUID | None = None
 
 
 class ExpenseRead(BaseModel):
@@ -706,3 +709,51 @@ class CcReconcileSessionResponse(BaseModel):
     can_complete: bool
     lines: list[dict]
     unmatched_app: list[dict]
+
+
+class VerificationBankGroup(BaseModel):
+    id: str
+    kind: Literal["bank"] = "bank"
+    status: Literal["verified", "unverified"]
+    title: str
+    date: str | None = None
+    statement_start_date: str | None = None
+    statement_end_date: str | None = None
+    after_date: str | None = None
+    session_id: str | None = None
+    filename: str | None = None
+    transaction_count: int = 0
+    settlement_count: int = 0
+
+
+class VerificationCcHistoryGroup(BaseModel):
+    id: str
+    kind: Literal["cc"] = "cc"
+    status: Literal["verified"] = "verified"
+    title: str
+    date: str | None = None
+    statement_start_date: str | None = None
+    statement_end_date: str | None = None
+    session_id: str | None = None
+    filename: str | None = None
+    card_last4: str | None = None
+    transaction_count: int = 0
+
+
+class VerificationCcPoolSummary(BaseModel):
+    pending_count: int = 0
+    cc_verified_count: int = 0
+
+
+class VerificationWorkspaceResponse(BaseModel):
+    last_verification_date: str | None = None
+    last_cc_verification_date: str | None = None
+    bank_groups: list[VerificationBankGroup]
+    cc_history: list[VerificationCcHistoryGroup] = []
+    cc_active_session_id: str | None = None
+    cc_pool: VerificationCcPoolSummary
+
+
+class VerificationTransactionsResponse(BaseModel):
+    items: list[TransactionRead]
+    total: int

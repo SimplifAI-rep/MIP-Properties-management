@@ -225,6 +225,18 @@ export const api = {
       `/bank-settings/cc-reconcile/sessions/${sessionId}/complete`,
       { method: 'POST' },
     ),
+  getVerificationWorkspace: () =>
+    request<import('../types').VerificationWorkspace>(
+      '/bank-settings/verification-workspace',
+    ),
+  getVerificationGroupTransactions: (groupId: string) =>
+    request<import('../types').VerificationTransactionsResponse>(
+      `/bank-settings/verification-groups/${encodeURIComponent(groupId)}/transactions`,
+    ),
+  getCcPoolTransactions: (status: 'pending' | 'cc_verified') =>
+    request<import('../types').VerificationTransactionsResponse>(
+      `/bank-settings/cc-pool/transactions${toQuery({ status })}`,
+    ),
   getPeriodFloat: (filters: { date_from: string; date_to: string }) =>
     request<PeriodFloatResponse>(
       `/dashboard/period-float${toQuery({

@@ -2,10 +2,100 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { api } from '../api/client';
-import type { CcReconcileSession } from '../types';
-import { formatCurrency, formatDate } from './ui/States';
+import type { CcReconcileLine, CcReconcileSession } from '../types';
+import {
+  formatVerifyAmount,
+  formatVerifyDate,
+  VerifyGroupSection,
+  VerifyRowTable,
+} from './verifyGroups';
+import { formatDate } from './ui/States';
 import { getUserErrorMessage } from '../utils/errors';
-import { invalidateAlertData } from '../utils/invalidateQueries';
+import {
+  invalidateAlertData,
+  invalidateVerificationWorkspace,
+} from '../utils/invalidateQueries';
+
+type AppCcStatus = 'able' | 'verified' | 'not_in_excel' | 'ignored';
+
+type AppCcRow = {
+  key: string;
+  id: string;
+  transaction_ref?: string | null;
+  transaction_date: string | null;
+  amount: string;
+  description?: string | null;
+  status: AppCcStatus;
+  fingerprint?: string;
+  merchant?: string | null;
+};
+
+function buildCcAppRows(session: CcReconcileSession): AppCcRow[] {
+  const rows: AppCcRow[] = [];
+  const seen = new Set<string>();
+
+  for (const line of session.lines) {
+    if (!line.proposed_tx_id) continue;
+    if (line.status !== 'proposed_match' && line.status !== 'matched' && line.status !== 'added') {
+      continue;
+    }
+    const key = `expense:${line.proposed_tx_id}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    rows.push({
+      key,
+      id: line.proposed_tx_id,
+      transaction_ref: line.proposed_tx_ref,
+      transaction_date: line.transaction_date,
+      amount: line.amount,
+      description: line.proposed_summary || line.merchant || line.details,
+      status: line.status === 'proposed_match' ? 'able' : 'verified',
+      fingerprint: line.fingerprint,
+      merchant: line.merchant,
+    });
+  }
+
+  for (const app of session.unmatched_app) {
+    const key = `expense:${app.id}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    rows.push({
+      key,
+      id: app.id,
+      transaction_ref: app.transaction_ref,
+      transaction_date: app.transaction_date,
+      amount: app.amount,
+      description: app.description,
+      status: app.status === 'ignored' ? 'ignored' : 'not_in_excel',
+    });
+  }
+
+  const order: Record<AppCcStatus, number> = {
+    able: 0,
+    not_in_excel: 1,
+    verified: 2,
+    ignored: 3,
+  };
+  rows.sort((a, b) => {
+    const byStatus = order[a.status] - order[b.status];
+    if (byStatus !== 0) return byStatus;
+    return (b.transaction_date || '').localeCompare(a.transaction_date || '');
+  });
+  return rows;
+}
+
+function ccStatusBadge(status: AppCcStatus) {
+  switch (status) {
+    case 'able':
+      return <span className="badge-cc-verified">Able to verify</span>;
+    case 'verified':
+      return <span className="badge-cc-verified">CC-verified</span>;
+    case 'not_in_excel':
+      return <span className="badge-cc-pending">Not in Excel</span>;
+    case 'ignored':
+      return <span className="badge-bank-unverified">Ignored</span>;
+  }
+}
 
 export function CcReconcilePanel() {
   const queryClient = useQueryClient();
@@ -31,19 +121,20 @@ export function CcReconcilePanel() {
 
   const createMutation = useMutation({
     mutationFn: api.createCcReconcileSession,
-    onSuccess: (session) => {
-      setSessionId(session.id);
+    onSuccess: (created) => {
+      setSessionId(created.id);
       setSearchParams((prev) => {
         const next = new URLSearchParams(prev);
-        next.set('cc_session', session.id);
+        next.set('cc_session', created.id);
         return next;
       });
       setMessage(
-        `CC session opened${session.card_last4 ? ` (card …${session.card_last4})` : ''} — matching paid-by-card expenses, not creating duplicates.`,
+        `CC period opened${created.card_last4 ? ` (card …${created.card_last4})` : ''}. Review unpaid-by-card app rows in the three groups.`,
       );
       setError(null);
       void queryClient.invalidateQueries({ queryKey: ['cc-reconcile-session'] });
       invalidateAlertData(queryClient);
+      invalidateVerificationWorkspace(queryClient);
     },
     onError: (err) => {
       setError(getUserErrorMessage(err));
@@ -64,6 +155,7 @@ export function CcReconcilePanel() {
       void queryClient.invalidateQueries({ queryKey: ['expenses'] });
       void queryClient.invalidateQueries({ queryKey: ['bank-gap'] });
       invalidateAlertData(queryClient);
+      invalidateVerificationWorkspace(queryClient);
       setError(null);
     },
     onError: (err) => setError(getUserErrorMessage(err)),
@@ -71,28 +163,68 @@ export function CcReconcilePanel() {
 
   const completeMutation = useMutation({
     mutationFn: (id: string) => api.completeCcReconcileSession(id),
-    onSuccess: () => {
+    onSuccess: (completed) => {
       void queryClient.invalidateQueries({ queryKey: ['cc-reconcile-session', sessionId] });
       void queryClient.invalidateQueries({ queryKey: ['expenses'] });
       invalidateAlertData(queryClient);
-      setMessage('CC session completed. Matched merchants are CC-verified.');
+      invalidateVerificationWorkspace(queryClient);
+      setSessionId(null);
+      setSearchParams((prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete('cc_session');
+        return next;
+      });
+      setMessage(
+        `CC period completed and moved to history${
+          completed.statement_end_date
+            ? ` through ${formatDate(completed.statement_end_date)}`
+            : ''
+        }.`,
+      );
       setError(null);
     },
     onError: (err) => setError(getUserErrorMessage(err)),
   });
 
+  const propertiesQuery = useQuery({
+    queryKey: ['properties'],
+    queryFn: api.getProperties,
+  });
+
   const session: CcReconcileSession | undefined = sessionQuery.data;
   const busy =
     createMutation.isPending || actionsMutation.isPending || completeMutation.isPending;
+  const activeSession = session?.status === 'in_progress' ? session : undefined;
 
-  const proposed = session?.lines.filter((l) => l.status === 'proposed_match') ?? [];
-  const unmatchedCc = session?.lines.filter((l) => l.status === 'unmatched') ?? [];
-  const unmatchedApp = session?.unmatched_app.filter((a) => a.status === 'unmatched') ?? [];
+  useEffect(() => {
+    if (!session || session.status === 'in_progress') return;
+    setSessionId(null);
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.delete('cc_session');
+      return next;
+    });
+  }, [session, setSearchParams]);
+
+  const proposed =
+    activeSession?.lines.filter((l) => l.status === 'proposed_match') ?? [];
+  const notInBankLines =
+    activeSession?.lines.filter((l) =>
+      ['unmatched', 'ignored', 'added'].includes(l.status),
+    ) ?? [];
+  const appRows = activeSession ? buildCcAppRows(activeSession) : [];
+  const ableRows = appRows.filter((r) => r.status === 'able' || r.status === 'verified');
+  const notInExcelRows = appRows.filter(
+    (r) => r.status === 'not_in_excel' || r.status === 'ignored',
+  );
+  const pendingAble = ableRows.filter((r) => r.status === 'able');
+  const pendingNotExcel = notInExcelRows.filter((r) => r.status === 'not_in_excel');
+  const pendingNotBank = notInBankLines.filter((l) => l.status === 'unmatched');
 
   function confirmAllProposed() {
-    if (!session || proposed.length === 0) return;
+    if (!activeSession || proposed.length === 0) return;
     actionsMutation.mutate({
-      id: session.id,
+      id: activeSession.id,
       actions: proposed.map((line) => ({
         action: 'confirm_match' as const,
         fingerprint: line.fingerprint,
@@ -102,39 +234,67 @@ export function CcReconcilePanel() {
   }
 
   function ignoreCc(fingerprint: string) {
-    if (!session) return;
-    const reason = window.prompt('Reason to ignore this CC charge?');
-    if (!reason?.trim()) return;
+    if (!activeSession) return;
     actionsMutation.mutate({
-      id: session.id,
-      actions: [{ action: 'ignore_cc', fingerprint, reason: reason.trim() }],
+      id: activeSession.id,
+      actions: [{ action: 'ignore_cc', fingerprint }],
+    });
+  }
+
+  function addFromCc(fingerprint: string) {
+    if (!activeSession) return;
+    const props = propertiesQuery.data ?? [];
+    if (props.length === 0) {
+      setError('No properties available to attach a new transaction.');
+      return;
+    }
+    const choices = props
+      .slice(0, 20)
+      .map((p, i) => `${i + 1}. ${p.client_prop_id} — ${p.name}`)
+      .join('\n');
+    const pick = window.prompt(
+      `Create this CC Excel charge as a new CC-verified expense.\nChoose property number:\n${choices}`,
+    );
+    if (!pick?.trim()) return;
+    const index = Number(pick.trim()) - 1;
+    const prop = props[index];
+    if (!prop) {
+      setError('Invalid property selection.');
+      return;
+    }
+    actionsMutation.mutate({
+      id: activeSession.id,
+      actions: [{ action: 'add_from_cc', fingerprint, property_id: prop.id }],
     });
   }
 
   function ignoreApp(txId: string) {
-    if (!session) return;
-    const reason = window.prompt('Reason to ignore this paid-by-card expense?');
-    if (!reason?.trim()) return;
+    if (!activeSession) return;
     actionsMutation.mutate({
-      id: session.id,
-      actions: [{ action: 'ignore_app', tx_id: txId, reason: reason.trim() }],
+      id: activeSession.id,
+      actions: [{ action: 'ignore_app', tx_id: txId }],
+    });
+  }
+
+  function confirmOne(row: AppCcRow) {
+    if (!activeSession || !row.fingerprint) return;
+    actionsMutation.mutate({
+      id: activeSession.id,
+      actions: [
+        {
+          action: 'confirm_match',
+          fingerprint: row.fingerprint,
+          tx_id: row.id,
+        },
+      ],
     });
   }
 
   return (
-    <section className="panel p-4 sm:p-5 space-y-4">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-            Credit card match / verify
-          </h3>
-          <p className="mt-1 text-sm muted-text">
-            Upload a card Excel to verify <strong>paid-by-card</strong> expenses. Soft matches
-            become <strong>Proposed → CC-verified</strong> — they do not create a second copy.
-          </p>
-        </div>
-        <label className="btn-primary cursor-pointer shrink-0 text-sm">
-          {createMutation.isPending ? 'Opening…' : 'Upload CC Excel to verify'}
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <label className="btn-primary cursor-pointer text-sm">
+          {createMutation.isPending ? 'Opening…' : 'Upload CC Excel'}
           <input
             type="file"
             accept=".xlsx,.xls"
@@ -147,43 +307,28 @@ export function CcReconcilePanel() {
             }}
           />
         </label>
+        {message ? (
+          <p className="text-sm text-emerald-700 dark:text-emerald-300">{message}</p>
+        ) : null}
+        {error ? <p className="text-sm text-red-600">{error}</p> : null}
       </div>
 
-      {message ? (
-        <p className="text-sm text-emerald-700 dark:text-emerald-300">{message}</p>
+      {sessionQuery.isLoading && sessionId ? (
+        <p className="text-sm muted-text">Loading…</p>
       ) : null}
-      {error ? <p className="text-sm text-red-600">{error}</p> : null}
 
-      {session ? (
+      {activeSession ? (
         <>
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 text-sm">
-            <div>
-              <p className="label-text">File</p>
-              <p className="font-medium truncate">{session.filename || session.id}</p>
-            </div>
-            <div>
-              <p className="label-text">Card</p>
-              <p className="font-medium">
-                {session.card_last4 ? `…${session.card_last4}` : '—'}
-              </p>
-            </div>
-            <div>
-              <p className="label-text">Period</p>
-              <p className="font-medium tabular-nums">
-                {session.statement_start_date
-                  ? formatDate(session.statement_start_date)
-                  : '—'}{' '}
-                →{' '}
-                {session.statement_end_date ? formatDate(session.statement_end_date) : '—'}
-              </p>
-            </div>
-            <div>
-              <p className="label-text">Unresolved</p>
-              <p className="font-medium tabular-nums">
-                CC {session.counts.unresolved_cc ?? 0} · app{' '}
-                {session.counts.unresolved_app ?? 0}
-              </p>
-            </div>
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
+            <span className="tabular-nums muted-text">
+              {formatVerifyDate(activeSession.statement_start_date)} →{' '}
+              {formatVerifyDate(activeSession.statement_end_date)}
+              {activeSession.card_last4 ? ` · …${activeSession.card_last4}` : ''}
+            </span>
+            <span className="tabular-nums">
+              {pendingAble.length} able · {pendingNotExcel.length} not in Excel ·{' '}
+              {pendingNotBank.length} not in bank
+            </span>
           </div>
 
           <div className="flex flex-wrap gap-2">
@@ -193,98 +338,168 @@ export function CcReconcilePanel() {
               disabled={busy || proposed.length === 0}
               onClick={confirmAllProposed}
             >
-              Confirm {proposed.length} proposed match{proposed.length === 1 ? '' : 'es'}
+              Confirm able ({proposed.length})
             </button>
             <button
               type="button"
               className="btn-secondary text-sm"
-              disabled={busy || !session.can_complete || session.status !== 'in_progress'}
-              onClick={() => completeMutation.mutate(session.id)}
+              disabled={busy || !activeSession.can_complete}
+              onClick={() => completeMutation.mutate(activeSession.id)}
             >
-              Complete CC session
+              {completeMutation.isPending ? 'Completing…' : 'Complete'}
             </button>
           </div>
 
-          {proposed.length > 0 ? (
-            <div className="space-y-2">
-              <h4 className="text-sm font-medium">Proposed matches</h4>
-              <ul className="space-y-1 text-sm max-h-48 overflow-y-auto">
-                {proposed.map((line) => (
-                  <li
-                    key={line.fingerprint}
-                    className="flex flex-wrap items-baseline justify-between gap-2 border-b border-slate-100 py-1 dark:border-slate-800"
-                  >
-                    <span>
-                      {line.transaction_date ? formatDate(line.transaction_date) : '—'} ·{' '}
-                      {line.merchant || '—'} · {formatCurrency(line.amount)}
-                      {line.proposed_tx_ref ? (
-                        <span className="muted-text"> → {line.proposed_tx_ref}</span>
-                      ) : null}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ) : null}
+          <VerifyGroupSection
+            title="Able to verify"
+            subtitle="Paid-by-card app expenses found in the CC Excel — confirm to mark CC-verified."
+            count={ableRows.length}
+            tone="ok"
+          >
+            <VerifyRowTable headers={['Status', 'Date', 'Amount', 'App transaction', 'Action']}>
+              {ableRows.map((row) => (
+                <tr
+                  key={row.key}
+                  className="border-t border-slate-200 dark:border-slate-700 align-top"
+                >
+                  <td className="px-3 py-2">{ccStatusBadge(row.status)}</td>
+                  <td className="px-3 py-2 tabular-nums whitespace-nowrap">
+                    {formatVerifyDate(row.transaction_date)}
+                  </td>
+                  <td className="px-3 py-2 tabular-nums whitespace-nowrap">
+                    {formatVerifyAmount(row.amount)}
+                  </td>
+                  <td className="px-3 py-2">
+                    <span className="font-mono text-xs">{row.transaction_ref || row.id}</span>
+                    <div className="text-xs muted-text truncate max-w-md">{row.description}</div>
+                  </td>
+                  <td className="px-3 py-2">
+                    {row.status === 'able' ? (
+                      <button
+                        type="button"
+                        className="btn-secondary text-xs"
+                        disabled={busy}
+                        onClick={() => confirmOne(row)}
+                      >
+                        Confirm → CC-verified
+                      </button>
+                    ) : (
+                      <span className="text-xs muted-text">Done</span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </VerifyRowTable>
+          </VerifyGroupSection>
 
-          {unmatchedCc.length > 0 ? (
-            <div className="space-y-2">
-              <h4 className="text-sm font-medium">Unmatched CC charges</h4>
-              <ul className="space-y-1 text-sm max-h-48 overflow-y-auto">
-                {unmatchedCc.map((line) => (
-                  <li
-                    key={line.fingerprint}
-                    className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 py-1 dark:border-slate-800"
-                  >
-                    <span>
-                      {line.transaction_date ? formatDate(line.transaction_date) : '—'} ·{' '}
-                      {line.merchant || '—'} · {formatCurrency(line.amount)}
-                    </span>
-                    <button
-                      type="button"
-                      className="btn-secondary text-xs"
-                      disabled={busy}
-                      onClick={() => ignoreCc(line.fingerprint)}
-                    >
-                      Ignore…
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ) : null}
+          <VerifyGroupSection
+            title="Not in Excel"
+            subtitle="Unverified paid-by-card expenses in this period with no matching CC Excel charge."
+            count={notInExcelRows.length}
+            tone="warn"
+          >
+            <VerifyRowTable headers={['Status', 'Date', 'Amount', 'App transaction', 'Action']}>
+              {notInExcelRows.map((row) => (
+                <tr
+                  key={row.key}
+                  className="border-t border-slate-200 dark:border-slate-700 align-top"
+                >
+                  <td className="px-3 py-2">{ccStatusBadge(row.status)}</td>
+                  <td className="px-3 py-2 tabular-nums whitespace-nowrap">
+                    {formatVerifyDate(row.transaction_date)}
+                  </td>
+                  <td className="px-3 py-2 tabular-nums whitespace-nowrap">
+                    {formatVerifyAmount(row.amount)}
+                  </td>
+                  <td className="px-3 py-2">
+                    <span className="font-mono text-xs">{row.transaction_ref || row.id}</span>
+                    <div className="text-xs muted-text truncate max-w-md">{row.description}</div>
+                  </td>
+                  <td className="px-3 py-2">
+                    {row.status === 'not_in_excel' ? (
+                      <button
+                        type="button"
+                        className="btn-secondary text-xs"
+                        disabled={busy}
+                        onClick={() => ignoreApp(row.id)}
+                      >
+                        Ignore
+                      </button>
+                    ) : (
+                      <span className="text-xs muted-text">Skipped</span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </VerifyRowTable>
+          </VerifyGroupSection>
 
-          {unmatchedApp.length > 0 ? (
-            <div className="space-y-2">
-              <h4 className="text-sm font-medium">Unmatched paid-by-card app rows</h4>
-              <ul className="space-y-1 text-sm max-h-48 overflow-y-auto">
-                {unmatchedApp.map((row) => (
-                  <li
-                    key={row.id}
-                    className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 py-1 dark:border-slate-800"
-                  >
-                    <span>
-                      {row.transaction_date ? formatDate(row.transaction_date) : '—'} ·{' '}
-                      {row.description || '—'} · {formatCurrency(row.amount)}
-                      {row.transaction_ref ? (
-                        <span className="muted-text"> · {row.transaction_ref}</span>
-                      ) : null}
-                    </span>
-                    <button
-                      type="button"
-                      className="btn-secondary text-xs"
-                      disabled={busy}
-                      onClick={() => ignoreApp(row.id)}
-                    >
-                      Ignore…
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ) : null}
+          <VerifyGroupSection
+            title="Not in bank"
+            subtitle="CC Excel charges with no matching paid-by-card expense — create or ignore."
+            count={notInBankLines.length}
+            tone="warn"
+          >
+            <VerifyRowTable headers={['Draft', 'Date', 'Amount', 'Details', 'Action']}>
+              {notInBankLines.map((line: CcReconcileLine) => (
+                <tr
+                  key={line.fingerprint}
+                  className="border-t border-slate-200 dark:border-slate-700 align-top"
+                >
+                  <td className="px-3 py-2">
+                    <span className="badge-expense">Expense draft</span>
+                    {line.status === 'added' ? (
+                      <span className="badge-cc-verified ml-1">Created</span>
+                    ) : null}
+                    {line.status === 'ignored' ? (
+                      <span className="badge-bank-unverified ml-1">Ignored</span>
+                    ) : null}
+                  </td>
+                  <td className="px-3 py-2 tabular-nums whitespace-nowrap">
+                    {formatVerifyDate(line.transaction_date)}
+                  </td>
+                  <td className="px-3 py-2 tabular-nums whitespace-nowrap">
+                    {formatVerifyAmount(line.amount)}
+                  </td>
+                  <td className="px-3 py-2">
+                    <div className="text-xs truncate max-w-md">{line.merchant || '—'}</div>
+                    <div className="text-xs muted-text truncate max-w-md">{line.details}</div>
+                    {line.proposed_tx_ref ? (
+                      <div className="text-xs muted-text">→ {line.proposed_tx_ref}</div>
+                    ) : null}
+                  </td>
+                  <td className="px-3 py-2">
+                    {line.status === 'unmatched' ? (
+                      <div className="flex flex-wrap gap-1">
+                        <button
+                          type="button"
+                          className="btn-primary text-xs"
+                          disabled={busy || propertiesQuery.isLoading}
+                          onClick={() => addFromCc(line.fingerprint)}
+                        >
+                          Create transaction…
+                        </button>
+                        <button
+                          type="button"
+                          className="btn-secondary text-xs"
+                          disabled={busy}
+                          onClick={() => ignoreCc(line.fingerprint)}
+                        >
+                          Ignore
+                        </button>
+                      </div>
+                    ) : (
+                      <span className="text-xs muted-text">
+                        {line.status === 'added' ? 'Created' : 'Skipped'}
+                      </span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </VerifyRowTable>
+          </VerifyGroupSection>
         </>
       ) : null}
-    </section>
+    </div>
   );
 }

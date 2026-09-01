@@ -543,18 +543,36 @@ def test_frontend_verification_surface_exists():
     shell = (frontend / "components" / "layout" / "AppShell.tsx").read_text(encoding="utf-8")
     assert "Verification" in shell
     page = (frontend / "pages" / "VerificationPage.tsx").read_text(encoding="utf-8")
-    assert "BankReconcilePanel" in page
-    assert "CcReconcilePanel" in page
+    assert "VerificationWorkspace" in page
     assert "BankVerificationPanel" in page
-    assert "Net through date" in page
-    dash = (frontend / "pages" / "DashboardPage.tsx").read_text(encoding="utf-8")
-    assert "BankVerificationSummaryCard" in dash
-    assert "BankVerificationPanel" not in dash
+    workspace = (frontend / "components" / "VerificationWorkspace.tsx").read_text(
+        encoding="utf-8"
+    )
+    assert "BankReconcilePanel" in workspace
+    assert "CcReconcilePanel" in workspace
+    assert "HistorySessionGroups" in workspace
+    assert "Bank history" in workspace
     bank_panel = (frontend / "components" / "BankReconcilePanel.tsx").read_text(
         encoding="utf-8"
     )
-    assert "Add missing" in bank_panel
-    assert "Confirm CC settlements" in bank_panel
+    assert "Able to verify" in bank_panel
+    assert "Not in Excel" in bank_panel
+    assert "Not in bank" in bank_panel
+    assert "Create transaction" in bank_panel
+    assert "Confirm CC settlements" in bank_panel or "Confirm CC settlement" in bank_panel
+    page_text = (frontend / "pages" / "VerificationPage.tsx").read_text(encoding="utf-8")
+    assert "Opening O" in page_text
+    assert "Bank balance B" in page_text
+    assert "Verified Gap" in page_text
+    cc_panel = (frontend / "components" / "CcReconcilePanel.tsx").read_text(
+        encoding="utf-8"
+    )
+    assert "Able to verify" in cc_panel
+    assert "Not in Excel" in cc_panel
+    assert "Not in bank" in cc_panel
+    dash = (frontend / "pages" / "DashboardPage.tsx").read_text(encoding="utf-8")
+    assert "BankVerificationSummaryCard" in dash
+    assert "BankVerificationPanel" not in dash
     tx_page = (frontend / "pages" / "TransactionsPage.tsx").read_text(encoding="utf-8")
     assert "Paid by card" in tx_page
     table = (frontend / "components" / "TransactionTable.tsx").read_text(encoding="utf-8")

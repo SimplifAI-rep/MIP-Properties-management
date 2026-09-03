@@ -213,6 +213,16 @@ export function CcReconcilePanel() {
     });
   }
 
+  function bufferPropertyId(): string | null {
+    const props = propertiesQuery.data ?? [];
+    if (props.length === 0) {
+      setError('No properties available to attach a new transaction.');
+      return null;
+    }
+    const buffer = props.find((p) => p.client_prop_id === 'BUFFER');
+    return (buffer ?? props[0]).id;
+  }
+
   function ignoreCc(fingerprint: string) {
     if (!activeSession) return;
     actionsMutation.mutate({
@@ -221,30 +231,38 @@ export function CcReconcilePanel() {
     });
   }
 
-  function addFromCc(fingerprint: string) {
-    if (!activeSession) return;
-    const props = propertiesQuery.data ?? [];
-    if (props.length === 0) {
-      setError('No properties available to attach a new transaction.');
-      return;
-    }
-    const choices = props
-      .slice(0, 20)
-      .map((p, i) => `${i + 1}. ${p.client_prop_id} — ${p.name}`)
-      .join('\n');
-    const pick = window.prompt(
-      `Create a verified card expense from this statement charge.\nChoose property number:\n${choices}`,
-    );
-    if (!pick?.trim()) return;
-    const index = Number(pick.trim()) - 1;
-    const prop = props[index];
-    if (!prop) {
-      setError('Invalid property selection.');
-      return;
-    }
+  function ignoreAllCc() {
+    if (!activeSession || notInBankLines.length === 0) return;
     actionsMutation.mutate({
       id: activeSession.id,
-      actions: [{ action: 'add_from_cc', fingerprint, property_id: prop.id }],
+      actions: notInBankLines.map((line) => ({
+        action: 'ignore_cc' as const,
+        fingerprint: line.fingerprint,
+      })),
+    });
+  }
+
+  function addFromCc(fingerprint: string) {
+    if (!activeSession) return;
+    const propertyId = bufferPropertyId();
+    if (!propertyId) return;
+    actionsMutation.mutate({
+      id: activeSession.id,
+      actions: [{ action: 'add_from_cc', fingerprint, property_id: propertyId }],
+    });
+  }
+
+  function createAllFromCc() {
+    if (!activeSession || notInBankLines.length === 0) return;
+    const propertyId = bufferPropertyId();
+    if (!propertyId) return;
+    actionsMutation.mutate({
+      id: activeSession.id,
+      actions: notInBankLines.map((line) => ({
+        action: 'add_from_cc' as const,
+        fingerprint: line.fingerprint,
+        property_id: propertyId,
+      })),
     });
   }
 
@@ -253,6 +271,19 @@ export function CcReconcilePanel() {
     actionsMutation.mutate({
       id: activeSession.id,
       actions: [{ action: 'ignore_app', tx_id: txId }],
+    });
+  }
+
+  function ignoreAllApp() {
+    if (!activeSession) return;
+    const pending = notInExcelTxs.filter((tx) => !ignoredAppIds.has(tx.id));
+    if (pending.length === 0) return;
+    actionsMutation.mutate({
+      id: activeSession.id,
+      actions: pending.map((tx) => ({
+        action: 'ignore_app' as const,
+        tx_id: tx.id,
+      })),
     });
   }
 
@@ -348,14 +379,47 @@ export function CcReconcilePanel() {
               {formatDate(activeSession.statement_end_date)}
               {activeSession.card_last4 ? ` · ••${activeSession.card_last4}` : ''}
             </span>
-            <button
-              type="button"
-              className="btn-primary text-sm"
-              disabled={busy || proposed.length === 0}
-              onClick={confirmAllProposed}
-            >
-              Confirm all matches ({proposed.length})
-            </button>
+            {proposed.length > 0 ? (
+              <button
+                type="button"
+                className="btn-primary text-sm"
+                disabled={busy}
+                onClick={confirmAllProposed}
+              >
+                Confirm all matches ({proposed.length})
+              </button>
+            ) : null}
+            {notInBankLines.length > 0 ? (
+              <>
+                <button
+                  type="button"
+                  className="btn-primary text-sm"
+                  disabled={busy || propertiesQuery.isLoading}
+                  onClick={createAllFromCc}
+                >
+                  Create all ({notInBankLines.length})
+                </button>
+                <button
+                  type="button"
+                  className="btn-secondary text-sm"
+                  disabled={busy}
+                  onClick={ignoreAllCc}
+                >
+                  Ignore all ({notInBankLines.length})
+                </button>
+              </>
+            ) : null}
+            {notInExcelTxs.some((tx) => !ignoredAppIds.has(tx.id)) ? (
+              <button
+                type="button"
+                className="btn-secondary text-sm"
+                disabled={busy}
+                onClick={ignoreAllApp}
+              >
+                Ignore all missing (
+                {notInExcelTxs.filter((tx) => !ignoredAppIds.has(tx.id)).length})
+              </button>
+            ) : null}
             <button
               type="button"
               className="btn-secondary text-sm"

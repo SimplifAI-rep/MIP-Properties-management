@@ -193,13 +193,29 @@ def _propose_settlement_groups(db: Session, lines: list[dict]) -> None:
             members.append(row)
 
         member_total = sum((row.amount for row in members), Decimal("0"))
-        diff = abs(member_total - settle_amount) if members else settle_amount
-        if members and diff <= Decimal("1.00"):
+        # Only require bank confirmation when linked to Card-verified charges.
+        if not members:
+            line["proposed_kind"] = "cc_settlement"
+            line["proposed_member_ids"] = []
+            line["proposed_group_total"] = "0"
+            line["proposed_window_start"] = (
+                window_start.isoformat() if window_start else None
+            )
+            line["proposed_window_end"] = window_end.isoformat() if window_end else None
+            line["proposed_summary"] = (
+                "Card payment — no linked card-verified charges yet"
+            )
+            line["match_confidence"] = "low"
+            # Leave status unmatched; does not block Complete until Card links exist.
+            if settle_date is not None:
+                prev_settlement_date = settle_date
+            continue
+
+        diff = abs(member_total - settle_amount)
+        if diff <= Decimal("1.00"):
             confidence = "high"
-        elif members and settle_amount > 0 and diff / settle_amount <= Decimal("0.05"):
+        elif settle_amount > 0 and diff / settle_amount <= Decimal("0.05"):
             confidence = "medium"
-        elif members:
-            confidence = "low"
         else:
             confidence = "low"
 
@@ -221,6 +237,24 @@ def _propose_settlement_groups(db: Session, lines: list[dict]) -> None:
         )
         if settle_date is not None:
             prev_settlement_date = settle_date
+
+
+def _line_requires_bank_action(line: dict) -> bool:
+    """Whether a bank line must be resolved before Complete period."""
+    status = line.get("status") or "unmatched"
+    if status == "proposed_match":
+        return True
+    if status == "proposed_settlement":
+        # Only when linked to Card-verified merchants
+        return bool(line.get("proposed_member_ids"))
+    if status == "unmatched":
+        # Card payment rows wait for Card section — not required on their own
+        if _is_cc_settlement_line(line.get("description")) or line.get(
+            "proposed_kind"
+        ) == "cc_settlement":
+            return False
+        return True
+    return False
 
 
 def _propose_matches(
@@ -490,11 +524,7 @@ def session_summary(db: Session, session: BankReconcileSession) -> dict:
         gap_verified = bank_balance - (opening + verified_net)
         within = abs(gap_verified) <= tolerance
 
-    unresolved_bank = sum(
-        1
-        for line in lines
-        if line.get("status") in ("unmatched", "proposed_match", "proposed_settlement")
-    )
+    unresolved_bank = sum(1 for line in lines if _line_requires_bank_action(line))
     unresolved_app = app_unmatched
     can_complete = unresolved_bank == 0 and unresolved_app == 0 and (
         within is True or (bank_balance is None or opening is None)

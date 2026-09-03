@@ -167,9 +167,16 @@ def test_reconcile_propose_confirm_ignore_complete(client, db):
     assert expense.transaction_ref == expense_ref
     assert expense.bank_asmachta == debit.get("asmachta")
 
-    # Cannot leave unresolved — fresh session refuses complete until cleared
+    completed = client.post(
+        f"/api/v1/bank-settings/reconcile/sessions/{session['id']}/complete"
+    )
+    assert completed.status_code == 200, completed.text
+    assert completed.json()["status"] == "completed"
+
+    # Fresh upload cannot complete until non-settlement lines are cleared.
+    # Card payment rows alone do not block Complete (they wait for Card linkage).
     with SAMPLE_BANK.open("rb") as handle:
-        open_session = client.post(
+        open_resp = client.post(
             "/api/v1/bank-settings/reconcile/sessions",
             files={
                 "file": (
@@ -178,17 +185,14 @@ def test_reconcile_propose_confirm_ignore_complete(client, db):
                     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 )
             },
-        ).json()
+        )
+    assert open_resp.status_code == 200, open_resp.text
+    open_session = open_resp.json()
+    assert open_session["can_complete"] is False
     blocked = client.post(
         f"/api/v1/bank-settings/reconcile/sessions/{open_session['id']}/complete"
     )
     assert blocked.status_code == 400
-
-    completed = client.post(
-        f"/api/v1/bank-settings/reconcile/sessions/{session['id']}/complete"
-    )
-    assert completed.status_code == 200, completed.text
-    assert completed.json()["status"] == "completed"
 
     settings = client.get("/api/v1/bank-settings").json()
     assert settings["last_verification_date"] == "2026-07-08"

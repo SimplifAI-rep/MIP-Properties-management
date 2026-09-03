@@ -154,6 +154,10 @@ export function BankReconcilePanel() {
   const busy =
     createMutation.isPending || actionsMutation.isPending || completeMutation.isPending;
   const activeSession = session?.status === 'in_progress' ? session : undefined;
+  const activeAccountLabel =
+    operatingAccounts.find(
+      (a) => a.id === (activeSession?.bank_account_id || bankAccountId),
+    )?.label ?? null;
 
   useEffect(() => {
     if (!session || session.status === 'in_progress') return;
@@ -168,10 +172,26 @@ export function BankReconcilePanel() {
   const proposed =
     activeSession?.lines.filter((l) => l.status === 'proposed_match') ?? [];
   const proposedSettlements =
-    activeSession?.lines.filter((l) => l.status === 'proposed_settlement') ?? [];
-  // Only unresolved statement lines stay here; Create moves them into Matched (able_txs).
+    activeSession?.lines.filter(
+      (l) =>
+        l.status === 'proposed_settlement' &&
+        (l.proposed_member_ids?.length ?? 0) > 0,
+    ) ?? [];
+  // Unmatched statement lines that need Create/Ignore — card payment rows wait for Card.
   const notInBankLines =
-    activeSession?.lines.filter((l) => l.status === 'unmatched') ?? [];
+    activeSession?.lines.filter((l) => {
+      if (l.status !== 'unmatched') return false;
+      if (l.proposed_kind === 'cc_settlement') return false;
+      const text = (l.description || '').toLowerCase();
+      if (
+        text.includes('mastercard') ||
+        text.includes('מאסטרקרד') ||
+        text.includes('מסטרקארד')
+      ) {
+        return false;
+      }
+      return true;
+    }) ?? [];
 
   const fingerprintByTxId = new Map<string, { fingerprint: string; kind: 'deposit' | 'expense' }>();
   for (const line of activeSession?.lines ?? []) {
@@ -228,6 +248,16 @@ export function BankReconcilePanel() {
     });
   }
 
+  function bufferPropertyId(): string | null {
+    const props = propertiesQuery.data ?? [];
+    if (props.length === 0) {
+      setError('No properties available to attach a new transaction.');
+      return null;
+    }
+    const buffer = props.find((p) => p.client_prop_id === 'BUFFER');
+    return (buffer ?? props[0]).id;
+  }
+
   function ignoreBank(fingerprint: string) {
     if (!activeSession) return;
     actionsMutation.mutate({
@@ -236,30 +266,49 @@ export function BankReconcilePanel() {
     });
   }
 
-  function addFromBank(fingerprint: string) {
-    if (!activeSession) return;
-    const props = propertiesQuery.data ?? [];
-    if (props.length === 0) {
-      setError('No properties available to attach a new transaction.');
-      return;
-    }
-    const choices = props
-      .slice(0, 20)
-      .map((p, i) => `${i + 1}. ${p.client_prop_id} — ${p.name}`)
-      .join('\n');
-    const pick = window.prompt(
-      `Create a verified transaction from this statement line.\nChoose property number:\n${choices}`,
-    );
-    if (!pick?.trim()) return;
-    const index = Number(pick.trim()) - 1;
-    const prop = props[index];
-    if (!prop) {
-      setError('Invalid property selection.');
-      return;
-    }
+  function ignoreAllBank() {
+    if (!activeSession || notInBankLines.length === 0) return;
     actionsMutation.mutate({
       id: activeSession.id,
-      actions: [{ action: 'add_from_bank', fingerprint, property_id: prop.id }],
+      actions: notInBankLines.map((line) => ({
+        action: 'ignore_bank' as const,
+        fingerprint: line.fingerprint,
+      })),
+    });
+  }
+
+  function ignoreAllSettlements() {
+    if (!activeSession || proposedSettlements.length === 0) return;
+    actionsMutation.mutate({
+      id: activeSession.id,
+      actions: proposedSettlements.map((line) => ({
+        action: 'ignore_bank' as const,
+        fingerprint: line.fingerprint,
+      })),
+    });
+  }
+
+  function addFromBank(fingerprint: string) {
+    if (!activeSession) return;
+    const propertyId = bufferPropertyId();
+    if (!propertyId) return;
+    actionsMutation.mutate({
+      id: activeSession.id,
+      actions: [{ action: 'add_from_bank', fingerprint, property_id: propertyId }],
+    });
+  }
+
+  function createAllFromBank() {
+    if (!activeSession || notInBankLines.length === 0) return;
+    const propertyId = bufferPropertyId();
+    if (!propertyId) return;
+    actionsMutation.mutate({
+      id: activeSession.id,
+      actions: notInBankLines.map((line) => ({
+        action: 'add_from_bank' as const,
+        fingerprint: line.fingerprint,
+        property_id: propertyId,
+      })),
     });
   }
 
@@ -269,6 +318,52 @@ export function BankReconcilePanel() {
       id: activeSession.id,
       actions: [{ action: 'ignore_app', kind, tx_id: txId }],
     });
+  }
+
+  function ignoreAllApp() {
+    if (!activeSession) return;
+    const pending = notInExcelTxs.filter((tx) => !ignoredAppIds.has(tx.id));
+    if (pending.length === 0) return;
+    actionsMutation.mutate({
+      id: activeSession.id,
+      actions: pending.map((tx) => ({
+        action: 'ignore_app' as const,
+        kind: tx.kind,
+        tx_id: tx.id,
+      })),
+    });
+  }
+
+  const pendingMissingCount = notInExcelTxs.filter(
+    (tx) => !ignoredAppIds.has(tx.id),
+  ).length;
+  const completeBlockers: string[] = [];
+  if (activeSession && !activeSession.can_complete) {
+    if (proposed.length > 0) {
+      completeBlockers.push(`${proposed.length} matches left to confirm`);
+    }
+    if (proposedSettlements.length > 0) {
+      completeBlockers.push(
+        `${proposedSettlements.length} card settlement line(s) left — confirm or ignore`,
+      );
+    }
+    if (notInBankLines.length > 0) {
+      completeBlockers.push(`${notInBankLines.length} unmatched statement lines`);
+    }
+    if (pendingMissingCount > 0) {
+      completeBlockers.push(`${pendingMissingCount} missing from statement`);
+    }
+    if (
+      activeSession.gap_verified != null &&
+      activeSession.within_tolerance_verified === false
+    ) {
+      completeBlockers.push(
+        `Balance still off by ${formatCurrency(activeSession.gap_verified)} — ask an admin`,
+      );
+    }
+    if (completeBlockers.length === 0) {
+      completeBlockers.push('Period is not ready to complete yet');
+    }
   }
 
   function confirmOne(tx: UnifiedTransaction) {
@@ -348,15 +443,78 @@ export function BankReconcilePanel() {
             <span className="tabular-nums muted-text">
               {formatDate(activeSession.statement_start_date)} →{' '}
               {formatDate(activeSession.statement_end_date)}
+              {activeAccountLabel ? ` · ${activeAccountLabel}` : ''}
             </span>
-            <button
-              type="button"
-              className="btn-primary text-sm"
-              disabled={busy || proposed.length === 0}
-              onClick={confirmAllProposed}
-            >
-              Confirm all matches ({proposed.length})
-            </button>
+            {proposed.length > 0 ? (
+              <button
+                type="button"
+                className="btn-primary text-sm"
+                disabled={busy}
+                onClick={confirmAllProposed}
+              >
+                Confirm all matches ({proposed.length})
+              </button>
+            ) : null}
+            {notInBankLines.length > 0 ? (
+              <>
+                <button
+                  type="button"
+                  className="btn-primary text-sm"
+                  disabled={busy || propertiesQuery.isLoading}
+                  onClick={createAllFromBank}
+                >
+                  Create all ({notInBankLines.length})
+                </button>
+                <button
+                  type="button"
+                  className="btn-secondary text-sm"
+                  disabled={busy}
+                  onClick={ignoreAllBank}
+                >
+                  Ignore all ({notInBankLines.length})
+                </button>
+              </>
+            ) : null}
+            {notInExcelTxs.some((tx) => !ignoredAppIds.has(tx.id)) ? (
+              <button
+                type="button"
+                className="btn-secondary text-sm"
+                disabled={busy}
+                onClick={ignoreAllApp}
+              >
+                Ignore all missing ({pendingMissingCount})
+              </button>
+            ) : null}
+            {proposedSettlements.length > 0 ? (
+              <>
+                {proposedSettlements.some(
+                  (l) => (l.proposed_member_ids?.length ?? 0) > 0,
+                ) ? (
+                  <button
+                    type="button"
+                    className="btn-secondary text-sm"
+                    disabled={busy}
+                    onClick={confirmAllSettlements}
+                  >
+                    Confirm settlements (
+                    {
+                      proposedSettlements.filter(
+                        (l) => (l.proposed_member_ids?.length ?? 0) > 0,
+                      ).length
+                    }
+                    )
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  className="btn-secondary text-sm"
+                  disabled={busy}
+                  onClick={ignoreAllSettlements}
+                >
+                  Ignore settlements ({proposedSettlements.length})
+                </button>
+              </>
+            ) : null}
             <button
               type="button"
               className="btn-secondary text-sm"
@@ -366,12 +524,9 @@ export function BankReconcilePanel() {
               {completeMutation.isPending ? 'Completing…' : 'Complete period'}
             </button>
           </div>
-          {!activeSession.can_complete &&
-          activeSession.gap_verified != null &&
-          activeSession.within_tolerance_verified === false ? (
+          {completeBlockers.length > 0 ? (
             <p className="text-sm text-amber-700 dark:text-amber-300">
-              Balance still off by {formatCurrency(activeSession.gap_verified)} — ask an
-              admin to check opening balance or gap tolerance.
+              {completeBlockers.join(' · ')}
             </p>
           ) : null}
 

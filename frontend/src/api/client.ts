@@ -142,8 +142,15 @@ export const api = {
       '/auth/admin/session',
     ),
   getTransactionYears: () => request<{ years: number[] }>('/meta/transaction-years'),
-  getBankSettings: () =>
-    request<import('../types').CompanyBankSettings>('/bank-settings'),
+  getBankSettings: (bankAccountId?: string | null) => {
+    const accountId =
+      typeof bankAccountId === 'string' && bankAccountId.trim()
+        ? bankAccountId.trim()
+        : undefined;
+    return request<import('../types').CompanyBankSettings>(
+      `/bank-settings${toQuery({ bank_account_id: accountId })}`,
+    );
+  },
   updateBankSettings: (payload: import('../types').CompanyBankSettingsUpdate) =>
     request<import('../types').CompanyBankSettings>('/bank-settings', {
       method: 'PATCH',
@@ -154,11 +161,18 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
-  getBankGap: (filters: { bank_balance?: string; date_to?: string } = {}) =>
+  getBankGap: (
+    filters: {
+      bank_balance?: string;
+      date_to?: string;
+      bank_account_id?: string;
+    } = {},
+  ) =>
     request<import('../types').BankGapResponse>(
       `/bank-settings/gap${toQuery({
         bank_balance: filters.bank_balance,
         date_to: filters.date_to,
+        bank_account_id: filters.bank_account_id,
       })}`,
     ),
   parseBankBalance: async (file: File) => {
@@ -169,11 +183,14 @@ export const api = {
       { method: 'POST', body: form },
     );
   },
-  createBankReconcileSession: async (file: File) => {
+  createBankReconcileSession: async (file: File, bankAccountId?: string | null) => {
     const form = new FormData();
     form.append('file', file);
+    const q = bankAccountId
+      ? `?bank_account_id=${encodeURIComponent(bankAccountId)}`
+      : '';
     return request<import('../types').BankReconcileSession>(
-      '/bank-settings/reconcile/sessions',
+      `/bank-settings/reconcile/sessions${q}`,
       { method: 'POST', body: form },
     );
   },

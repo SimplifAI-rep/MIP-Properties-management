@@ -4,7 +4,7 @@ import uuid
 from datetime import date
 from decimal import Decimal
 
-from sqlalchemy import Date, Numeric, String, Text
+from sqlalchemy import Date, ForeignKey, Numeric, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.types import JSON
 
@@ -18,6 +18,9 @@ class BankReconcileSession(Base, TimestampMixin):
     id: Mapped[uuid.UUID] = uuid_pk()
     status: Mapped[str] = mapped_column(String(30), nullable=False, default="in_progress")
     filename: Mapped[str | None] = mapped_column(String(255))
+    bank_account_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("bank_accounts.id"), nullable=True
+    )
     bank_balance: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
     statement_start_date: Mapped[date | None] = mapped_column(Date)
     statement_end_date: Mapped[date | None] = mapped_column(Date)

@@ -66,27 +66,27 @@ export function TransactionTypeBadges({
           content={
             row.bank_asmachta
               ? `Bank verified — אסמכתא ${row.bank_asmachta}`
-              : 'Bank verified (cutover or matched; no bank אסמכתא yet).'
+              : 'Bank verified — no אסמכתא recorded.'
           }
         >
           <span className="badge-bank-verified">Verified</span>
         </Tooltip>
       ) : row.payment_method === 'credit_card' ? (
         row.cc_bank_confirmed_at ? (
-          <Tooltip content="Bank CC settlement confirmed this merchant in a billing group.">
-            <span className="badge-cc-bank-confirmed">CC bank-confirmed</span>
+          <Tooltip content="Card settlement confirmed on the bank statement.">
+            <span className="badge-cc-bank-confirmed">Bank settled</span>
           </Tooltip>
         ) : row.cc_verified_at ? (
           <Tooltip content="Matched to a credit-card statement charge.">
-            <span className="badge-cc-verified">CC-verified</span>
+            <span className="badge-cc-verified">Card verified</span>
           </Tooltip>
         ) : (
-          <Tooltip content="Paid by card — awaits credit-card Excel verify (not a bank debit yet).">
-            <span className="badge-cc-pending">CC-pending</span>
+          <Tooltip content="Paid by card — awaiting card statement verification.">
+            <span className="badge-cc-pending">Card pending</span>
           </Tooltip>
         )
       ) : row.bank_reconcile_exclude || row.paid_by_owner || row.paid_by_resident ? (
-        <Tooltip content="Excluded from bank reconcile (non-bank pay path).">
+        <Tooltip content="Excluded from bank reconciliation.">
           <span className="badge-neutral">Excluded</span>
         </Tooltip>
       ) : (

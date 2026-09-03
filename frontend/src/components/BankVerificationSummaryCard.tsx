@@ -9,7 +9,7 @@ import { getUserErrorMessage } from '../utils/errors';
 export function BankVerificationSummaryCard() {
   const settingsQuery = useQuery({
     queryKey: ['bank-settings'],
-    queryFn: api.getBankSettings,
+    queryFn: () => api.getBankSettings(),
   });
 
   if (settingsQuery.isLoading) {
@@ -38,8 +38,7 @@ export function BankVerificationSummaryCard() {
             Bank verification
           </h3>
           <p className="mt-1 text-sm muted-text">
-            Separate from company float. Open Verification to edit settings, cutover, or
-            Gap.
+            Opening balance, verified-through date, and pending bank transactions.
           </p>
         </div>
         <Link to="/verification" className="btn-primary shrink-0 text-sm">
@@ -60,7 +59,7 @@ export function BankVerificationSummaryCard() {
           </p>
         </div>
         <div>
-          <p className="label-text">Opening bank amount</p>
+          <p className="label-text">Opening balance</p>
           <p className="mt-1 text-lg font-semibold tabular-nums">
             {data.opening_balance != null
               ? formatCurrency(data.opening_balance)
@@ -74,7 +73,7 @@ export function BankVerificationSummaryCard() {
           </p>
         </div>
         <div>
-          <p className="label-text">Unverified since then</p>
+          <p className="label-text">Unverified transactions</p>
           <p className="mt-1 text-lg font-semibold tabular-nums">{data.unverified_count}</p>
         </div>
       </div>

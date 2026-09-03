@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db
+from app.core.admin_auth import require_admin
 from app.models.bank_reconcile_session import BankReconcileSession
 from app.models.cc_reconcile_session import CcReconcileSession
 from app.schemas import (
@@ -32,34 +33,40 @@ from app.services.bank_reconcile_gap import parse_bank_statement_balance, sum_ba
 router = APIRouter(prefix="/bank-settings", tags=["bank-settings"])
 
 
-def _to_read(db, row) -> CompanyBankSettingsRead:
+def _to_read(db, *, bank_account_id=None) -> CompanyBankSettingsRead:
+    payload = bank_settings_service.settings_read_payload(
+        db, bank_account_id=bank_account_id
+    )
     return CompanyBankSettingsRead(
-        opening_balance=row.opening_balance,
-        opening_balance_as_of=row.opening_balance_as_of,
-        last_verification_date=row.last_verification_date,
-        gap_tolerance_amount=row.gap_tolerance_amount
-        if row.gap_tolerance_amount is not None
-        else Decimal("0.01"),
-        unverified_count=bank_settings_service.count_unverified_since(
-            db, last_verification_date=row.last_verification_date
-        ),
+        bank_account_id=payload["bank_account_id"],
+        bank_account_label=payload["bank_account_label"],
+        account_number=payload["account_number"],
+        opening_balance=payload["opening_balance"],
+        opening_balance_as_of=payload["opening_balance_as_of"],
+        last_verification_date=payload["last_verification_date"],
+        gap_tolerance_amount=payload["gap_tolerance_amount"],
+        unverified_count=payload["unverified_count"],
     )
 
 
 @router.get("", response_model=CompanyBankSettingsRead)
-def get_bank_settings(db: Session = Depends(get_db)) -> CompanyBankSettingsRead:
-    row = bank_settings_service.get_or_create_settings(db)
-    return _to_read(db, row)
+def get_bank_settings(
+    bank_account_id: UUID | None = Query(default=None),
+    db: Session = Depends(get_db),
+) -> CompanyBankSettingsRead:
+    return _to_read(db, bank_account_id=bank_account_id)
 
 
 @router.patch("", response_model=CompanyBankSettingsRead)
 def patch_bank_settings(
     payload: CompanyBankSettingsUpdate,
     db: Session = Depends(get_db),
+    _admin: str = Depends(require_admin),
 ) -> CompanyBankSettingsRead:
     try:
-        row = bank_settings_service.update_settings(
+        account, _company = bank_settings_service.update_settings(
             db,
+            bank_account_id=payload.bank_account_id,
             opening_balance=payload.opening_balance,
             opening_balance_as_of=payload.opening_balance_as_of,
             last_verification_date=payload.last_verification_date,
@@ -70,26 +77,34 @@ def patch_bank_settings(
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return _to_read(db, row)
+    return _to_read(
+        db, bank_account_id=account.id if account else payload.bank_account_id
+    )
 
 
 @router.post("/cutover", response_model=BankCutoverResponse)
 def go_live_cutover(
     payload: BankCutoverRequest,
     db: Session = Depends(get_db),
+    _admin: str = Depends(require_admin),
 ) -> BankCutoverResponse:
-    """Go-live: set opening balance + D₀, mark txs ≤ D₀ Verified, set last verification."""
+    """Go-live: set opening balance + as-of, mark txs ≤ as-of Verified."""
     try:
-        row, deposits_marked, expenses_marked = bank_settings_service.run_go_live_cutover(
-            db,
-            opening_balance=payload.opening_balance,
-            as_of_date=payload.as_of_date,
-            gap_tolerance_amount=payload.gap_tolerance_amount,
+        account, _company, deposits_marked, expenses_marked = (
+            bank_settings_service.run_go_live_cutover(
+                db,
+                opening_balance=payload.opening_balance,
+                as_of_date=payload.as_of_date,
+                gap_tolerance_amount=payload.gap_tolerance_amount,
+                bank_account_id=payload.bank_account_id,
+            )
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return BankCutoverResponse(
-        settings=_to_read(db, row),
+        settings=_to_read(
+            db, bank_account_id=account.id if account else payload.bank_account_id
+        ),
         deposits_marked=deposits_marked,
         expenses_marked=expenses_marked,
     )
@@ -99,20 +114,19 @@ def go_live_cutover(
 def get_bank_gap(
     bank_balance: Decimal | None = Query(default=None),
     date_to: date | None = Query(default=None),
+    bank_account_id: UUID | None = Query(default=None),
     db: Session = Depends(get_db),
 ) -> BankGapResponse:
-    """Gap = B − (O + N). Success check uses verified-only N; UI also gets all-scoped N."""
-    row = bank_settings_service.get_or_create_settings(db)
-    after = row.opening_balance_as_of or row.last_verification_date
+    """Gap = statement balance − (opening + net)."""
+    payload = bank_settings_service.settings_read_payload(
+        db, bank_account_id=bank_account_id
+    )
+    after = payload["opening_balance_as_of"] or payload["last_verification_date"]
     all_net, verified_net, all_dep, all_exp = sum_bank_scoped_nets(
         db, after_date=after, date_to=date_to
     )
-    opening = row.opening_balance
-    tolerance = (
-        row.gap_tolerance_amount
-        if row.gap_tolerance_amount is not None
-        else Decimal("0.01")
-    )
+    opening = payload["opening_balance"]
+    tolerance = payload["gap_tolerance_amount"]
 
     gap_all = None
     gap_verified = None
@@ -124,8 +138,8 @@ def get_bank_gap(
 
     return BankGapResponse(
         opening_balance=opening,
-        opening_balance_as_of=row.opening_balance_as_of,
-        last_verification_date=row.last_verification_date,
+        opening_balance_as_of=payload["opening_balance_as_of"],
+        last_verification_date=payload["last_verification_date"],
         gap_tolerance_amount=tolerance,
         after_date=after,
         date_to=date_to,
@@ -167,15 +181,19 @@ async def parse_bank_balance_upload(
 @router.post("/reconcile/sessions", response_model=BankReconcileSessionResponse)
 async def create_reconcile_session(
     file: UploadFile = File(...),
+    bank_account_id: UUID | None = Query(default=None),
     db: Session = Depends(get_db),
 ) -> BankReconcileSessionResponse:
-    """Upload bank Excel and open a match/verify session (does not create duplicate txs)."""
+    """Upload bank Excel and open a match/verify session for an operating account."""
     content = await file.read()
     if not content:
         raise HTTPException(status_code=400, detail="Empty file")
     try:
         session = bank_reconcile_service.create_session_from_upload(
-            db, content=content, filename=file.filename
+            db,
+            content=content,
+            filename=file.filename,
+            bank_account_id=bank_account_id,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

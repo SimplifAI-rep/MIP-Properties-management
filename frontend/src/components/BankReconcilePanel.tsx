@@ -2,113 +2,17 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { api } from '../api/client';
-import type { BankReconcileLine, BankReconcileSession } from '../types';
-import {
-  formatVerifyAmount,
-  formatVerifyDate,
-  VerifyGroupSection,
-  VerifyRowTable,
-} from './verifyGroups';
+import type { BankReconcileSession } from '../types';
+import { TransactionTable } from './TransactionTable';
+import { VerifyGroupSection } from './verifyGroups';
 import { formatCurrency, formatDate } from './ui/States';
 import { getUserErrorMessage } from '../utils/errors';
 import {
   invalidateAlertData,
   invalidateVerificationWorkspace,
 } from '../utils/invalidateQueries';
-
-type AppPeriodStatus = 'in_excel' | 'verified' | 'not_in_excel' | 'ignored';
-
-type AppPeriodRow = {
-  key: string;
-  kind: 'deposit' | 'expense';
-  id: string;
-  transaction_ref?: string | null;
-  transaction_date: string | null;
-  amount: string;
-  description?: string | null;
-  status: AppPeriodStatus;
-  fingerprint?: string;
-  bank_asmachta?: string | null;
-  bank_date?: string | null;
-  match_confidence?: string | null;
-};
-
-function buildAppPeriodRows(session: BankReconcileSession): AppPeriodRow[] {
-  const rows: AppPeriodRow[] = [];
-  const seen = new Set<string>();
-
-  for (const line of session.lines) {
-    if (!line.proposed_tx_id) continue;
-    if (line.status !== 'proposed_match' && line.status !== 'matched' && line.status !== 'added') {
-      continue;
-    }
-    if (line.proposed_kind !== 'deposit' && line.proposed_kind !== 'expense') continue;
-    const key = `${line.proposed_kind}:${line.proposed_tx_id}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    rows.push({
-      key,
-      kind: line.proposed_kind,
-      id: line.proposed_tx_id,
-      transaction_ref: line.proposed_tx_ref,
-      transaction_date: line.transaction_date,
-      amount: line.amount,
-      description: line.proposed_summary || line.description,
-      status: line.status === 'proposed_match' ? 'in_excel' : 'verified',
-      fingerprint: line.fingerprint,
-      bank_asmachta: line.asmachta,
-      bank_date: line.transaction_date,
-      match_confidence: line.match_confidence,
-    });
-  }
-
-  for (const app of session.unmatched_app) {
-    const key = `${app.kind}:${app.id}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    rows.push({
-      key,
-      kind: app.kind,
-      id: app.id,
-      transaction_ref: app.transaction_ref,
-      transaction_date: app.transaction_date,
-      amount: app.amount,
-      description: app.description,
-      status: app.status === 'ignored' ? 'ignored' : 'not_in_excel',
-    });
-  }
-
-  const order: Record<AppPeriodStatus, number> = {
-    in_excel: 0,
-    not_in_excel: 1,
-    verified: 2,
-    ignored: 3,
-  };
-  rows.sort((a, b) => {
-    const byStatus = order[a.status] - order[b.status];
-    if (byStatus !== 0) return byStatus;
-    return (b.transaction_date || '').localeCompare(a.transaction_date || '');
-  });
-  return rows;
-}
-
-function statusBadge(status: AppPeriodStatus) {
-  switch (status) {
-    case 'in_excel':
-      return <span className="badge-bank-verified">Able to verify</span>;
-    case 'verified':
-      return <span className="badge-bank-verified">Verified</span>;
-    case 'not_in_excel':
-      return <span className="badge-bank-unverified">Not in Excel</span>;
-    case 'ignored':
-      return <span className="badge-bank-unverified">Ignored</span>;
-  }
-}
-
-function draftKindLabel(line: BankReconcileLine): string {
-  if (line.side === 'credit') return 'Deposit draft';
-  return 'Expense draft';
-}
+import { bankDraftToUnified, txsFromApi } from '../utils/verifyTxDisplay';
+import type { UnifiedTransaction } from '../utils/unifiedTransaction';
 
 export function BankReconcilePanel() {
   const queryClient = useQueryClient();
@@ -118,6 +22,7 @@ export function BankReconcilePanel() {
   );
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [bankAccountId, setBankAccountId] = useState<string>('');
 
   useEffect(() => {
     const fromUrl = searchParams.get('session');
@@ -126,14 +31,51 @@ export function BankReconcilePanel() {
     }
   }, [searchParams, sessionId]);
 
+  const workspaceQuery = useQuery({
+    queryKey: ['verification-workspace'],
+    queryFn: () => api.getVerificationWorkspace(),
+  });
+
+  const operatingAccounts = workspaceQuery.data?.operating_accounts ?? [];
+
   const sessionQuery = useQuery({
     queryKey: ['bank-reconcile-session', sessionId],
     queryFn: () => api.getBankReconcileSession(sessionId!),
     enabled: Boolean(sessionId),
   });
 
+  useEffect(() => {
+    if (bankAccountId || operatingAccounts.length === 0) return;
+    const withOpen = operatingAccounts.find((a) => a.open_session_id);
+    setBankAccountId((withOpen ?? operatingAccounts[0]).id);
+  }, [operatingAccounts, bankAccountId]);
+
+  // Keep selected account in sync with the loaded session
+  useEffect(() => {
+    const accountId = sessionQuery.data?.bank_account_id;
+    if (accountId && accountId !== bankAccountId) {
+      setBankAccountId(accountId);
+    }
+  }, [sessionQuery.data?.bank_account_id, bankAccountId]);
+
+  function selectBankAccount(nextId: string) {
+    setBankAccountId(nextId);
+    const account = operatingAccounts.find((a) => a.id === nextId);
+    const nextSession = account?.open_session_id ?? null;
+    setSessionId(nextSession);
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      if (nextSession) next.set('session', nextSession);
+      else next.delete('session');
+      return next;
+    });
+    setMessage(null);
+    setError(null);
+  }
+
   const createMutation = useMutation({
-    mutationFn: api.createBankReconcileSession,
+    mutationFn: ({ file, bankAccountId }: { file: File; bankAccountId?: string | null }) =>
+      api.createBankReconcileSession(file, bankAccountId),
     onSuccess: (created) => {
       setSessionId(created.id);
       setSearchParams((prev) => {
@@ -141,9 +83,8 @@ export function BankReconcilePanel() {
         next.set('session', created.id);
         return next;
       });
-      setMessage(
-        `Period opened from ${created.filename || 'bank file'}. Review app transactions below — confirm ones found in the Excel to mark Verified.`,
-      );
+      setMessage('Statement opened. Confirm matches below.');
+
       setError(null);
       void queryClient.invalidateQueries({ queryKey: ['bank-reconcile-session'] });
       invalidateAlertData(queryClient);
@@ -193,8 +134,10 @@ export function BankReconcilePanel() {
         return next;
       });
       setMessage(
-        `Period completed and moved to history. Last verification date → ${
-          completed.statement_end_date ? formatDate(completed.statement_end_date) : 'updated'
+        `Period completed${
+          completed.statement_end_date
+            ? ` through ${formatDate(completed.statement_end_date)}`
+            : ''
         }.`,
       );
       setError(null);
@@ -226,20 +169,39 @@ export function BankReconcilePanel() {
     activeSession?.lines.filter((l) => l.status === 'proposed_match') ?? [];
   const proposedSettlements =
     activeSession?.lines.filter((l) => l.status === 'proposed_settlement') ?? [];
-  const draftFromBank =
-    activeSession?.lines.filter((l) => l.status === 'unmatched') ?? [];
+  // Only unresolved statement lines stay here; Create moves them into Matched (able_txs).
   const notInBankLines =
-    activeSession?.lines.filter((l) =>
-      ['unmatched', 'ignored', 'added'].includes(l.status),
-    ) ?? [];
-  const appPeriodRows = activeSession ? buildAppPeriodRows(activeSession) : [];
-  const ableRows = appPeriodRows.filter(
-    (r) => r.status === 'in_excel' || r.status === 'verified',
+    activeSession?.lines.filter((l) => l.status === 'unmatched') ?? [];
+
+  const fingerprintByTxId = new Map<string, { fingerprint: string; kind: 'deposit' | 'expense' }>();
+  for (const line of activeSession?.lines ?? []) {
+    if (
+      line.proposed_tx_id &&
+      (line.proposed_kind === 'deposit' || line.proposed_kind === 'expense') &&
+      (line.status === 'proposed_match' || line.status === 'matched' || line.status === 'added')
+    ) {
+      fingerprintByTxId.set(line.proposed_tx_id, {
+        fingerprint: line.fingerprint,
+        kind: line.proposed_kind,
+      });
+    }
+  }
+  const ignoredAppIds = new Set(
+    (activeSession?.unmatched_app ?? [])
+      .filter((r) => r.status === 'ignored')
+      .map((r) => r.id),
   );
-  const notInExcelRows = appPeriodRows.filter(
-    (r) => r.status === 'not_in_excel' || r.status === 'ignored',
+  const proposedTxIds = new Set(
+    proposed.map((l) => l.proposed_tx_id).filter(Boolean) as string[],
   );
-  const pendingConfirm = ableRows.filter((r) => r.status === 'in_excel');
+
+  const ableTxs: UnifiedTransaction[] = txsFromApi(
+    activeSession?.able_txs as Record<string, unknown>[] | undefined,
+  );
+  const notInExcelTxs: UnifiedTransaction[] = txsFromApi(
+    activeSession?.not_in_excel_txs as Record<string, unknown>[] | undefined,
+  );
+  const draftTxs: UnifiedTransaction[] = notInBankLines.map(bankDraftToUnified);
 
   function confirmAllProposed() {
     if (!activeSession || proposed.length === 0) return;
@@ -286,7 +248,7 @@ export function BankReconcilePanel() {
       .map((p, i) => `${i + 1}. ${p.client_prop_id} — ${p.name}`)
       .join('\n');
     const pick = window.prompt(
-      `Create this as a new verified transaction in the app.\nChoose property number:\n${choices}`,
+      `Create a verified transaction from this statement line.\nChoose property number:\n${choices}`,
     );
     if (!pick?.trim()) return;
     const index = Number(pick.trim()) - 1;
@@ -309,16 +271,18 @@ export function BankReconcilePanel() {
     });
   }
 
-  function confirmOne(row: AppPeriodRow) {
-    if (!activeSession || !row.fingerprint) return;
+  function confirmOne(tx: UnifiedTransaction) {
+    if (!activeSession) return;
+    const match = fingerprintByTxId.get(tx.id);
+    if (!match) return;
     actionsMutation.mutate({
       id: activeSession.id,
       actions: [
         {
           action: 'confirm_match',
-          fingerprint: row.fingerprint,
-          kind: row.kind,
-          tx_id: row.id,
+          fingerprint: match.fingerprint,
+          kind: match.kind,
+          tx_id: tx.id,
         },
       ],
     });
@@ -327,17 +291,44 @@ export function BankReconcilePanel() {
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2">
+        {operatingAccounts.length > 1 ? (
+          <label className="text-sm flex items-center gap-2 min-w-0">
+            <span className="label-text shrink-0">Account</span>
+            <select
+              className="field py-1 text-sm min-w-[12rem] max-w-full"
+              value={bankAccountId}
+              disabled={busy}
+              onChange={(e) => selectBankAccount(e.target.value)}
+            >
+              {operatingAccounts.map((account) => (
+                <option key={account.id} value={account.id}>
+                  {account.label}
+                  {account.open_session_id ? ' · in progress' : ''}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
         <label className="btn-primary cursor-pointer text-sm">
-          {createMutation.isPending ? 'Opening…' : 'Upload bank Excel'}
+          {createMutation.isPending ? 'Uploading…' : 'Upload statement'}
           <input
             type="file"
             accept=".xlsx,.xls"
             className="hidden"
-            disabled={busy}
+            disabled={
+              busy ||
+              (operatingAccounts.length > 0 && !bankAccountId) ||
+              Boolean(activeSession)
+            }
             onChange={(e) => {
               const file = e.target.files?.[0];
               e.target.value = '';
-              if (file) createMutation.mutate(file);
+              if (file) {
+                createMutation.mutate({
+                  file,
+                  bankAccountId: bankAccountId || null,
+                });
+              }
             }}
           />
         </label>
@@ -353,279 +344,195 @@ export function BankReconcilePanel() {
 
       {activeSession ? (
         <>
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-sm">
             <span className="tabular-nums muted-text">
               {formatDate(activeSession.statement_start_date)} →{' '}
               {formatDate(activeSession.statement_end_date)}
             </span>
-            <span className="tabular-nums">
-              {pendingConfirm.length} able ·{' '}
-              {notInExcelRows.filter((r) => r.status === 'not_in_excel').length} not in Excel ·{' '}
-              {draftFromBank.length} not in bank
-            </span>
-            {activeSession.gap_verified != null ? (
-              <span className="tabular-nums">
-                Gap {formatCurrency(activeSession.gap_verified)}
-              </span>
-            ) : null}
-          </div>
-
-          <div className="flex flex-wrap gap-2">
             <button
               type="button"
               className="btn-primary text-sm"
               disabled={busy || proposed.length === 0}
               onClick={confirmAllProposed}
             >
-              Confirm able ({proposed.length})
+              Confirm all matches ({proposed.length})
             </button>
-            {proposedSettlements.length > 0 ? (
-              <button
-                type="button"
-                className="btn-primary text-sm"
-                disabled={busy}
-                onClick={confirmAllSettlements}
-              >
-                Confirm CC settlements ({proposedSettlements.length})
-              </button>
-            ) : null}
             <button
               type="button"
               className="btn-secondary text-sm"
               disabled={busy || !activeSession.can_complete}
               onClick={() => completeMutation.mutate(activeSession.id)}
             >
-              {completeMutation.isPending ? 'Completing…' : 'Complete'}
+              {completeMutation.isPending ? 'Completing…' : 'Complete period'}
             </button>
           </div>
+          {!activeSession.can_complete &&
+          activeSession.gap_verified != null &&
+          activeSession.within_tolerance_verified === false ? (
+            <p className="text-sm text-amber-700 dark:text-amber-300">
+              Balance still off by {formatCurrency(activeSession.gap_verified)} — ask an
+              admin to check opening balance or gap tolerance.
+            </p>
+          ) : null}
 
-          <VerifyGroupSection
-            title="Able to verify"
-            subtitle="App transactions found in the bank Excel — confirm to mark Verified."
-            count={ableRows.length}
-            tone="ok"
-          >
-            <VerifyRowTable
-              headers={['Status', 'Date', 'Type', 'Amount', 'App transaction', 'Action']}
-            >
-              {ableRows.map((row) => (
-                <tr
-                  key={row.key}
-                  className="border-t border-slate-200 dark:border-slate-700 align-top"
-                >
-                  <td className="px-3 py-2">{statusBadge(row.status)}</td>
-                  <td className="px-3 py-2 tabular-nums whitespace-nowrap">
-                    {formatVerifyDate(row.transaction_date)}
-                  </td>
-                  <td className="px-3 py-2">
-                    <span className={row.kind === 'deposit' ? 'badge-deposit' : 'badge-expense'}>
-                      {row.kind === 'deposit' ? 'Deposit' : 'Expense'}
-                    </span>
-                  </td>
-                  <td className="px-3 py-2 tabular-nums whitespace-nowrap">
-                    {formatVerifyAmount(row.amount)}
-                  </td>
-                  <td className="px-3 py-2">
-                    <span className="font-mono text-xs">{row.transaction_ref || row.id}</span>
-                    <div className="text-xs muted-text truncate max-w-md">{row.description}</div>
-                    {row.bank_asmachta ? (
-                      <div className="text-xs muted-text mt-0.5">אסמכתא {row.bank_asmachta}</div>
-                    ) : null}
-                  </td>
-                  <td className="px-3 py-2">
-                    {row.status === 'in_excel' ? (
-                      <button
-                        type="button"
-                        className="btn-secondary text-xs"
-                        disabled={busy}
-                        onClick={() => confirmOne(row)}
-                      >
-                        Confirm → Verified
-                      </button>
-                    ) : (
-                      <span className="text-xs muted-text">Done</span>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </VerifyRowTable>
+          <VerifyGroupSection title="Matched" count={ableTxs.length} tone="ok">
+            <TransactionTable
+              rows={ableTxs}
+              emptyMessage="No matches yet."
+              renderActions={(row) =>
+                proposedTxIds.has(row.id) ? (
+                  <button
+                    type="button"
+                    className="btn-secondary text-xs"
+                    disabled={busy}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      confirmOne(row);
+                    }}
+                  >
+                    Confirm
+                  </button>
+                ) : (
+                  <span className="text-xs muted-text">Verified</span>
+                )
+              }
+            />
           </VerifyGroupSection>
 
           <VerifyGroupSection
-            title="Not in Excel"
-            subtitle="App transactions in this period with no matching bank Excel line."
-            count={notInExcelRows.length}
+            title="Missing from statement"
+            count={notInExcelTxs.length}
             tone="warn"
           >
-            <VerifyRowTable
-              headers={['Status', 'Date', 'Type', 'Amount', 'App transaction', 'Action']}
-            >
-              {notInExcelRows.map((row) => (
-                <tr
-                  key={row.key}
-                  className="border-t border-slate-200 dark:border-slate-700 align-top"
-                >
-                  <td className="px-3 py-2">{statusBadge(row.status)}</td>
-                  <td className="px-3 py-2 tabular-nums whitespace-nowrap">
-                    {formatVerifyDate(row.transaction_date)}
-                  </td>
-                  <td className="px-3 py-2">
-                    <span className={row.kind === 'deposit' ? 'badge-deposit' : 'badge-expense'}>
-                      {row.kind === 'deposit' ? 'Deposit' : 'Expense'}
-                    </span>
-                  </td>
-                  <td className="px-3 py-2 tabular-nums whitespace-nowrap">
-                    {formatVerifyAmount(row.amount)}
-                  </td>
-                  <td className="px-3 py-2">
-                    <span className="font-mono text-xs">{row.transaction_ref || row.id}</span>
-                    <div className="text-xs muted-text truncate max-w-md">{row.description}</div>
-                  </td>
-                  <td className="px-3 py-2">
-                    {row.status === 'not_in_excel' ? (
-                      <button
-                        type="button"
-                        className="btn-secondary text-xs"
-                        disabled={busy}
-                        onClick={() => ignoreApp(row.kind, row.id)}
-                      >
-                        Ignore
-                      </button>
-                    ) : (
-                      <span className="text-xs muted-text">Skipped</span>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </VerifyRowTable>
+            <TransactionTable
+              rows={notInExcelTxs}
+              emptyMessage="None."
+              renderActions={(row) =>
+                ignoredAppIds.has(row.id) ? (
+                  <span className="text-xs muted-text">Ignored</span>
+                ) : (
+                  <button
+                    type="button"
+                    className="btn-secondary text-xs"
+                    disabled={busy}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      ignoreApp(row.kind, row.id);
+                    }}
+                  >
+                    Ignore
+                  </button>
+                )
+              }
+            />
+          </VerifyGroupSection>
+
+          <VerifyGroupSection
+            title="Unmatched statement lines"
+            count={draftTxs.length}
+            tone="warn"
+          >
+            <TransactionTable
+              rows={draftTxs}
+              emptyMessage="None."
+              renderActions={(row) => {
+                const line = notInBankLines.find((l) => l.fingerprint === row.id);
+                if (!line) return null;
+                return (
+                  <div className="flex flex-wrap gap-1">
+                    <button
+                      type="button"
+                      className="btn-primary text-xs"
+                      disabled={busy || propertiesQuery.isLoading}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        addFromBank(line.fingerprint);
+                      }}
+                    >
+                      Create
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-secondary text-xs"
+                      disabled={busy}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        ignoreBank(line.fingerprint);
+                      }}
+                    >
+                      Ignore
+                    </button>
+                  </div>
+                );
+              }}
+            />
           </VerifyGroupSection>
 
           {proposedSettlements.length > 0 ? (
-            <div className="overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-700">
-              <div className="px-3 py-2 border-b border-slate-200 dark:border-slate-700">
-                <h4 className="text-sm font-medium">CC settlement groups</h4>
-                <p className="text-xs muted-text mt-0.5">
-                  Bank Mastercard settlement debits linked to CC-verified merchant groups.
-                </p>
-              </div>
-              <table className="w-full text-sm">
-                <thead className="table-head">
-                  <tr>
-                    <th className="px-3 py-2 text-left">Settlement</th>
-                    <th className="px-3 py-2 text-left">Merchant group</th>
-                    <th className="px-3 py-2 text-left">Action</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {proposedSettlements.map((line) => (
-                    <tr
-                      key={line.fingerprint}
-                      className="border-t border-slate-200 dark:border-slate-700"
-                    >
-                      <td className="px-3 py-2">
-                        {formatVerifyDate(line.transaction_date)} · −
-                        {formatCurrency(line.amount)}
-                        {line.asmachta ? ` · אסמכתא ${line.asmachta}` : ''}
-                      </td>
-                      <td className="px-3 py-2">
-                        <div className="text-xs muted-text">{line.proposed_summary}</div>
-                      </td>
-                      <td className="px-3 py-2">
-                        <button
-                          type="button"
-                          className="btn-secondary text-xs"
-                          disabled={busy}
-                          onClick={() =>
-                            actionsMutation.mutate({
-                              id: activeSession.id,
-                              actions: [
-                                {
-                                  action: 'confirm_settlement',
-                                  fingerprint: line.fingerprint,
-                                  member_ids: line.proposed_member_ids || undefined,
-                                },
-                              ],
-                            })
-                          }
-                        >
-                          Confirm group
-                        </button>
-                      </td>
+            <details className="rounded-lg border border-slate-200 dark:border-slate-700">
+              <summary className="cursor-pointer select-none px-3 py-2 text-sm font-medium">
+                More · card settlements ({proposedSettlements.length})
+              </summary>
+              <div className="border-t border-slate-200 px-3 py-2 dark:border-slate-700 space-y-2">
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    className="btn-secondary text-sm"
+                    disabled={busy}
+                    onClick={confirmAllSettlements}
+                  >
+                    Confirm all settlements
+                  </button>
+                </div>
+                <table className="w-full text-sm">
+                  <thead className="table-head">
+                    <tr>
+                      <th className="px-2 py-1.5 text-left">Settlement</th>
+                      <th className="px-2 py-1.5 text-left">Group</th>
+                      <th className="px-2 py-1.5 text-left">Action</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody>
+                    {proposedSettlements.map((line) => (
+                      <tr
+                        key={line.fingerprint}
+                        className="border-t border-slate-200 dark:border-slate-700"
+                      >
+                        <td className="px-2 py-1.5">
+                          {formatDate(line.transaction_date)} · −
+                          {formatCurrency(line.amount)}
+                        </td>
+                        <td className="px-2 py-1.5 text-xs muted-text">
+                          {line.proposed_summary}
+                        </td>
+                        <td className="px-2 py-1.5">
+                          <button
+                            type="button"
+                            className="btn-secondary text-xs"
+                            disabled={busy}
+                            onClick={() =>
+                              actionsMutation.mutate({
+                                id: activeSession.id,
+                                actions: [
+                                  {
+                                    action: 'confirm_settlement',
+                                    fingerprint: line.fingerprint,
+                                    member_ids: line.proposed_member_ids || undefined,
+                                  },
+                                ],
+                              })
+                            }
+                          >
+                            Confirm
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </details>
           ) : null}
-
-          <VerifyGroupSection
-            title="Not in bank"
-            subtitle="Bank Excel movements with no matching app transaction — create a draft in the app or ignore."
-            count={notInBankLines.length}
-            tone="warn"
-          >
-            <VerifyRowTable headers={['Draft', 'Date', 'Amount', 'Details', 'Action']}>
-              {notInBankLines.map((line) => (
-                <tr
-                  key={line.fingerprint}
-                  className="border-t border-slate-200 dark:border-slate-700 align-top"
-                >
-                  <td className="px-3 py-2">
-                    <span className={line.side === 'credit' ? 'badge-deposit' : 'badge-expense'}>
-                      {draftKindLabel(line)}
-                    </span>
-                    {line.status === 'added' ? (
-                      <span className="badge-bank-verified ml-1">Created</span>
-                    ) : null}
-                    {line.status === 'ignored' ? (
-                      <span className="badge-bank-unverified ml-1">Ignored</span>
-                    ) : null}
-                  </td>
-                  <td className="px-3 py-2 tabular-nums whitespace-nowrap">
-                    {formatVerifyDate(line.transaction_date)}
-                  </td>
-                  <td className="px-3 py-2 tabular-nums whitespace-nowrap">
-                    {formatVerifyAmount(line.amount, line.side)}
-                  </td>
-                  <td className="px-3 py-2">
-                    {line.asmachta ? (
-                      <div className="text-xs font-mono">אסמכתא {line.asmachta}</div>
-                    ) : null}
-                    <div className="text-xs muted-text truncate max-w-md">{line.description}</div>
-                    {line.proposed_tx_ref ? (
-                      <div className="text-xs muted-text">→ {line.proposed_tx_ref}</div>
-                    ) : null}
-                  </td>
-                  <td className="px-3 py-2">
-                    {line.status === 'unmatched' ? (
-                      <div className="flex flex-wrap gap-1">
-                        <button
-                          type="button"
-                          className="btn-primary text-xs"
-                          disabled={busy || propertiesQuery.isLoading}
-                          onClick={() => addFromBank(line.fingerprint)}
-                        >
-                          Create transaction…
-                        </button>
-                        <button
-                          type="button"
-                          className="btn-secondary text-xs"
-                          disabled={busy}
-                          onClick={() => ignoreBank(line.fingerprint)}
-                        >
-                          Ignore
-                        </button>
-                      </div>
-                    ) : (
-                      <span className="text-xs muted-text">
-                        {line.status === 'added' ? 'Created' : 'Skipped'}
-                      </span>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </VerifyRowTable>
-          </VerifyGroupSection>
         </>
       ) : null}
     </div>

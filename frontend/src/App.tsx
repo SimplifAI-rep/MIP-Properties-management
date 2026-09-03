@@ -5,6 +5,7 @@ import { RequireAdmin } from './components/RequireAdmin';
 import { ThemeProvider } from './context/ThemeContext';
 import { AuthProvider } from './context/AuthContext';
 import { AIQueryPage } from './pages/AIQueryPage';
+import { AdminBankSettingsPage } from './pages/AdminBankSettingsPage';
 import { AlertRulesPage } from './pages/AlertRulesPage';
 import { AlertsPage } from './pages/AlertsPage';
 import { DashboardPage } from './pages/DashboardPage';
@@ -52,6 +53,14 @@ export default function App() {
                   element={
                     <RequireAdmin>
                       <AlertRulesPage />
+                    </RequireAdmin>
+                  }
+                />
+                <Route
+                  path="admin/bank-settings"
+                  element={
+                    <RequireAdmin>
+                      <AdminBankSettingsPage />
                     </RequireAdmin>
                   }
                 />

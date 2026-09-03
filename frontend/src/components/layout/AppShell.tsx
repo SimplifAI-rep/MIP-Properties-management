@@ -18,6 +18,7 @@ const navItems = [
   { to: '/alerts', label: 'Alerts', showCount: true },
   { to: '/reports', label: 'Reports' },
   { to: '/data-import', label: 'Data import', adminOnly: true },
+  { to: '/admin/bank-settings', label: 'Bank settings', adminOnly: true },
   { to: '/admin/alert-rules', label: 'Alert rules', adminOnly: true },
   { to: '/ai', label: 'AI Query' },
 ];

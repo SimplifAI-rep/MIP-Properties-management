@@ -116,6 +116,8 @@ class Expense(Base, TimestampMixin):
     )
     # Credit-card reconcile (Stage A — merchant verify against CC Excel)
     cc_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Which company card this expense belongs to (from statement last4)
+    card_last4: Mapped[str | None] = mapped_column(String(8))
     # Stage C — bank settlement confirmed this merchant as part of a group
     cc_bank_confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     cc_settlement_group_id: Mapped[uuid.UUID | None] = mapped_column(

@@ -11,13 +11,14 @@ from typing import Any
 from uuid import UUID
 
 import openpyxl
-from sqlalchemy import and_, select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.models.cc_reconcile_session import CcReconcileSession
 from app.models.expense import Expense
 from app.models.property import Property
+from app.services.account_scope import ensure_cc_account
 
 
 def _parse_amount(value: Any) -> Decimal | None:
@@ -155,7 +156,12 @@ def parse_cc_statement_lines(content: bytes) -> dict[str, Any]:
         wb.close()
 
 
-def _cc_pending_filters(*, date_from: date | None, date_to: date | None):
+def _cc_pending_filters(
+    *,
+    date_from: date | None,
+    date_to: date | None,
+    card_last4: str | None = None,
+):
     clauses = [
         Expense.payment_method == "credit_card",
         Expense.cc_verified_at.is_(None),
@@ -167,6 +173,11 @@ def _cc_pending_filters(*, date_from: date | None, date_to: date | None):
         clauses.append(Expense.transaction_date >= date_from)
     if date_to is not None:
         clauses.append(Expense.transaction_date <= date_to)
+    # Scope to this card, but still allow unassigned (legacy) card expenses to match
+    if card_last4 and card_last4 != "unknown":
+        clauses.append(
+            or_(Expense.card_last4 == card_last4, Expense.card_last4.is_(None))
+        )
     return clauses
 
 
@@ -196,9 +207,24 @@ def _score_cc(line: dict, row: Expense) -> int:
     return score
 
 
-def _propose_matches(db: Session, lines: list[dict], *, date_from: date | None, date_to: date | None) -> None:
+def _propose_matches(
+    db: Session,
+    lines: list[dict],
+    *,
+    date_from: date | None,
+    date_to: date | None,
+    card_last4: str | None = None,
+) -> None:
     candidates = list(
-        db.scalars(select(Expense).where(and_(*_cc_pending_filters(date_from=date_from, date_to=date_to))))
+        db.scalars(
+            select(Expense).where(
+                and_(
+                    *_cc_pending_filters(
+                        date_from=date_from, date_to=date_to, card_last4=card_last4
+                    )
+                )
+            )
+        )
     )
     used: set[str] = set()
     for line in lines:
@@ -228,9 +254,18 @@ def _unmatched_cc_app(
     date_from: date | None,
     date_to: date | None,
     matched_ids: set[str],
+    card_last4: str | None = None,
 ) -> list[dict]:
     rows = list(
-        db.scalars(select(Expense).where(and_(*_cc_pending_filters(date_from=date_from, date_to=date_to))))
+        db.scalars(
+            select(Expense).where(
+                and_(
+                    *_cc_pending_filters(
+                        date_from=date_from, date_to=date_to, card_last4=card_last4
+                    )
+                )
+            )
+        )
     )
     out: list[dict] = []
     for row in rows:
@@ -260,19 +295,41 @@ def create_session_from_upload(
     lines = parsed["lines"]
     date_from = parsed["statement_start_date"]
     date_to = parsed["statement_end_date"]
-    _propose_matches(db, lines, date_from=date_from, date_to=date_to)
+    card_last4 = parsed["card_last4"]
+    if card_last4 and card_last4 != "unknown":
+        ensure_cc_account(db, card_last4)
+        # One open session per card
+        existing = db.scalars(
+            select(CcReconcileSession).where(
+                CcReconcileSession.status == "in_progress",
+                CcReconcileSession.card_last4 == card_last4,
+            )
+        ).first()
+        if existing:
+            raise ValueError(
+                f"A verification period is already open for card ••{card_last4}. "
+                "Complete or discard it before uploading another statement for this card."
+            )
+
+    _propose_matches(
+        db, lines, date_from=date_from, date_to=date_to, card_last4=card_last4
+    )
     matched_ids = {
         line["proposed_tx_id"]
         for line in lines
         if line.get("status") == "proposed_match" and line.get("proposed_tx_id")
     }
     unmatched_app = _unmatched_cc_app(
-        db, date_from=date_from, date_to=date_to, matched_ids=matched_ids
+        db,
+        date_from=date_from,
+        date_to=date_to,
+        matched_ids=matched_ids,
+        card_last4=card_last4,
     )
     session = CcReconcileSession(
         status="in_progress",
         filename=filename,
-        card_last4=parsed["card_last4"],
+        card_last4=card_last4,
         statement_start_date=date_from,
         statement_end_date=date_to,
         lines_json=lines,
@@ -284,7 +341,7 @@ def create_session_from_upload(
     return session
 
 
-def session_summary(_db: Session, session: CcReconcileSession) -> dict:
+def session_summary(db: Session, session: CcReconcileSession) -> dict:
     lines = list(session.lines_json or [])
     apps = list(session.unmatched_app_json or [])
     counts = {
@@ -304,6 +361,32 @@ def session_summary(_db: Session, session: CcReconcileSession) -> dict:
     )
     unresolved_app = app_unmatched
     can_complete = unresolved_cc == 0 and unresolved_app == 0
+
+    able_ids: set[UUID] = set()
+    for line in lines:
+        if line.get("status") not in ("proposed_match", "matched", "added"):
+            continue
+        tx_id = line.get("proposed_tx_id")
+        if not tx_id:
+            continue
+        try:
+            able_ids.add(UUID(str(tx_id)))
+        except (TypeError, ValueError):
+            continue
+    not_excel_ids: set[UUID] = set()
+    for app in apps:
+        try:
+            not_excel_ids.add(UUID(str(app["id"])))
+        except (TypeError, ValueError, KeyError):
+            continue
+
+    from app.services.verification_workspace import load_transactions_by_ids
+
+    able_txs = load_transactions_by_ids(db, deposit_ids=set(), expense_ids=able_ids)
+    not_in_excel_txs = load_transactions_by_ids(
+        db, deposit_ids=set(), expense_ids=not_excel_ids
+    )
+
     return {
         "id": str(session.id),
         "status": session.status,
@@ -325,6 +408,8 @@ def session_summary(_db: Session, session: CcReconcileSession) -> dict:
         "can_complete": can_complete,
         "lines": lines,
         "unmatched_app": apps,
+        "able_txs": able_txs,
+        "not_in_excel_txs": not_in_excel_txs,
     }
 
 
@@ -351,6 +436,8 @@ def apply_actions(db: Session, session: CcReconcileSession, actions: list[dict])
             if row.payment_method != "credit_card":
                 raise ValueError("Only paid-by-card expenses can be CC-verified")
             row.cc_verified_at = now
+            if session.card_last4 and session.card_last4 != "unknown":
+                row.card_last4 = session.card_last4
             line["status"] = "matched"
             line["proposed_tx_id"] = str(tx_id)
             line["proposed_tx_ref"] = row.transaction_ref
@@ -404,6 +491,9 @@ def apply_actions(db: Session, session: CcReconcileSession, actions: list[dict])
                 vendor_name=merchant,
                 description=line.get("details") or merchant,
                 cc_verified_at=now,
+                card_last4=session.card_last4
+                if session.card_last4 and session.card_last4 != "unknown"
+                else None,
             )
             db.add(row)
             db.flush()

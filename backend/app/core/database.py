@@ -338,6 +338,7 @@ def _ensure_sqlite_bank_reconcile_columns() -> None:
         "cc_verified_at": "DATETIME",
         "cc_bank_confirmed_at": "DATETIME",
         "cc_settlement_group_id": "CHAR(36)",
+        "card_last4": "VARCHAR(8)",
     }
 
     with engine.begin() as conn:
@@ -350,6 +351,31 @@ def _ensure_sqlite_bank_reconcile_columns() -> None:
                 if name not in existing:
                     conn.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}")
 
+        # Bank account per-account verification settings
+        ba_rows = conn.exec_driver_sql("PRAGMA table_info(bank_accounts)").fetchall()
+        if ba_rows:
+            existing = {row[1] for row in ba_rows}
+            for name, ddl in (
+                ("opening_balance", "NUMERIC(14, 2)"),
+                ("opening_balance_as_of", "DATE"),
+                ("last_verification_date", "DATE"),
+            ):
+                if name not in existing:
+                    conn.exec_driver_sql(
+                        f"ALTER TABLE bank_accounts ADD COLUMN {name} {ddl}"
+                    )
+
+        # Bank reconcile sessions: which operating account
+        br_rows = conn.exec_driver_sql(
+            "PRAGMA table_info(bank_reconcile_sessions)"
+        ).fetchall()
+        if br_rows:
+            existing = {row[1] for row in br_rows}
+            if "bank_account_id" not in existing:
+                conn.exec_driver_sql(
+                    "ALTER TABLE bank_reconcile_sessions "
+                    "ADD COLUMN bank_account_id CHAR(36)"
+                )
 
 def _backfill_transaction_refs_and_settings() -> None:
     """Backfill missing refs and ensure company bank settings row exists."""

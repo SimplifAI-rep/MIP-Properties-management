@@ -100,34 +100,57 @@ def list_bank_groups(db: Session) -> list[dict]:
     after = settings.last_verification_date
     groups: list[dict] = []
 
-    open_session = db.scalars(
-        select(BankReconcileSession)
-        .where(BankReconcileSession.status == "in_progress")
-        .order_by(BankReconcileSession.created_at.desc())
-        .limit(1)
-    ).first()
-
-    start = open_session.statement_start_date if open_session else None
-    end = open_session.statement_end_date if open_session else None
-
-    groups.append(
-        {
-            "id": "bank-open",
-            "kind": "bank",
-            "status": "unverified",
-            "title": "Open period (unverified)",
-            "date": None,
-            "statement_start_date": start.isoformat() if start else None,
-            "statement_end_date": end.isoformat() if end else None,
-            "after_date": after.isoformat() if after else None,
-            "session_id": str(open_session.id) if open_session else None,
-            "filename": open_session.filename if open_session else None,
-            "transaction_count": _count_open_bank_scoped(
-                db, date_from=start, date_to=end
-            ),
-            "settlement_count": 0,
-        }
+    open_sessions = list(
+        db.scalars(
+            select(BankReconcileSession)
+            .where(BankReconcileSession.status == "in_progress")
+            .order_by(BankReconcileSession.created_at.desc())
+        )
     )
+
+    if not open_sessions:
+        groups.append(
+            {
+                "id": "bank-open",
+                "kind": "bank",
+                "status": "unverified",
+                "title": "Open period",
+                "date": None,
+                "statement_start_date": None,
+                "statement_end_date": None,
+                "after_date": after.isoformat() if after else None,
+                "session_id": None,
+                "filename": None,
+                "bank_account_id": None,
+                "transaction_count": 0,
+                "settlement_count": 0,
+            }
+        )
+    else:
+        for open_session in open_sessions:
+            start = open_session.statement_start_date
+            end = open_session.statement_end_date
+            groups.append(
+                {
+                    "id": f"bank-open:{open_session.id}",
+                    "kind": "bank",
+                    "status": "unverified",
+                    "title": "Open period",
+                    "date": None,
+                    "statement_start_date": start.isoformat() if start else None,
+                    "statement_end_date": end.isoformat() if end else None,
+                    "after_date": after.isoformat() if after else None,
+                    "session_id": str(open_session.id),
+                    "filename": open_session.filename,
+                    "bank_account_id": str(open_session.bank_account_id)
+                    if open_session.bank_account_id
+                    else None,
+                    "transaction_count": _count_open_bank_scoped(
+                        db, date_from=start, date_to=end
+                    ),
+                    "settlement_count": 0,
+                }
+            )
 
     completed = db.scalars(
         select(BankReconcileSession)
@@ -155,12 +178,52 @@ def list_bank_groups(db: Session) -> list[dict]:
                 "after_date": session.after_date.isoformat() if session.after_date else None,
                 "session_id": str(session.id),
                 "filename": session.filename,
+                "bank_account_id": str(session.bank_account_id)
+                if session.bank_account_id
+                else None,
                 "transaction_count": len(dep_ids) + len(exp_ids),
                 "settlement_count": len(settle_ids),
             }
         )
 
     return groups
+
+
+def load_transactions_by_ids(
+    db: Session,
+    *,
+    deposit_ids: set[UUID] | list[UUID],
+    expense_ids: set[UUID] | list[UUID],
+) -> list[dict]:
+    """Load deposits/expenses as TransactionRead-shaped dicts (Transactions table format)."""
+    dep_ids = {UUID(str(x)) for x in deposit_ids}
+    exp_ids = {UUID(str(x)) for x in expense_ids}
+    deposits = (
+        list(
+            db.scalars(
+                select(Deposit)
+                .options(
+                    joinedload(Deposit.property).joinedload(Property.owner),
+                    joinedload(Deposit.bank_account),
+                )
+                .where(Deposit.id.in_(dep_ids))
+            ).unique()
+        )
+        if dep_ids
+        else []
+    )
+    expenses = (
+        list(
+            db.scalars(
+                select(Expense)
+                .options(joinedload(Expense.property).joinedload(Property.owner))
+                .where(Expense.id.in_(exp_ids))
+            ).unique()
+        )
+        if exp_ids
+        else []
+    )
+    return _rows_to_transactions(db, deposits=deposits, expenses=expenses)
 
 
 def _rows_to_transactions(
@@ -341,15 +404,17 @@ def get_cc_pool_transactions(
     return _rows_to_transactions(db, deposits=[], expenses=expenses), int(total)
 
 
-def _last_cc_verification_date(db: Session) -> date | None:
+def _last_cc_verification_date(
+    db: Session, *, card_last4: str | None = None
+) -> date | None:
+    q = select(CcReconcileSession).where(CcReconcileSession.status == "completed")
+    if card_last4:
+        q = q.where(CcReconcileSession.card_last4 == card_last4)
     row = db.scalars(
-        select(CcReconcileSession)
-        .where(CcReconcileSession.status == "completed")
-        .order_by(
+        q.order_by(
             CcReconcileSession.statement_end_date.desc().nullslast(),
             CcReconcileSession.created_at.desc(),
-        )
-        .limit(1)
+        ).limit(1)
     ).first()
     return row.statement_end_date if row else None
 
@@ -370,12 +435,19 @@ def list_cc_history_groups(db: Session) -> list[dict]:
             if line.get("status") in ("matched", "added") and line.get("proposed_tx_id"):
                 matched += 1
         end = session.statement_end_date
+        title = (
+            f"Verified through {end.isoformat()}"
+            if end
+            else "Verified period"
+        )
+        if session.card_last4:
+            title = f"Card ••{session.card_last4} · {title}"
         groups.append(
             {
                 "id": f"cc-session:{session.id}",
                 "kind": "cc",
                 "status": "verified",
-                "title": f"CC verified through {end.isoformat()}" if end else "CC verified period",
+                "title": title,
                 "date": end.isoformat() if end else None,
                 "statement_start_date": session.statement_start_date.isoformat()
                 if session.statement_start_date
@@ -391,20 +463,116 @@ def list_cc_history_groups(db: Session) -> list[dict]:
 
 
 def verification_workspace(db: Session) -> dict:
-    settings = get_or_create_settings(db)
-    last_cc = _last_cc_verification_date(db)
-    pending_clauses = [
-        Expense.payment_method == "credit_card",
-        Expense.cc_verified_at.is_(None),
-    ]
-    if last_cc is not None:
-        pending_clauses.append(
-            or_(Expense.transaction_date.is_(None), Expense.transaction_date > last_cc)
-        )
-    pending_n = (
-        db.scalar(select(func.count()).select_from(Expense).where(and_(*pending_clauses)))
-        or 0
+    from app.services.account_scope import (
+        account_display_name,
+        card_last4_from_account,
+        list_credit_card_accounts,
+        list_operating_accounts,
     )
+    from app.services.bank_settings import settings_read_payload
+
+    last_cc = _last_cc_verification_date(db)
+
+    operating = []
+    for account in list_operating_accounts(db):
+        payload = settings_read_payload(db, bank_account_id=account.id)
+        open_session = db.scalars(
+            select(BankReconcileSession).where(
+                BankReconcileSession.status == "in_progress",
+                BankReconcileSession.bank_account_id == account.id,
+            )
+        ).first()
+        operating.append(
+            {
+                "id": str(account.id),
+                "label": account_display_name(account),
+                "account_number": account.account_number,
+                "opening_balance": str(payload["opening_balance"])
+                if payload["opening_balance"] is not None
+                else None,
+                "last_verification_date": payload["last_verification_date"].isoformat()
+                if payload["last_verification_date"]
+                else None,
+                "unverified_count": payload["unverified_count"],
+                "open_session_id": str(open_session.id) if open_session else None,
+            }
+        )
+
+    # Discover cards from accounts + sessions + expenses
+    cards_by_last4: dict[str, dict] = {}
+    for account in list_credit_card_accounts(db):
+        last4 = card_last4_from_account(account)
+        if not last4:
+            continue
+        cards_by_last4[last4] = {
+            "card_last4": last4,
+            "label": account_display_name(account),
+            "bank_account_id": str(account.id),
+            "open_session_id": None,
+            "pending_count": 0,
+            "last_verification_date": None,
+        }
+
+    for session in db.scalars(select(CcReconcileSession)):
+        last4 = session.card_last4
+        if not last4 or last4 == "unknown":
+            continue
+        entry = cards_by_last4.setdefault(
+            last4,
+            {
+                "card_last4": last4,
+                "label": f"Credit card ••{last4}",
+                "bank_account_id": None,
+                "open_session_id": None,
+                "pending_count": 0,
+                "last_verification_date": None,
+            },
+        )
+        if session.status == "in_progress":
+            entry["open_session_id"] = str(session.id)
+
+    for last4, entry in cards_by_last4.items():
+        card_last = last4 if last4 != "unknown" else None
+        entry["last_verification_date"] = (
+            d.isoformat()
+            if (d := _last_cc_verification_date(db, card_last4=card_last))
+            else None
+        )
+        pending_clauses = [
+            Expense.payment_method == "credit_card",
+            Expense.cc_verified_at.is_(None),
+        ]
+        if card_last:
+            pending_clauses.append(
+                or_(Expense.card_last4 == card_last, Expense.card_last4.is_(None))
+            )
+        last = entry["last_verification_date"]
+        if last:
+            last_d = date.fromisoformat(last)
+            pending_clauses.append(
+                or_(Expense.transaction_date.is_(None), Expense.transaction_date > last_d)
+            )
+        entry["pending_count"] = int(
+            db.scalar(select(func.count()).select_from(Expense).where(and_(*pending_clauses)))
+            or 0
+        )
+
+    # Also surface unassigned pending card expenses when no cards known yet
+    if not cards_by_last4:
+        pending_n = (
+            db.scalar(
+                select(func.count())
+                .select_from(Expense)
+                .where(
+                    Expense.payment_method == "credit_card",
+                    Expense.cc_verified_at.is_(None),
+                )
+            )
+            or 0
+        )
+    else:
+        pending_n = sum(c["pending_count"] for c in cards_by_last4.values())
+
     verified_n = db.scalar(
         select(func.count())
         .select_from(Expense)
@@ -414,20 +582,27 @@ def verification_workspace(db: Session) -> dict:
             Expense.cc_bank_confirmed_at.is_(None),
         )
     ) or 0
-    open_cc = db.scalars(
-        select(CcReconcileSession)
-        .where(CcReconcileSession.status == "in_progress")
-        .order_by(CcReconcileSession.created_at.desc())
-        .limit(1)
-    ).first()
+
+    open_cc_sessions = list(
+        db.scalars(
+            select(CcReconcileSession)
+            .where(CcReconcileSession.status == "in_progress")
+            .order_by(CcReconcileSession.created_at.desc())
+        )
+    )
+
+    default_payload = settings_read_payload(db)
     return {
-        "last_verification_date": settings.last_verification_date.isoformat()
-        if settings.last_verification_date
+        "last_verification_date": default_payload["last_verification_date"].isoformat()
+        if default_payload["last_verification_date"]
         else None,
         "last_cc_verification_date": last_cc.isoformat() if last_cc else None,
         "bank_groups": list_bank_groups(db),
         "cc_history": list_cc_history_groups(db),
-        "cc_active_session_id": str(open_cc.id) if open_cc else None,
+        "cc_active_session_id": str(open_cc_sessions[0].id) if open_cc_sessions else None,
+        "cc_active_session_ids": [str(s.id) for s in open_cc_sessions],
+        "operating_accounts": operating,
+        "credit_cards": list(cards_by_last4.values()),
         "cc_pool": {
             "pending_count": int(pending_n),
             "cc_verified_count": int(verified_n),

@@ -576,6 +576,9 @@ export type { TransactionKind, UnifiedTransaction } from './transaction';
 
 
 export interface CompanyBankSettings {
+  bank_account_id?: string | null;
+  bank_account_label?: string | null;
+  account_number?: string | null;
   opening_balance: string | null;
   opening_balance_as_of: string | null;
   last_verification_date: string | null;
@@ -584,6 +587,7 @@ export interface CompanyBankSettings {
 }
 
 export interface CompanyBankSettingsUpdate {
+  bank_account_id?: string | null;
   opening_balance?: string | null;
   opening_balance_as_of?: string | null;
   last_verification_date?: string | null;
@@ -597,6 +601,7 @@ export interface BankCutoverRequest {
   opening_balance: string;
   as_of_date: string;
   gap_tolerance_amount?: string | null;
+  bank_account_id?: string | null;
 }
 
 export interface BankCutoverResponse {
@@ -681,6 +686,7 @@ export interface BankReconcileSession {
   id: string;
   status: string;
   filename: string | null;
+  bank_account_id?: string | null;
   bank_balance: string | null;
   statement_start_date: string | null;
   statement_end_date: string | null;
@@ -695,6 +701,8 @@ export interface BankReconcileSession {
   can_complete: boolean;
   lines: BankReconcileLine[];
   unmatched_app: BankReconcileAppRow[];
+  able_txs?: Record<string, unknown>[];
+  not_in_excel_txs?: Record<string, unknown>[];
 }
 
 export interface CcReconcileAction {
@@ -731,6 +739,8 @@ export interface CcReconcileSession {
   can_complete: boolean;
   lines: CcReconcileLine[];
   unmatched_app: BankReconcileAppRow[];
+  able_txs?: Record<string, unknown>[];
+  not_in_excel_txs?: Record<string, unknown>[];
 }
 
 export interface VerificationBankGroup {
@@ -744,6 +754,7 @@ export interface VerificationBankGroup {
   after_date: string | null;
   session_id: string | null;
   filename: string | null;
+  bank_account_id?: string | null;
   transaction_count: number;
   settlement_count: number;
 }
@@ -762,12 +773,34 @@ export interface VerificationCcHistoryGroup {
   transaction_count: number;
 }
 
+export interface VerificationOperatingAccount {
+  id: string;
+  label: string;
+  account_number: string;
+  opening_balance: string | null;
+  last_verification_date: string | null;
+  unverified_count: number;
+  open_session_id: string | null;
+}
+
+export interface VerificationCreditCard {
+  card_last4: string;
+  label: string;
+  bank_account_id: string | null;
+  open_session_id: string | null;
+  pending_count: number;
+  last_verification_date: string | null;
+}
+
 export interface VerificationWorkspace {
   last_verification_date: string | null;
   last_cc_verification_date?: string | null;
   bank_groups: VerificationBankGroup[];
   cc_history?: VerificationCcHistoryGroup[];
   cc_active_session_id?: string | null;
+  cc_active_session_ids?: string[];
+  operating_accounts?: VerificationOperatingAccount[];
+  credit_cards?: VerificationCreditCard[];
   cc_pool: {
     pending_count: number;
     cc_verified_count: number;

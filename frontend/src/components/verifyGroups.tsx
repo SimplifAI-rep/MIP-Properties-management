@@ -10,12 +10,15 @@ export function VerifyGroupSection({
   count,
   children,
   tone = 'default',
+  defaultOpen = false,
 }: {
   title: string;
   subtitle?: string;
   count: number;
   children: ReactNode;
   tone?: 'default' | 'warn' | 'ok';
+  /** When true, the table starts expanded. Default is collapsed. */
+  defaultOpen?: boolean;
 }) {
   const border =
     tone === 'warn'
@@ -24,20 +27,35 @@ export function VerifyGroupSection({
         ? 'border-emerald-300 dark:border-emerald-700/50'
         : 'border-slate-200 dark:border-slate-700';
   return (
-    <div className={`overflow-x-auto rounded-lg border ${border}`}>
-      <div className="px-3 py-2 border-b border-slate-200 dark:border-slate-700">
-        <h4 className="text-sm font-medium">
-          {title}{' '}
-          <span className="muted-text font-normal tabular-nums">({count})</span>
-        </h4>
-        {subtitle ? <p className="text-xs muted-text mt-0.5">{subtitle}</p> : null}
+    <details
+      className={`group overflow-x-auto rounded-lg border ${border}`}
+      defaultOpen={defaultOpen}
+    >
+      <summary className="cursor-pointer select-none list-none px-3 py-2 hover:bg-slate-50 dark:hover:bg-slate-900/40 [&::-webkit-details-marker]:hidden">
+        <div className="flex items-center gap-2">
+          <span className="text-slate-500 w-3 shrink-0 text-xs group-open:hidden" aria-hidden>
+            ▸
+          </span>
+          <span className="text-slate-500 w-3 shrink-0 text-xs hidden group-open:inline" aria-hidden>
+            ▾
+          </span>
+          <div className="min-w-0 flex-1">
+            <h4 className="text-sm font-medium">
+              {title}{' '}
+              <span className="muted-text font-normal tabular-nums">({count})</span>
+            </h4>
+            {subtitle ? <p className="text-xs muted-text mt-0.5">{subtitle}</p> : null}
+          </div>
+        </div>
+      </summary>
+      <div className="border-t border-slate-200 dark:border-slate-700">
+        {count === 0 ? (
+          <p className="muted-text p-3 text-sm">None.</p>
+        ) : (
+          children
+        )}
       </div>
-      {count === 0 ? (
-        <p className="muted-text p-3 text-sm">None.</p>
-      ) : (
-        children
-      )}
-    </div>
+    </details>
   );
 }
 

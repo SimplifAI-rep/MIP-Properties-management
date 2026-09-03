@@ -1464,7 +1464,7 @@ export function TransactionsPage() {
                 }
               />
               <span className="label-text mb-0">
-                <Tooltip content="Paid on the company credit card — awaits CC Excel verify (excluded from bank Gap as a merchant debit).">
+                <Tooltip content="Paid on the company credit card — awaits card statement verification (excluded from the bank gap as a merchant debit).">
                   Paid by card
                 </Tooltip>
               </span>

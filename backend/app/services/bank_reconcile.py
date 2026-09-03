@@ -16,8 +16,19 @@ from app.models.cc_settlement_group import CcSettlementGroup
 from app.models.deposit import Deposit
 from app.models.expense import Expense
 from app.models.property import Property
+from app.services.account_scope import (
+    deposit_belongs_to_account_clause,
+    get_default_operating_account,
+    get_operating_account,
+)
 from app.services.bank_reconcile_gap import parse_bank_statement_lines, sum_bank_scoped_nets
-from app.services.bank_settings import get_or_create_settings
+from app.services.bank_settings import (
+    effective_last_verification,
+    effective_opening_as_of,
+    effective_opening_balance,
+    get_or_create_settings,
+    resolve_account_settings,
+)
 from app.services.transaction_filters import (
     deposit_company_float_clause,
     expense_company_float_clauses,
@@ -46,12 +57,14 @@ def _parse_iso_date(value: str | None) -> date | None:
     return date.fromisoformat(value[:10])
 
 
-def _app_candidate_filters(*, date_from: date | None, date_to: date | None):
-    """Unverified bank-scoped app txs inside the uploaded statement date window.
-
-    Older receipts outside the Excel's first→last movement dates are intentionally
-    out of scope — retroactive statement upload is not required.
-    """
+def _app_candidate_filters(
+    *,
+    date_from: date | None,
+    date_to: date | None,
+    bank_account_id: UUID | None = None,
+    is_default_account: bool = True,
+):
+    """Unverified bank-scoped app txs inside the uploaded statement date window."""
     dep = [
         deposit_company_float_clause(),
         Deposit.bank_reconcile_exclude.is_(False),
@@ -59,23 +72,29 @@ def _app_candidate_filters(*, date_from: date | None, date_to: date | None):
         Deposit.transaction_date.is_not(None),
         Deposit.amount > 0,
     ]
+    if bank_account_id is not None:
+        dep.append(
+            deposit_belongs_to_account_clause(
+                bank_account_id, is_default=is_default_account
+            )
+        )
     exp = [
         *expense_company_float_clauses(),
         Expense.bank_reconcile_exclude.is_(False),
         Expense.bank_verified_at.is_(None),
         Expense.transaction_date.is_not(None),
         Expense.amount > 0,
+        or_(Expense.payment_method.is_(None), Expense.payment_method != "credit_card"),
     ]
-    # Paid-by-card merchants are not individual bank debits (Step 6/7)
-    exp.append(
-        or_(Expense.payment_method.is_(None), Expense.payment_method != "credit_card")
-    )
     if date_from is not None:
         dep.append(Deposit.transaction_date >= date_from)
         exp.append(Expense.transaction_date >= date_from)
     if date_to is not None:
         dep.append(Deposit.transaction_date <= date_to)
         exp.append(Expense.transaction_date <= date_to)
+    # Non-default operating accounts only reconcile deposits on that account
+    if not is_default_account:
+        exp = None
     return dep, exp
 
 
@@ -205,14 +224,29 @@ def _propose_settlement_groups(db: Session, lines: list[dict]) -> None:
 
 
 def _propose_matches(
-    db: Session, lines: list[dict], *, date_from: date | None, date_to: date | None
+    db: Session,
+    lines: list[dict],
+    *,
+    date_from: date | None,
+    date_to: date | None,
+    bank_account_id: UUID | None = None,
+    is_default_account: bool = True,
 ) -> None:
     # Stage C first: settlement lines are groups, not 1:1 merchant matches
-    _propose_settlement_groups(db, lines)
+    # Settlements only apply on the default operating account
+    if is_default_account:
+        _propose_settlement_groups(db, lines)
 
-    dep_f, exp_f = _app_candidate_filters(date_from=date_from, date_to=date_to)
+    dep_f, exp_f = _app_candidate_filters(
+        date_from=date_from,
+        date_to=date_to,
+        bank_account_id=bank_account_id,
+        is_default_account=is_default_account,
+    )
     deposits = list(db.scalars(select(Deposit).where(and_(*dep_f))))
-    expenses = list(db.scalars(select(Expense).where(and_(*exp_f))))
+    expenses = (
+        list(db.scalars(select(Expense).where(and_(*exp_f)))) if exp_f is not None else []
+    )
     used_dep: set[UUID] = set()
     used_exp: set[UUID] = set()
 
@@ -291,8 +325,15 @@ def _unmatched_app_rows(
     date_from: date | None,
     date_to: date | None,
     matched_ids: set[str],
+    bank_account_id: UUID | None = None,
+    is_default_account: bool = True,
 ) -> list[dict]:
-    dep_f, exp_f = _app_candidate_filters(date_from=date_from, date_to=date_to)
+    dep_f, exp_f = _app_candidate_filters(
+        date_from=date_from,
+        date_to=date_to,
+        bank_account_id=bank_account_id,
+        is_default_account=is_default_account,
+    )
     out: list[dict] = []
     for row in db.scalars(select(Deposit).where(and_(*dep_f))):
         if str(row.id) in matched_ids:
@@ -311,57 +352,103 @@ def _unmatched_app_rows(
                 "ignore_reason": None,
             }
         )
-    for row in db.scalars(select(Expense).where(and_(*exp_f))):
-        if str(row.id) in matched_ids:
-            continue
-        out.append(
-            {
-                "kind": "expense",
-                "id": str(row.id),
-                "transaction_ref": row.transaction_ref,
-                "transaction_date": row.transaction_date.isoformat()
-                if row.transaction_date
-                else None,
-                "amount": str(row.amount),
-                "description": row.vendor_name or row.description or row.category,
-                "status": "unmatched",
-                "ignore_reason": None,
-            }
-        )
+    if exp_f is not None:
+        for row in db.scalars(select(Expense).where(and_(*exp_f))):
+            if str(row.id) in matched_ids:
+                continue
+            out.append(
+                {
+                    "kind": "expense",
+                    "id": str(row.id),
+                    "transaction_ref": row.transaction_ref,
+                    "transaction_date": row.transaction_date.isoformat()
+                    if row.transaction_date
+                    else None,
+                    "amount": str(row.amount),
+                    "description": row.vendor_name or row.description or row.category,
+                    "status": "unmatched",
+                    "ignore_reason": None,
+                }
+            )
     out.sort(key=lambda r: (r.get("transaction_date") or "", r["kind"], r["id"]))
     return out
 
 
 def create_session_from_upload(
-    db: Session, *, content: bytes, filename: str | None
+    db: Session,
+    *,
+    content: bytes,
+    filename: str | None,
+    bank_account_id: UUID | str | None = None,
 ) -> BankReconcileSession:
+    account = get_operating_account(db, bank_account_id)
+    if account is None:
+        raise ValueError(
+            "No operating bank account found. Import company data or create an account first."
+        )
+    default = get_default_operating_account(db)
+    is_default = default is not None and account.id == default.id
+
+    existing_q = select(BankReconcileSession).where(
+        BankReconcileSession.status == "in_progress",
+    )
+    if is_default:
+        existing_q = existing_q.where(
+            or_(
+                BankReconcileSession.bank_account_id == account.id,
+                BankReconcileSession.bank_account_id.is_(None),
+            )
+        )
+    else:
+        existing_q = existing_q.where(BankReconcileSession.bank_account_id == account.id)
+    existing = db.scalars(existing_q).first()
+    if existing:
+        raise ValueError(
+            "A verification period is already open for this bank account. "
+            "Complete it before uploading another statement."
+        )
+
     parsed = parse_bank_statement_lines(content)
-    settings = get_or_create_settings(db)
-    after = settings.opening_balance_as_of or settings.last_verification_date
-    # Scope matching + unmatched-app to the Excel movement window only
-    # (first → last transaction date). Older app txs stay out of this period.
+    account_row, company = resolve_account_settings(db, bank_account_id=account.id)
+    opening = effective_opening_balance(account_row, company)
+    after = effective_opening_as_of(account_row, company) or effective_last_verification(
+        account_row, company
+    )
     date_from = parsed["statement_start_date"]
     date_to = parsed["statement_end_date"]
     lines = parsed["lines"]
-    _propose_matches(db, lines, date_from=date_from, date_to=date_to)
+    _propose_matches(
+        db,
+        lines,
+        date_from=date_from,
+        date_to=date_to,
+        bank_account_id=account.id,
+        is_default_account=is_default,
+    )
     matched_ids = {
         line["proposed_tx_id"]
         for line in lines
         if line.get("status") == "proposed_match" and line.get("proposed_tx_id")
     }
     unmatched_app = _unmatched_app_rows(
-        db, date_from=date_from, date_to=date_to, matched_ids=matched_ids
+        db,
+        date_from=date_from,
+        date_to=date_to,
+        matched_ids=matched_ids,
+        bank_account_id=account.id,
+        is_default_account=is_default,
     )
 
     session = BankReconcileSession(
         status="in_progress",
         filename=filename,
+        bank_account_id=account.id,
         bank_balance=parsed["bank_balance"],
-        statement_start_date=parsed["statement_start_date"],
-        statement_end_date=parsed["statement_end_date"],
-        opening_balance=settings.opening_balance,
+        statement_start_date=date_from,
+        statement_end_date=date_to,
+        opening_balance=opening,
         after_date=after,
-        gap_tolerance_amount=settings.gap_tolerance_amount or Decimal("0.01"),
+        gap_tolerance_amount=company.gap_tolerance_amount or Decimal("0.01"),
         lines_json=lines,
         unmatched_app_json=unmatched_app,
     )
@@ -416,10 +503,48 @@ def session_summary(db: Session, session: BankReconcileSession) -> dict:
     if bank_balance is not None and opening is not None:
         can_complete = unresolved_bank == 0 and unresolved_app == 0 and within is True
 
+    able_dep: set[UUID] = set()
+    able_exp: set[UUID] = set()
+    for line in lines:
+        if line.get("status") not in ("proposed_match", "matched", "added"):
+            continue
+        tx_id = line.get("proposed_tx_id")
+        kind = line.get("proposed_kind")
+        if not tx_id or kind not in ("deposit", "expense"):
+            continue
+        try:
+            uid = UUID(str(tx_id))
+        except (TypeError, ValueError):
+            continue
+        if kind == "deposit":
+            able_dep.add(uid)
+        else:
+            able_exp.add(uid)
+
+    not_excel_dep: set[UUID] = set()
+    not_excel_exp: set[UUID] = set()
+    for app in apps:
+        try:
+            uid = UUID(str(app["id"]))
+        except (TypeError, ValueError, KeyError):
+            continue
+        if app.get("kind") == "deposit":
+            not_excel_dep.add(uid)
+        else:
+            not_excel_exp.add(uid)
+
+    from app.services.verification_workspace import load_transactions_by_ids
+
+    able_txs = load_transactions_by_ids(db, deposit_ids=able_dep, expense_ids=able_exp)
+    not_in_excel_txs = load_transactions_by_ids(
+        db, deposit_ids=not_excel_dep, expense_ids=not_excel_exp
+    )
+
     return {
         "id": str(session.id),
         "status": session.status,
         "filename": session.filename,
+        "bank_account_id": str(session.bank_account_id) if session.bank_account_id else None,
         "bank_balance": str(bank_balance) if bank_balance is not None else None,
         "statement_start_date": session.statement_start_date.isoformat()
         if session.statement_start_date
@@ -444,6 +569,8 @@ def session_summary(db: Session, session: BankReconcileSession) -> dict:
         "can_complete": can_complete,
         "lines": lines,
         "unmatched_app": apps,
+        "able_txs": able_txs,
+        "not_in_excel_txs": not_in_excel_txs,
     }
 
 
@@ -581,6 +708,7 @@ def apply_actions(db: Session, session: BankReconcileSession, actions: list[dict
             if line["side"] == "credit":
                 row = Deposit(
                     property_id=prop.id,
+                    bank_account_id=session.bank_account_id,
                     transaction_date=tx_date,
                     amount=amount,
                     currency="ILS",
@@ -637,9 +765,24 @@ def complete_session(db: Session, session: BankReconcileSession) -> BankReconcil
         )
     settings = get_or_create_settings(db)
     if session.statement_end_date is not None:
-        settings.last_verification_date = session.statement_end_date
+        from app.models.bank_account import BankAccount
+
+        account = (
+            db.get(BankAccount, session.bank_account_id)
+            if session.bank_account_id is not None
+            else None
+        )
+        if account is not None:
+            account.last_verification_date = session.statement_end_date
+            db.add(account)
+            default = get_default_operating_account(db)
+            if default is not None and account.id == default.id:
+                settings.last_verification_date = session.statement_end_date
+                db.add(settings)
+        else:
+            settings.last_verification_date = session.statement_end_date
+            db.add(settings)
     session.status = "completed"
-    db.add(settings)
     db.add(session)
     db.commit()
     db.refresh(session)

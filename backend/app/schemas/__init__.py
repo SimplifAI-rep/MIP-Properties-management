@@ -593,6 +593,9 @@ class AlertRuleUpdate(BaseModel):
 
 
 class CompanyBankSettingsRead(BaseModel):
+    bank_account_id: UUID | str | None = None
+    bank_account_label: str | None = None
+    account_number: str | None = None
     opening_balance: Decimal | None = None
     opening_balance_as_of: date | None = None
     last_verification_date: date | None = None
@@ -601,6 +604,7 @@ class CompanyBankSettingsRead(BaseModel):
 
 
 class CompanyBankSettingsUpdate(BaseModel):
+    bank_account_id: UUID | None = None
     opening_balance: Decimal | None = None
     opening_balance_as_of: date | None = None
     last_verification_date: date | None = None
@@ -614,6 +618,7 @@ class BankCutoverRequest(BaseModel):
     opening_balance: Decimal
     as_of_date: date
     gap_tolerance_amount: Decimal | None = Field(default=None, ge=0)
+    bank_account_id: UUID | None = None
 
 
 class BankCutoverResponse(BaseModel):
@@ -670,6 +675,7 @@ class BankReconcileSessionResponse(BaseModel):
     id: str
     status: str
     filename: str | None = None
+    bank_account_id: str | None = None
     bank_balance: str | None = None
     statement_start_date: str | None = None
     statement_end_date: str | None = None
@@ -684,6 +690,8 @@ class BankReconcileSessionResponse(BaseModel):
     can_complete: bool
     lines: list[dict]
     unmatched_app: list[dict]
+    able_txs: list[TransactionRead] = []
+    not_in_excel_txs: list[TransactionRead] = []
 
 
 class CcReconcileAction(BaseModel):
@@ -709,6 +717,8 @@ class CcReconcileSessionResponse(BaseModel):
     can_complete: bool
     lines: list[dict]
     unmatched_app: list[dict]
+    able_txs: list[TransactionRead] = []
+    not_in_excel_txs: list[TransactionRead] = []
 
 
 class VerificationBankGroup(BaseModel):
@@ -722,6 +732,7 @@ class VerificationBankGroup(BaseModel):
     after_date: str | None = None
     session_id: str | None = None
     filename: str | None = None
+    bank_account_id: str | None = None
     transaction_count: int = 0
     settlement_count: int = 0
 
@@ -745,12 +756,34 @@ class VerificationCcPoolSummary(BaseModel):
     cc_verified_count: int = 0
 
 
+class VerificationOperatingAccount(BaseModel):
+    id: str
+    label: str
+    account_number: str
+    opening_balance: str | None = None
+    last_verification_date: str | None = None
+    unverified_count: int = 0
+    open_session_id: str | None = None
+
+
+class VerificationCreditCard(BaseModel):
+    card_last4: str
+    label: str
+    bank_account_id: str | None = None
+    open_session_id: str | None = None
+    pending_count: int = 0
+    last_verification_date: str | None = None
+
+
 class VerificationWorkspaceResponse(BaseModel):
     last_verification_date: str | None = None
     last_cc_verification_date: str | None = None
     bank_groups: list[VerificationBankGroup]
     cc_history: list[VerificationCcHistoryGroup] = []
     cc_active_session_id: str | None = None
+    cc_active_session_ids: list[str] = []
+    operating_accounts: list[VerificationOperatingAccount] = []
+    credit_cards: list[VerificationCreditCard] = []
     cc_pool: VerificationCcPoolSummary
 
 

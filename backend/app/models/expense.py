@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import uuid
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy import (
     Boolean,
     CheckConstraint,
     Date,
+    DateTime,
     ForeignKey,
     Index,
     Numeric,
@@ -54,6 +55,7 @@ class Expense(Base, TimestampMixin):
     __table_args__ = (
         CheckConstraint("amount >= 0", name="ck_expenses_amount_non_negative"),
         UniqueConstraint("import_key", name="uq_expenses_import_key"),
+        UniqueConstraint("transaction_ref", name="uq_expenses_transaction_ref"),
         Index("ix_expenses_property_date", "property_id", "transaction_date"),
         Index("ix_expenses_date", "transaction_date"),
         Index("ix_expenses_category", "category"),
@@ -68,6 +70,7 @@ class Expense(Base, TimestampMixin):
             "transaction_date",
         ),
         Index("ix_expenses_ledger_column", "ledger_column"),
+        Index("ix_expenses_transaction_ref", "transaction_ref"),
     )
 
     id: Mapped[uuid.UUID] = uuid_pk()
@@ -103,5 +106,22 @@ class Expense(Base, TimestampMixin):
     # Incomplete Excel import (missing date and/or money) awaiting user fix
     needs_review: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     review_reasons: Mapped[str | None] = mapped_column(String(255))
+    # SimplifAI unique readable id (date-based), e.g. 20260708-0042
+    transaction_ref: Mapped[str | None] = mapped_column(String(40))
+    # Bank reconcile (do not overload ledger `reconciled`)
+    bank_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    bank_asmachta: Mapped[str | None] = mapped_column(String(100))
+    bank_reconcile_exclude: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
+    # Credit-card reconcile (Stage A — merchant verify against CC Excel)
+    cc_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Which company card this expense belongs to (from statement last4)
+    card_last4: Mapped[str | None] = mapped_column(String(8))
+    # Stage C — bank settlement confirmed this merchant as part of a group
+    cc_bank_confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    cc_settlement_group_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("cc_settlement_groups.id"), nullable=True
+    )
 
     property: Mapped["Property"] = relationship(back_populates="expenses")

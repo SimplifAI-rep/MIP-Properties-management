@@ -13,6 +13,9 @@ from app.models.expected_deposit import ExpectedDeposit
 from app.models.expense import Expense
 from app.models.owner import Owner
 from app.models.property import Property
+from app.services.transaction_ref import register_transaction_ref_listeners
+
+register_transaction_ref_listeners()
 
 OWNER_DAVID_ID = uuid.UUID("a0000000-0000-4000-8000-000000000001")
 OWNER_SARAH_ID = uuid.UUID("a0000000-0000-4000-8000-000000000002")

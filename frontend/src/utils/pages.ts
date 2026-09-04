@@ -3,6 +3,7 @@ const PAGE_LABELS: Array<{ path: string; label: string; end?: boolean }> = [
   { path: '/properties', label: 'Properties' },
   { path: '/owners', label: 'Owners' },
   { path: '/transactions', label: 'Transactions' },
+  { path: '/verification', label: 'Verification' },
   { path: '/alerts', label: 'Alerts' },
   { path: '/data-import', label: 'Data import' },
   { path: '/admin/alert-rules', label: 'Alert rules' },

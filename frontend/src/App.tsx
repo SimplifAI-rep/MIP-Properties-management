@@ -5,11 +5,13 @@ import { RequireAdmin } from './components/RequireAdmin';
 import { ThemeProvider } from './context/ThemeContext';
 import { AuthProvider } from './context/AuthContext';
 import { AIQueryPage } from './pages/AIQueryPage';
+import { AdminBankSettingsPage } from './pages/AdminBankSettingsPage';
 import { AlertRulesPage } from './pages/AlertRulesPage';
 import { AlertsPage } from './pages/AlertsPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { DataImportPage } from './pages/DataImportPage';
 import { TransactionsPage } from './pages/TransactionsPage';
+import { VerificationPage } from './pages/VerificationPage';
 import { OwnersPage } from './pages/OwnersPage';
 import { PropertiesPage } from './pages/PropertiesPage';
 import { ReportsPage } from './pages/ReportsPage';
@@ -35,6 +37,7 @@ export default function App() {
                 <Route path="properties" element={<PropertiesPage />} />
                 <Route path="owners" element={<OwnersPage />} />
                 <Route path="transactions" element={<TransactionsPage />} />
+                <Route path="verification" element={<VerificationPage />} />
                 <Route path="alerts" element={<AlertsPage />} />
                 <Route path="reports" element={<ReportsPage />} />
                 <Route
@@ -50,6 +53,14 @@ export default function App() {
                   element={
                     <RequireAdmin>
                       <AlertRulesPage />
+                    </RequireAdmin>
+                  }
+                />
+                <Route
+                  path="admin/bank-settings"
+                  element={
+                    <RequireAdmin>
+                      <AdminBankSettingsPage />
                     </RequireAdmin>
                   }
                 />

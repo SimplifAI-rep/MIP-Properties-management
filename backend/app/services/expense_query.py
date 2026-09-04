@@ -61,6 +61,15 @@ def expense_to_read(
         ledger_column=expense.ledger_column,
         needs_review=bool(getattr(expense, "needs_review", False)),
         review_reasons=getattr(expense, "review_reasons", None),
+        transaction_ref=getattr(expense, "transaction_ref", None),
+        bank_verified_at=getattr(expense, "bank_verified_at", None),
+        bank_asmachta=getattr(expense, "bank_asmachta", None),
+        bank_reconcile_exclude=bool(
+            getattr(expense, "bank_reconcile_exclude", False)
+        ),
+        cc_verified_at=getattr(expense, "cc_verified_at", None),
+        cc_bank_confirmed_at=getattr(expense, "cc_bank_confirmed_at", None),
+        cc_settlement_group_id=getattr(expense, "cc_settlement_group_id", None),
     )
 
 

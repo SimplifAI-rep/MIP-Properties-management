@@ -67,6 +67,12 @@ def deposit_to_read(
         balance_after=balance,
         needs_review=bool(getattr(deposit, "needs_review", False)),
         review_reasons=getattr(deposit, "review_reasons", None),
+        transaction_ref=getattr(deposit, "transaction_ref", None),
+        bank_verified_at=getattr(deposit, "bank_verified_at", None),
+        bank_asmachta=getattr(deposit, "bank_asmachta", None),
+        bank_reconcile_exclude=bool(
+            getattr(deposit, "bank_reconcile_exclude", False)
+        ),
     )
 
 

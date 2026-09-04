@@ -142,6 +142,118 @@ export const api = {
       '/auth/admin/session',
     ),
   getTransactionYears: () => request<{ years: number[] }>('/meta/transaction-years'),
+  getBankSettings: (bankAccountId?: string | null) => {
+    const accountId =
+      typeof bankAccountId === 'string' && bankAccountId.trim()
+        ? bankAccountId.trim()
+        : undefined;
+    return request<import('../types').CompanyBankSettings>(
+      `/bank-settings${toQuery({ bank_account_id: accountId })}`,
+    );
+  },
+  updateBankSettings: (payload: import('../types').CompanyBankSettingsUpdate) =>
+    request<import('../types').CompanyBankSettings>('/bank-settings', {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    }),
+  runBankCutover: (payload: import('../types').BankCutoverRequest) =>
+    request<import('../types').BankCutoverResponse>('/bank-settings/cutover', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  getBankGap: (
+    filters: {
+      bank_balance?: string;
+      date_to?: string;
+      bank_account_id?: string;
+    } = {},
+  ) =>
+    request<import('../types').BankGapResponse>(
+      `/bank-settings/gap${toQuery({
+        bank_balance: filters.bank_balance,
+        date_to: filters.date_to,
+        bank_account_id: filters.bank_account_id,
+      })}`,
+    ),
+  parseBankBalance: async (file: File) => {
+    const form = new FormData();
+    form.append('file', file);
+    return request<import('../types').BankBalanceParseResponse>(
+      '/bank-settings/parse-bank-balance',
+      { method: 'POST', body: form },
+    );
+  },
+  createBankReconcileSession: async (file: File, bankAccountId?: string | null) => {
+    const form = new FormData();
+    form.append('file', file);
+    const q = bankAccountId
+      ? `?bank_account_id=${encodeURIComponent(bankAccountId)}`
+      : '';
+    return request<import('../types').BankReconcileSession>(
+      `/bank-settings/reconcile/sessions${q}`,
+      { method: 'POST', body: form },
+    );
+  },
+  getBankReconcileSession: (sessionId: string) =>
+    request<import('../types').BankReconcileSession>(
+      `/bank-settings/reconcile/sessions/${sessionId}`,
+    ),
+  applyBankReconcileActions: (
+    sessionId: string,
+    actions: import('../types').BankReconcileAction[],
+  ) =>
+    request<import('../types').BankReconcileSession>(
+      `/bank-settings/reconcile/sessions/${sessionId}/actions`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ actions }),
+      },
+    ),
+  completeBankReconcileSession: (sessionId: string) =>
+    request<import('../types').BankReconcileSession>(
+      `/bank-settings/reconcile/sessions/${sessionId}/complete`,
+      { method: 'POST' },
+    ),
+  createCcReconcileSession: async (file: File) => {
+    const form = new FormData();
+    form.append('file', file);
+    return request<import('../types').CcReconcileSession>(
+      '/bank-settings/cc-reconcile/sessions',
+      { method: 'POST', body: form },
+    );
+  },
+  getCcReconcileSession: (sessionId: string) =>
+    request<import('../types').CcReconcileSession>(
+      `/bank-settings/cc-reconcile/sessions/${sessionId}`,
+    ),
+  applyCcReconcileActions: (
+    sessionId: string,
+    actions: import('../types').CcReconcileAction[],
+  ) =>
+    request<import('../types').CcReconcileSession>(
+      `/bank-settings/cc-reconcile/sessions/${sessionId}/actions`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ actions }),
+      },
+    ),
+  completeCcReconcileSession: (sessionId: string) =>
+    request<import('../types').CcReconcileSession>(
+      `/bank-settings/cc-reconcile/sessions/${sessionId}/complete`,
+      { method: 'POST' },
+    ),
+  getVerificationWorkspace: () =>
+    request<import('../types').VerificationWorkspace>(
+      '/bank-settings/verification-workspace',
+    ),
+  getVerificationGroupTransactions: (groupId: string) =>
+    request<import('../types').VerificationTransactionsResponse>(
+      `/bank-settings/verification-groups/${encodeURIComponent(groupId)}/transactions`,
+    ),
+  getCcPoolTransactions: (status: 'pending' | 'cc_verified') =>
+    request<import('../types').VerificationTransactionsResponse>(
+      `/bank-settings/cc-pool/transactions${toQuery({ status })}`,
+    ),
   getPeriodFloat: (filters: { date_from: string; date_to: string }) =>
     request<PeriodFloatResponse>(
       `/dashboard/period-float${toQuery({
@@ -420,9 +532,11 @@ export const api = {
       })}`,
     ),
   getAlertSummary: () => request<AlertSummary>('/alerts/summary'),
-  dismissAlert: (alertId: string) =>
+  dismissAlert: (alertId: string, payload: { reason?: string } = {}) =>
     request<AlertItem>(`/alerts/${encodeURIComponent(alertId)}/dismiss`, {
       method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
     }),
   resolveAlert: (alertId: string, payload: AlertResolveRequest) =>
     request<AlertItem>(`/alerts/${encodeURIComponent(alertId)}/resolve`, {

@@ -82,6 +82,10 @@ class DepositRead(BaseModel):
     balance_after: Decimal | None = None
     needs_review: bool = False
     review_reasons: str | None = None
+    transaction_ref: str | None = None
+    bank_verified_at: datetime | None = None
+    bank_asmachta: str | None = None
+    bank_reconcile_exclude: bool = False
 
 
 class PropertyRead(BaseModel):
@@ -320,6 +324,13 @@ class TransactionRead(BaseModel):
     paid_by_company: bool | None = None
     ledger_column: str | None = None
     from_bank_statement: bool = False
+    transaction_ref: str | None = None
+    bank_verified_at: datetime | None = None
+    bank_asmachta: str | None = None
+    bank_reconcile_exclude: bool | None = None
+    cc_verified_at: datetime | None = None
+    cc_bank_confirmed_at: datetime | None = None
+    cc_settlement_group_id: UUID | None = None
 
 
 class ExpenseRead(BaseModel):
@@ -350,6 +361,13 @@ class ExpenseRead(BaseModel):
     ledger_column: str | None = None
     needs_review: bool = False
     review_reasons: str | None = None
+    transaction_ref: str | None = None
+    bank_verified_at: datetime | None = None
+    bank_asmachta: str | None = None
+    bank_reconcile_exclude: bool = False
+    cc_verified_at: datetime | None = None
+    cc_bank_confirmed_at: datetime | None = None
+    cc_settlement_group_id: UUID | None = None
 
 
 class ExpenseCreate(BaseModel):
@@ -477,6 +495,11 @@ class AlertRead(BaseModel):
         "duplicate_deposit",
         "incomplete_import",
         "low_balance",
+        "bank_unmatched",
+        "app_unmatched",
+        "bank_gap",
+        "cc_unmatched",
+        "cc_app_unmatched",
     ]
     severity: Literal["error", "warning", "info"]
     title: str
@@ -497,6 +520,12 @@ class AlertRead(BaseModel):
     created_at: datetime | None = None
     gap: DepositGap | None = None
     drafts: list[TransactionDraft] = Field(default_factory=list)
+    reconcile_session_id: UUID | None = None
+    link_path: str | None = None
+
+
+class AlertDismissRequest(BaseModel):
+    reason: str | None = None
 
 
 class AlertListResponse(BaseModel):
@@ -562,3 +591,202 @@ class AlertRuleUpdate(BaseModel):
     threshold_amount: Decimal | None = None
     currency: str | None = None
 
+
+class CompanyBankSettingsRead(BaseModel):
+    bank_account_id: UUID | str | None = None
+    bank_account_label: str | None = None
+    account_number: str | None = None
+    opening_balance: Decimal | None = None
+    opening_balance_as_of: date | None = None
+    last_verification_date: date | None = None
+    gap_tolerance_amount: Decimal = Decimal("0.01")
+    unverified_count: int = 0
+
+
+class CompanyBankSettingsUpdate(BaseModel):
+    bank_account_id: UUID | None = None
+    opening_balance: Decimal | None = None
+    opening_balance_as_of: date | None = None
+    last_verification_date: date | None = None
+    gap_tolerance_amount: Decimal | None = Field(default=None, ge=0)
+    clear_opening_balance: bool = False
+    clear_opening_balance_as_of: bool = False
+    clear_last_verification_date: bool = False
+
+
+class BankCutoverRequest(BaseModel):
+    opening_balance: Decimal
+    as_of_date: date
+    gap_tolerance_amount: Decimal | None = Field(default=None, ge=0)
+    bank_account_id: UUID | None = None
+
+
+class BankCutoverResponse(BaseModel):
+    settings: CompanyBankSettingsRead
+    deposits_marked: int
+    expenses_marked: int
+
+
+class BankBalanceParseResponse(BaseModel):
+    bank_balance: Decimal
+    statement_start_date: date | None = None
+    statement_end_date: date | None = None
+    movement_row_count: int = 0
+
+
+class BankGapResponse(BaseModel):
+    opening_balance: Decimal | None = None
+    opening_balance_as_of: date | None = None
+    last_verification_date: date | None = None
+    gap_tolerance_amount: Decimal = Decimal("0.01")
+    after_date: date | None = None
+    date_to: date | None = None
+    bank_balance: Decimal | None = None
+    all_scoped_net: Decimal
+    verified_net: Decimal
+    all_scoped_deposits: Decimal
+    all_scoped_expenses: Decimal
+    gap_all_scoped: Decimal | None = None
+    gap_verified: Decimal | None = None
+    within_tolerance_verified: bool | None = None
+
+
+class BankReconcileAction(BaseModel):
+    action: Literal[
+        "confirm_match",
+        "confirm_settlement",
+        "ignore_bank",
+        "ignore_app",
+        "add_from_bank",
+    ]
+    fingerprint: str | None = None
+    kind: Literal["deposit", "expense"] | None = None
+    tx_id: UUID | None = None
+    reason: str | None = None
+    property_id: UUID | None = None
+    member_ids: list[UUID] | None = None
+
+
+class BankReconcileActionsRequest(BaseModel):
+    actions: list[BankReconcileAction]
+
+
+class BankReconcileSessionResponse(BaseModel):
+    id: str
+    status: str
+    filename: str | None = None
+    bank_account_id: str | None = None
+    bank_balance: str | None = None
+    statement_start_date: str | None = None
+    statement_end_date: str | None = None
+    opening_balance: str | None = None
+    after_date: str | None = None
+    gap_tolerance_amount: str
+    verified_net: str
+    all_scoped_net: str
+    gap_verified: str | None = None
+    within_tolerance_verified: bool | None = None
+    counts: dict
+    can_complete: bool
+    lines: list[dict]
+    unmatched_app: list[dict]
+    able_txs: list[TransactionRead] = []
+    not_in_excel_txs: list[TransactionRead] = []
+
+
+class CcReconcileAction(BaseModel):
+    action: Literal["confirm_match", "ignore_cc", "ignore_app", "add_from_cc"]
+    fingerprint: str | None = None
+    tx_id: UUID | None = None
+    reason: str | None = None
+    property_id: UUID | None = None
+
+
+class CcReconcileActionsRequest(BaseModel):
+    actions: list[CcReconcileAction]
+
+
+class CcReconcileSessionResponse(BaseModel):
+    id: str
+    status: str
+    filename: str | None = None
+    card_last4: str | None = None
+    statement_start_date: str | None = None
+    statement_end_date: str | None = None
+    counts: dict
+    can_complete: bool
+    lines: list[dict]
+    unmatched_app: list[dict]
+    able_txs: list[TransactionRead] = []
+    not_in_excel_txs: list[TransactionRead] = []
+
+
+class VerificationBankGroup(BaseModel):
+    id: str
+    kind: Literal["bank"] = "bank"
+    status: Literal["verified", "unverified"]
+    title: str
+    date: str | None = None
+    statement_start_date: str | None = None
+    statement_end_date: str | None = None
+    after_date: str | None = None
+    session_id: str | None = None
+    filename: str | None = None
+    bank_account_id: str | None = None
+    transaction_count: int = 0
+    settlement_count: int = 0
+
+
+class VerificationCcHistoryGroup(BaseModel):
+    id: str
+    kind: Literal["cc"] = "cc"
+    status: Literal["verified"] = "verified"
+    title: str
+    date: str | None = None
+    statement_start_date: str | None = None
+    statement_end_date: str | None = None
+    session_id: str | None = None
+    filename: str | None = None
+    card_last4: str | None = None
+    transaction_count: int = 0
+
+
+class VerificationCcPoolSummary(BaseModel):
+    pending_count: int = 0
+    cc_verified_count: int = 0
+
+
+class VerificationOperatingAccount(BaseModel):
+    id: str
+    label: str
+    account_number: str
+    opening_balance: str | None = None
+    last_verification_date: str | None = None
+    unverified_count: int = 0
+    open_session_id: str | None = None
+
+
+class VerificationCreditCard(BaseModel):
+    card_last4: str
+    label: str
+    bank_account_id: str | None = None
+    open_session_id: str | None = None
+    pending_count: int = 0
+    last_verification_date: str | None = None
+
+
+class VerificationWorkspaceResponse(BaseModel):
+    last_verification_date: str | None = None
+    last_cc_verification_date: str | None = None
+    bank_groups: list[VerificationBankGroup]
+    cc_history: list[VerificationCcHistoryGroup] = []
+    cc_active_session_id: str | None = None
+    cc_active_session_ids: list[str] = []
+    operating_accounts: list[VerificationOperatingAccount] = []
+    credit_cards: list[VerificationCreditCard] = []
+    cc_pool: VerificationCcPoolSummary
+
+
+class VerificationTransactionsResponse(BaseModel):
+    items: list[TransactionRead]
+    total: int

@@ -1039,6 +1039,7 @@ export function TransactionsPage() {
             onClick={() =>
               downloadCsv(
                 items.map((row) => ({
+                  Ref: row.transaction_ref ?? '',
                   'Prop ID': row.client_prop_id,
                   Date: row.transaction_date,
                   Section: row.section,
@@ -1359,29 +1360,29 @@ export function TransactionsPage() {
                 payment_method: form.payment_method || 'company_account',
               });
             }}
-          >
-            <label className="text-sm">
+      >
+        <label className="text-sm">
               <span className="label-text">
                 <Tooltip content="Same as Prop ID in Excel — pick the property sheet.">
                   Prop ID / Property
                 </Tooltip>
               </span>
-              <select
+          <select
                 required
-                className="field"
+            className="field"
                 value={form.property_id}
                 onChange={(event) =>
                   setForm((current) => ({ ...current, property_id: event.target.value }))
                 }
               >
                 <option value="">Select property</option>
-                {(propertiesQuery.data ?? []).map((property) => (
+            {(propertiesQuery.data ?? []).map((property) => (
                   <option key={property.id} value={property.id}>
                     {property.client_prop_id} — {property.name}
-                  </option>
-                ))}
-              </select>
-            </label>
+              </option>
+            ))}
+          </select>
+        </label>
             <DateInputDMY
               label="Date"
               required
@@ -1390,7 +1391,7 @@ export function TransactionsPage() {
                 setForm((current) => ({ ...current, transaction_date: iso ?? '' }))
               }
             />
-            <label className="text-sm">
+        <label className="text-sm">
               <span className="label-text">
                 <Tooltip content="Excel Amount column — money leaving the company float.">
                   Amount
@@ -1432,8 +1433,8 @@ export function TransactionsPage() {
               <span className="label-text">
                 <Tooltip content="Excel Method — how it was paid.">Method</Tooltip>
               </span>
-              <select
-                className="field"
+          <select
+            className="field"
                 value={form.payment_method}
                 onChange={(event) =>
                   setForm((current) => ({ ...current, payment_method: event.target.value }))
@@ -1442,18 +1443,40 @@ export function TransactionsPage() {
                 {METHODS.map((item) => (
                   <option key={item} value={item}>
                     {label(item)}
-                  </option>
-                ))}
-              </select>
+              </option>
+            ))}
+          </select>
+        </label>
+            <label className="text-sm flex items-end gap-2 pb-2">
+              <input
+                type="checkbox"
+                checked={form.payment_method === 'credit_card'}
+                onChange={(event) =>
+                  setForm((current) => ({
+                    ...current,
+                    payment_method: event.target.checked
+                      ? 'credit_card'
+                      : current.payment_method === 'credit_card'
+                        ? 'company_account'
+                        : current.payment_method,
+                    source: event.target.checked ? 'credit_card' : current.source,
+                  }))
+                }
+              />
+              <span className="label-text mb-0">
+                <Tooltip content="Paid on the company credit card — awaits card statement verification (excluded from the bank gap as a merchant debit).">
+                  Paid by card
+                </Tooltip>
+              </span>
             </label>
-            <label className="text-sm">
+        <label className="text-sm">
               <span className="label-text">
                 <Tooltip content="How this expense was recorded (e.g. standing order).">
                   Source
                 </Tooltip>
               </span>
-              <select
-                className="field"
+          <select
+            className="field"
                 value={form.source}
                 onChange={(event) =>
                   setForm((current) => ({ ...current, source: event.target.value }))
@@ -1462,31 +1485,31 @@ export function TransactionsPage() {
                 {SOURCES.map((item) => (
                   <option key={item} value={item}>
                     {label(item)}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="text-sm">
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="text-sm">
               <span className="label-text">
                 <Tooltip content="Excel Company — vendor or payee name.">Company</Tooltip>
               </span>
-              <input
+          <input
                 type="text"
-                className="field"
+            className="field"
                 placeholder="Vendor / company name"
                 value={form.vendor_name ?? ''}
                 onChange={(event) =>
                   setForm((current) => ({ ...current, vendor_name: event.target.value }))
                 }
-              />
-            </label>
+          />
+        </label>
             <label className="text-sm md:col-span-2 xl:col-span-3">
               <span className="label-text">
                 <Tooltip content="Excel Notes — free text about the row.">Notes</Tooltip>
               </span>
-              <input
+          <input
                 type="text"
-                className="field"
+            className="field"
                 placeholder="Optional notes"
                 value={form.description ?? ''}
                 onChange={(event) =>
@@ -1553,8 +1576,8 @@ export function TransactionsPage() {
                   setPropertyStatuses(next as PropertyStatusFilter[]);
                   setPropertyIds([]);
                   setClientPropIds([]);
-                  resetPage();
-                }}
+              resetPage();
+            }}
                 placeholder="All statuses"
                 searchPlaceholder="Search status…"
               />
@@ -1741,7 +1764,7 @@ export function TransactionsPage() {
                                     </option>
                                   ))}
                                 </select>
-                              </label>
+        </label>
                               <DateInputDMY
                                 label="Date"
                                 value={editForm.transaction_date}
@@ -1775,18 +1798,18 @@ export function TransactionsPage() {
                                   </label>
                                   <label className="text-sm min-w-0">
                                     <span className="label-text">Method</span>
-                                    <select
-                                      className="field"
+              <select
+                className="field"
                                       value={editForm.payment_method}
                                       onChange={(event) =>
                                         patchEdit({ payment_method: event.target.value })
                                       }
                                     >
                                       {METHODS.map((item) => (
-                                        <option key={item} value={item}>
-                                          {label(item)}
-                                        </option>
-                                      ))}
+                  <option key={item} value={item}>
+                    {label(item)}
+                  </option>
+                ))}
                                       {editForm.payment_method &&
                                       !(METHODS as readonly string[]).includes(
                                         editForm.payment_method,
@@ -1795,8 +1818,8 @@ export function TransactionsPage() {
                                           {label(editForm.payment_method)}
                                         </option>
                                       ) : null}
-                                    </select>
-                                  </label>
+              </select>
+            </label>
                                   <label className="text-sm min-w-0">
                                     <span className="label-text">Company</span>
                                     <input
@@ -1809,28 +1832,28 @@ export function TransactionsPage() {
                                     />
                                   </label>
                                   <label className="text-sm min-w-0">
-                                    <span className="label-text">Source</span>
-                                    <select
-                                      className="field"
+              <span className="label-text">Source</span>
+              <select
+                className="field"
                                       value={editForm.source}
                                       onChange={(event) =>
                                         patchEdit({ source: event.target.value })
                                       }
                                     >
-                                      {SOURCES.map((item) => (
-                                        <option key={item} value={item}>
-                                          {label(item)}
-                                        </option>
-                                      ))}
+                {SOURCES.map((item) => (
+                  <option key={item} value={item}>
+                    {label(item)}
+                  </option>
+                ))}
                                       {editForm.source &&
                                       !(SOURCES as readonly string[]).includes(editForm.source) ? (
                                         <option value={editForm.source}>
                                           {label(editForm.source)}
                                         </option>
                                       ) : null}
-                                    </select>
-                                  </label>
-                                </>
+              </select>
+            </label>
+          </>
                               ) : (
                                 <label className="text-sm flex items-end gap-2 pb-2 min-w-0">
                                   <input
@@ -1856,7 +1879,7 @@ export function TransactionsPage() {
                                 <div className="sm:col-span-2 lg:col-span-3 xl:col-span-4">
                                   <InlineError error={editError} />
                                 </div>
-                              ) : null}
+        ) : null}
                               <div className="flex flex-wrap gap-2 sm:col-span-2 lg:col-span-3 xl:col-span-4">
                                 <button
                                   type="button"
@@ -1897,9 +1920,9 @@ export function TransactionsPage() {
                                 </button>
                               </div>
                             </div>
-                          </div>
-                        </td>
-                      </tr>
+                    </div>
+                  </td>
+                </tr>
                     ) : null}
                   </Fragment>
                 );

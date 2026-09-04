@@ -1,10 +1,11 @@
 from urllib.parse import unquote
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Body, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db
 from app.schemas import (
+    AlertDismissRequest,
     AlertListResponse,
     AlertRead,
     AlertResolveRequest,
@@ -52,9 +53,10 @@ def post_fix_incomplete(
 @router.post("/{alert_id}/dismiss", response_model=AlertRead)
 def post_dismiss_alert(
     alert_id: str,
+    payload: AlertDismissRequest = Body(default_factory=AlertDismissRequest),
     db: Session = Depends(get_db),
 ) -> AlertRead:
-    return dismiss_alert(db, unquote(alert_id))
+    return dismiss_alert(db, unquote(alert_id), reason=payload.reason)
 
 
 @router.post("/{alert_id}/resolve", response_model=AlertRead)

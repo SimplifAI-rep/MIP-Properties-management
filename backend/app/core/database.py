@@ -39,7 +39,9 @@ def init_db() -> None:
     _ensure_sqlite_deposit_receipt_ref()
     _ensure_sqlite_source_file_columns()
     _ensure_sqlite_incomplete_transaction_support()
+    _ensure_sqlite_bank_reconcile_columns()
     _ensure_sqlite_indexes()
+    _backfill_transaction_refs_and_settings()
 
 
 def _ensure_sqlite_indexes() -> None:
@@ -54,6 +56,8 @@ def _ensure_sqlite_indexes() -> None:
         "CREATE INDEX IF NOT EXISTS ix_deposits_source_file ON deposits (source_file)",
         "CREATE INDEX IF NOT EXISTS ix_deposits_needs_review_created ON deposits (needs_review, created_at)",
         "CREATE INDEX IF NOT EXISTS ix_deposits_property_rental_date ON deposits (property_id, is_rental_income, transaction_date)",
+        "CREATE INDEX IF NOT EXISTS ix_deposits_transaction_ref ON deposits (transaction_ref)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_deposits_transaction_ref ON deposits (transaction_ref)",
         "CREATE INDEX IF NOT EXISTS ix_expenses_property_date ON expenses (property_id, transaction_date)",
         "CREATE INDEX IF NOT EXISTS ix_expenses_date ON expenses (transaction_date)",
         "CREATE INDEX IF NOT EXISTS ix_expenses_category ON expenses (category)",
@@ -62,6 +66,8 @@ def _ensure_sqlite_indexes() -> None:
         "CREATE INDEX IF NOT EXISTS ix_expenses_needs_review_created ON expenses (needs_review, created_at)",
         "CREATE INDEX IF NOT EXISTS ix_expenses_property_flags_date ON expenses (property_id, paid_by_resident, paid_by_owner, transaction_date)",
         "CREATE INDEX IF NOT EXISTS ix_expenses_ledger_column ON expenses (ledger_column)",
+        "CREATE INDEX IF NOT EXISTS ix_expenses_transaction_ref ON expenses (transaction_ref)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_expenses_transaction_ref ON expenses (transaction_ref)",
         "CREATE INDEX IF NOT EXISTS ix_properties_owner_status ON properties (owner_id, status)",
         "CREATE INDEX IF NOT EXISTS ix_expected_deposits_active_property ON expected_deposits (active, property_id)",
     )
@@ -313,6 +319,79 @@ def _rebuild_deposits_for_incomplete(conn) -> None:
     )
     conn.exec_driver_sql("DROP TABLE deposits")
     conn.exec_driver_sql("ALTER TABLE deposits_new RENAME TO deposits")
+
+
+def _ensure_sqlite_bank_reconcile_columns() -> None:
+    """Add transaction_ref + bank-verify columns on deposits/expenses (SQLite)."""
+    settings = get_settings()
+    if not settings.database_url.startswith("sqlite"):
+        return
+
+    deposit_cols = {
+        "transaction_ref": "VARCHAR(40)",
+        "bank_verified_at": "DATETIME",
+        "bank_asmachta": "VARCHAR(100)",
+        "bank_reconcile_exclude": "BOOLEAN NOT NULL DEFAULT 0",
+    }
+    expense_cols = {
+        **deposit_cols,
+        "cc_verified_at": "DATETIME",
+        "cc_bank_confirmed_at": "DATETIME",
+        "cc_settlement_group_id": "CHAR(36)",
+        "card_last4": "VARCHAR(8)",
+    }
+
+    with engine.begin() as conn:
+        for table, cols in (("deposits", deposit_cols), ("expenses", expense_cols)):
+            rows = conn.exec_driver_sql(f"PRAGMA table_info({table})").fetchall()
+            if not rows:
+                continue
+            existing = {row[1] for row in rows}
+            for name, ddl in cols.items():
+                if name not in existing:
+                    conn.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}")
+
+        # Bank account per-account verification settings
+        ba_rows = conn.exec_driver_sql("PRAGMA table_info(bank_accounts)").fetchall()
+        if ba_rows:
+            existing = {row[1] for row in ba_rows}
+            for name, ddl in (
+                ("opening_balance", "NUMERIC(14, 2)"),
+                ("opening_balance_as_of", "DATE"),
+                ("last_verification_date", "DATE"),
+            ):
+                if name not in existing:
+                    conn.exec_driver_sql(
+                        f"ALTER TABLE bank_accounts ADD COLUMN {name} {ddl}"
+                    )
+
+        # Bank reconcile sessions: which operating account
+        br_rows = conn.exec_driver_sql(
+            "PRAGMA table_info(bank_reconcile_sessions)"
+        ).fetchall()
+        if br_rows:
+            existing = {row[1] for row in br_rows}
+            if "bank_account_id" not in existing:
+                conn.exec_driver_sql(
+                    "ALTER TABLE bank_reconcile_sessions "
+                    "ADD COLUMN bank_account_id CHAR(36)"
+                )
+
+def _backfill_transaction_refs_and_settings() -> None:
+    """Backfill missing refs and ensure company bank settings row exists."""
+    from app.services.transaction_ref import (
+        backfill_missing_transaction_refs,
+        ensure_company_bank_settings_row,
+        register_transaction_ref_listeners,
+    )
+
+    register_transaction_ref_listeners()
+    db = SessionLocal()
+    try:
+        backfill_missing_transaction_refs(db)
+        ensure_company_bank_settings_row(db)
+    finally:
+        db.close()
 
 
 def _ensure_sqlite_upload_nullable_columns() -> None:

@@ -61,6 +61,39 @@ export function TransactionTypeBadges({
           <span className="badge-rental-income">Rental income</span>
         </Tooltip>
       ) : null}
+      {row.bank_verified_at ? (
+        <Tooltip
+          content={
+            row.bank_asmachta
+              ? `Bank verified — אסמכתא ${row.bank_asmachta}`
+              : 'Bank verified — no אסמכתא recorded.'
+          }
+        >
+          <span className="badge-bank-verified">Verified</span>
+        </Tooltip>
+      ) : row.payment_method === 'credit_card' ? (
+        row.cc_bank_confirmed_at ? (
+          <Tooltip content="Card settlement confirmed on the bank statement.">
+            <span className="badge-cc-bank-confirmed">Bank settled</span>
+          </Tooltip>
+        ) : row.cc_verified_at ? (
+          <Tooltip content="Matched to a credit-card statement charge.">
+            <span className="badge-cc-verified">Card verified</span>
+          </Tooltip>
+        ) : (
+          <Tooltip content="Paid by card — awaiting card statement verification.">
+            <span className="badge-cc-pending">Card pending</span>
+          </Tooltip>
+        )
+      ) : row.bank_reconcile_exclude || row.paid_by_owner || row.paid_by_resident ? (
+        <Tooltip content="Excluded from bank reconciliation.">
+          <span className="badge-neutral">Excluded</span>
+        </Tooltip>
+      ) : (
+        <Tooltip content="Not yet verified against the bank statement.">
+          <span className="badge-bank-unverified">Unverified</span>
+        </Tooltip>
+      )}
       {row.from_bank_statement ? (
         <Tooltip content="Imported from the company bank statement.">
           <span className="badge-bank-statement">Bank statement</span>
@@ -194,6 +227,9 @@ export function TransactionTableHeader({ showActions = true }: { showActions?: b
     <thead className="table-head">
       <tr>
         <th className="px-2 py-3 font-medium">
+          <Tooltip content="SimplifAI unique transaction id (date-based).">Ref</Tooltip>
+        </th>
+        <th className="px-2 py-3 font-medium">
           <Tooltip content="Deposit = Inflow — Expense = Amount (Excel money columns).">
             Type
           </Tooltip>
@@ -236,17 +272,18 @@ export function TransactionTableHeader({ showActions = true }: { showActions?: b
 export function TransactionTableColgroup({ showActions = true }: { showActions?: boolean }) {
   return (
     <colgroup>
-      <col className="w-[11%]" />
-      <col className="w-[6%]" />
-      <col className="w-[7%]" />
       <col className="w-[8%]" />
       <col className="w-[10%]" />
-      <col className="w-[8%]" />
-      <col className="w-[8%]" />
-      <col className="w-[8%]" />
+      <col className="w-[5%]" />
+      <col className="w-[7%]" />
+      <col className="w-[7%]" />
       <col className="w-[9%]" />
+      <col className="w-[7%]" />
+      <col className="w-[7%]" />
+      <col className="w-[7%]" />
       <col className="w-[8%]" />
       <col className="w-[7%]" />
+      <col className="w-[6%]" />
       <col className="w-[5%]" />
       {showActions ? <col className="w-[5%]" /> : null}
     </colgroup>
@@ -266,6 +303,12 @@ export function TransactionDisplayCells({
 
   return (
     <>
+      <td
+        className="px-2 py-3 font-mono text-xs tabular-nums truncate"
+        title={row.transaction_ref ?? undefined}
+      >
+        {row.transaction_ref || '—'}
+      </td>
       <td className="px-2 py-3">
         <TransactionTypeBadges row={row} reviewMarker={marker} />
       </td>

@@ -51,6 +51,17 @@ def _is_cc_settlement_line(description: str | None) -> bool:
     return any(needle.lower() in text for needle in _CC_SETTLEMENT_NEEDLES)
 
 
+def count_cc_deduction_lines(lines: list[dict] | None) -> int:
+    """How many bank statement rows are credit-card payment deductions."""
+    total = 0
+    for line in lines or []:
+        if line.get("proposed_kind") == "cc_settlement" or _is_cc_settlement_line(
+            line.get("description")
+        ):
+            total += 1
+    return total
+
+
 def _parse_iso_date(value: str | None) -> date | None:
     if not value:
         return None
@@ -569,6 +580,7 @@ def session_summary(db: Session, session: BankReconcileSession) -> dict:
     not_in_excel_txs = load_transactions_by_ids(
         db, deposit_ids=not_excel_dep, expense_ids=not_excel_exp
     )
+    cc_deduction_count = count_cc_deduction_lines(lines)
 
     return {
         "id": str(session.id),
@@ -597,6 +609,8 @@ def session_summary(db: Session, session: BankReconcileSession) -> dict:
             "unresolved_app": unresolved_app,
         },
         "can_complete": can_complete,
+        "has_cc_deduction": cc_deduction_count > 0,
+        "cc_deduction_count": cc_deduction_count,
         "lines": lines,
         "unmatched_app": apps,
         "able_txs": able_txs,

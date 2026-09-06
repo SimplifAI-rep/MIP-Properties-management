@@ -13,23 +13,30 @@ export function HistorySessionGroups({
   kind: 'bank' | 'cc';
   sessionId: string;
 }) {
-  const query = useQuery({
-    queryKey: [kind === 'bank' ? 'bank-reconcile-session' : 'cc-reconcile-session', sessionId],
-    queryFn: () =>
-      kind === 'bank'
-        ? api.getBankReconcileSession(sessionId)
-        : api.getCcReconcileSession(sessionId),
+  const bankQuery = useQuery({
+    queryKey: ['bank-reconcile-session', sessionId],
+    queryFn: () => api.getBankReconcileSession(sessionId),
+    enabled: kind === 'bank',
+  });
+  const ccQuery = useQuery({
+    queryKey: ['cc-reconcile-session', sessionId],
+    queryFn: () => api.getCcReconcileSession(sessionId),
+    enabled: kind === 'cc',
   });
 
-  if (query.isLoading) return <p className="text-sm muted-text px-1">Loading period…</p>;
-  if (query.isError || !query.data) {
-    return <p className="text-sm text-red-600 px-1">Could not load this period.</p>;
+  if (kind === 'bank') {
+    if (bankQuery.isLoading) return <p className="text-sm muted-text px-1">Loading period…</p>;
+    if (bankQuery.isError || !bankQuery.data) {
+      return <p className="text-sm text-red-600 px-1">Could not load this period.</p>;
+    }
+    return <BankHistoryGroups session={bankQuery.data} />;
   }
 
-  if (kind === 'bank') {
-    return <BankHistoryGroups session={query.data as BankReconcileSession} />;
+  if (ccQuery.isLoading) return <p className="text-sm muted-text px-1">Loading period…</p>;
+  if (ccQuery.isError || !ccQuery.data) {
+    return <p className="text-sm text-red-600 px-1">Could not load this period.</p>;
   }
-  return <CcHistoryGroups session={query.data as CcReconcileSession} />;
+  return <CcHistoryGroups session={ccQuery.data} />;
 }
 
 function BankHistoryGroups({ session }: { session: BankReconcileSession }) {

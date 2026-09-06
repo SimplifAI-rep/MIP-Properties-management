@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import { formatCurrency, formatDate } from './ui/States';
 
 /** Shared verification buckets for bank + CC Excel sessions. */
@@ -20,6 +20,7 @@ export function VerifyGroupSection({
   /** When true, the table starts expanded. Default is collapsed. */
   defaultOpen?: boolean;
 }) {
+  const [open, setOpen] = useState(defaultOpen);
   const border =
     tone === 'warn'
       ? 'border-amber-300 dark:border-amber-700/60'
@@ -29,7 +30,11 @@ export function VerifyGroupSection({
   return (
     <details
       className={`group overflow-x-auto rounded-lg border ${border}`}
-      defaultOpen={defaultOpen}
+      open={open}
+      onToggle={(e) => {
+        if (e.target !== e.currentTarget) return;
+        setOpen((e.currentTarget as HTMLDetailsElement).open);
+      }}
     >
       <summary className="cursor-pointer select-none list-none px-3 py-2 hover:bg-slate-50 dark:hover:bg-slate-900/40 [&::-webkit-details-marker]:hidden">
         <div className="flex items-center gap-2">

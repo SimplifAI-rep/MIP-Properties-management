@@ -15,6 +15,7 @@ from app.models.deposit import Deposit
 from app.models.expense import Expense
 from app.models.property import Property
 from app.services.bank_settings import get_or_create_settings
+from app.services.bank_reconcile import count_cc_deduction_lines
 from app.services.deposit_query import deposit_to_read
 from app.services.expense_query import expense_to_read
 from app.services.source_file import load_batch_filenames, load_upload_filenames
@@ -124,12 +125,15 @@ def list_bank_groups(db: Session) -> list[dict]:
                 "bank_account_id": None,
                 "transaction_count": 0,
                 "settlement_count": 0,
+                "has_cc_deduction": False,
+                "cc_deduction_count": 0,
             }
         )
     else:
         for open_session in open_sessions:
             start = open_session.statement_start_date
             end = open_session.statement_end_date
+            cc_n = count_cc_deduction_lines(open_session.lines_json)
             groups.append(
                 {
                     "id": f"bank-open:{open_session.id}",
@@ -148,7 +152,9 @@ def list_bank_groups(db: Session) -> list[dict]:
                     "transaction_count": _count_open_bank_scoped(
                         db, date_from=start, date_to=end
                     ),
-                    "settlement_count": 0,
+                    "settlement_count": cc_n,
+                    "has_cc_deduction": cc_n > 0,
+                    "cc_deduction_count": cc_n,
                 }
             )
 
@@ -164,6 +170,7 @@ def list_bank_groups(db: Session) -> list[dict]:
     for session in completed:
         dep_ids, exp_ids, settle_ids = _session_linked_ids(session)
         end = session.statement_end_date
+        cc_n = count_cc_deduction_lines(session.lines_json)
         groups.append(
             {
                 "id": f"bank-session:{session.id}",
@@ -183,6 +190,8 @@ def list_bank_groups(db: Session) -> list[dict]:
                 else None,
                 "transaction_count": len(dep_ids) + len(exp_ids),
                 "settlement_count": len(settle_ids),
+                "has_cc_deduction": cc_n > 0,
+                "cc_deduction_count": cc_n,
             }
         )
 

@@ -53,7 +53,7 @@ export function ccDraftToUnified(line: CcReconcileLine): UnifiedTransaction {
     bank_reconcile_exclude: false,
     cc_verified_at: line.status === 'added' ? new Date().toISOString() : null,
     section: line.status === 'added' ? 'Created from statement' : 'Statement draft',
-    notes: line.details || line.merchant,
+    notes: line.details || line.merchant || null,
     company: line.merchant ?? null,
     payment_method: 'credit_card',
     source: 'credit_card',

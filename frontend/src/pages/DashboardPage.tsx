@@ -138,7 +138,7 @@ export function DashboardPage() {
   });
   const alertsQuery = useQuery({
     queryKey: ['alerts'],
-    queryFn: api.getAlerts,
+    queryFn: () => api.getAlerts(),
   });
   const alertSummary = useMemo(() => {
     const data = alertsQuery.data;

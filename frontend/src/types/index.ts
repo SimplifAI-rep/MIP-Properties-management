@@ -699,6 +699,8 @@ export interface BankReconcileSession {
   within_tolerance_verified: boolean | null;
   counts: Record<string, number>;
   can_complete: boolean;
+  has_cc_deduction?: boolean;
+  cc_deduction_count?: number;
   lines: BankReconcileLine[];
   unmatched_app: BankReconcileAppRow[];
   able_txs?: Record<string, unknown>[];
@@ -757,6 +759,8 @@ export interface VerificationBankGroup {
   bank_account_id?: string | null;
   transaction_count: number;
   settlement_count: number;
+  has_cc_deduction?: boolean;
+  cc_deduction_count?: number;
 }
 
 export interface VerificationCcHistoryGroup {

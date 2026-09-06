@@ -688,6 +688,8 @@ class BankReconcileSessionResponse(BaseModel):
     within_tolerance_verified: bool | None = None
     counts: dict
     can_complete: bool
+    has_cc_deduction: bool = False
+    cc_deduction_count: int = 0
     lines: list[dict]
     unmatched_app: list[dict]
     able_txs: list[TransactionRead] = []
@@ -735,6 +737,8 @@ class VerificationBankGroup(BaseModel):
     bank_account_id: str | None = None
     transaction_count: int = 0
     settlement_count: int = 0
+    has_cc_deduction: bool = False
+    cc_deduction_count: int = 0
 
 
 class VerificationCcHistoryGroup(BaseModel):

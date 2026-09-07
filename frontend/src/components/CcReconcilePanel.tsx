@@ -24,12 +24,13 @@ export function CcReconcilePanel() {
   const [error, setError] = useState<string | null>(null);
   const [selectedCardLast4, setSelectedCardLast4] = useState<string>('');
 
+  // Follow URL only when the URL itself changes. Do not depend on sessionId —
+  // otherwise a card switch optimistically updates state while the URL is still
+  // stale and this effect snaps back to the previous session.
+  const urlSessionId = searchParams.get('cc_session');
   useEffect(() => {
-    const fromUrl = searchParams.get('cc_session');
-    if (fromUrl && fromUrl !== sessionId) {
-      setSessionId(fromUrl);
-    }
-  }, [searchParams, sessionId]);
+    setSessionId(urlSessionId);
+  }, [urlSessionId]);
 
   const workspaceQuery = useQuery({
     queryKey: ['verification-workspace'],
@@ -49,12 +50,15 @@ export function CcReconcilePanel() {
     setSelectedCardLast4((withOpen ?? creditCards[0]).card_last4);
   }, [creditCards, selectedCardLast4]);
 
+  // Sync dropdown from the loaded session only when that session matches selection.
   useEffect(() => {
-    const last4 = sessionQuery.data?.card_last4;
+    const loaded = sessionQuery.data;
+    if (!loaded || !sessionId || loaded.id !== sessionId) return;
+    const last4 = loaded.card_last4;
     if (last4 && last4 !== selectedCardLast4) {
       setSelectedCardLast4(last4);
     }
-  }, [sessionQuery.data?.card_last4, selectedCardLast4]);
+  }, [sessionQuery.data, sessionId, selectedCardLast4]);
 
   function selectCard(last4: string) {
     setSelectedCardLast4(last4);
@@ -92,7 +96,7 @@ export function CcReconcilePanel() {
         next.set('cc_session', created.id);
         return next;
       });
-      setMessage('Statement opened. Confirm matches below.');
+      setMessage('Statement opened. Check the lists below.');
       setError(null);
       void queryClient.invalidateQueries({ queryKey: ['cc-reconcile-session'] });
       invalidateAlertData(queryClient);
@@ -136,7 +140,7 @@ export function CcReconcilePanel() {
         return next;
       });
       setMessage(
-        `Period completed${
+        `Period finished${
           completed.statement_end_date
             ? ` through ${formatDate(completed.statement_end_date)}`
             : ''
@@ -152,7 +156,8 @@ export function CcReconcilePanel() {
     queryFn: () => api.getProperties(),
   });
 
-  const session: CcReconcileSession | undefined = sessionQuery.data;
+  const session: CcReconcileSession | undefined =
+    sessionId && sessionQuery.data?.id === sessionId ? sessionQuery.data : undefined;
   const busy =
     createMutation.isPending || actionsMutation.isPending || completeMutation.isPending;
   const activeSession = session?.status === 'in_progress' ? session : undefined;
@@ -305,6 +310,17 @@ export function CcReconcilePanel() {
 
   return (
     <div className="space-y-3">
+      {!activeSession && !sessionQuery.isLoading ? (
+        <div className="rounded-lg border border-dashed border-slate-300 px-4 py-4 dark:border-slate-600 space-y-3">
+          <p className="text-sm font-medium">How to check a card period</p>
+          <ol className="list-decimal pl-5 text-sm muted-text space-y-1">
+            <li>Choose the Excel file from the card</li>
+            <li>Review the lists below</li>
+            <li>Finish the period</li>
+          </ol>
+        </div>
+      ) : null}
+
       <div className="flex flex-wrap items-center gap-2">
         {creditCards.length > 1 || selectedCardLast4 === '__new__' ? (
           <label className="text-sm flex items-center gap-2 min-w-0">
@@ -332,7 +348,7 @@ export function CcReconcilePanel() {
           </label>
         ) : null}
         <label className="btn-primary cursor-pointer text-sm">
-          {createMutation.isPending ? 'Uploading…' : 'Upload statement'}
+          {createMutation.isPending ? 'Uploading…' : 'Upload card statement'}
           <input
             type="file"
             accept=".xlsx,.xls"
@@ -373,6 +389,7 @@ export function CcReconcilePanel() {
 
       {activeSession ? (
         <>
+          <p className="text-sm font-medium">Check the lists</p>
           <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-sm">
             <span className="tabular-nums muted-text">
               {formatDate(activeSession.statement_start_date)} →{' '}
@@ -386,18 +403,18 @@ export function CcReconcilePanel() {
                 disabled={busy}
                 onClick={confirmAllProposed}
               >
-                Confirm all matches ({proposed.length})
+                Confirm all found ({proposed.length})
               </button>
             ) : null}
             {notInBankLines.length > 0 ? (
               <>
                 <button
                   type="button"
-                  className="btn-primary text-sm"
+                  className="btn-secondary text-sm"
                   disabled={busy || propertiesQuery.isLoading}
                   onClick={createAllFromCc}
                 >
-                  Create all ({notInBankLines.length})
+                  Create remaining ({notInBankLines.length})
                 </button>
                 <button
                   type="button"
@@ -405,7 +422,7 @@ export function CcReconcilePanel() {
                   disabled={busy}
                   onClick={ignoreAllCc}
                 >
-                  Ignore all ({notInBankLines.length})
+                  Ignore remaining ({notInBankLines.length})
                 </button>
               </>
             ) : null}
@@ -416,24 +433,41 @@ export function CcReconcilePanel() {
                 disabled={busy}
                 onClick={ignoreAllApp}
               >
-                Ignore all missing (
+                Ignore remaining missing (
                 {notInExcelTxs.filter((tx) => !ignoredAppIds.has(tx.id)).length})
               </button>
             ) : null}
             <button
               type="button"
-              className="btn-secondary text-sm"
+              className={
+                activeSession.can_complete ? 'btn-primary text-sm' : 'btn-secondary text-sm'
+              }
               disabled={busy || !activeSession.can_complete}
               onClick={() => completeMutation.mutate(activeSession.id)}
             >
-              {completeMutation.isPending ? 'Completing…' : 'Complete period'}
+              {completeMutation.isPending ? 'Finishing…' : 'Finish period'}
             </button>
           </div>
+          {!activeSession.can_complete ? (
+            <p className="text-sm text-amber-700 dark:text-amber-300">
+              Still{' '}
+              {proposed.length +
+                notInBankLines.length +
+                notInExcelTxs.filter((tx) => !ignoredAppIds.has(tx.id)).length}{' '}
+              items to handle
+            </p>
+          ) : null}
 
-          <VerifyGroupSection title="Matched" count={ableTxs.length} tone="ok">
+          <VerifyGroupSection
+            title="Found on statement"
+            subtitle="Confirm these"
+            count={ableTxs.length}
+            tone="ok"
+            hideWhenEmpty
+          >
             <TransactionTable
               rows={ableTxs}
-              emptyMessage="No matches yet."
+              emptyMessage="None."
               renderActions={(row) =>
                 proposedTxIds.has(row.id) ? (
                   <button
@@ -448,16 +482,18 @@ export function CcReconcilePanel() {
                     Confirm
                   </button>
                 ) : (
-                  <span className="text-xs muted-text">Verified</span>
+                  <span className="text-xs muted-text">Checked</span>
                 )
               }
             />
           </VerifyGroupSection>
 
           <VerifyGroupSection
-            title="Missing from statement"
+            title="In the app, not on the statement"
+            subtitle="Ignore if OK"
             count={notInExcelTxs.length}
             tone="warn"
+            hideWhenEmpty
           >
             <TransactionTable
               rows={notInExcelTxs}
@@ -483,9 +519,11 @@ export function CcReconcilePanel() {
           </VerifyGroupSection>
 
           <VerifyGroupSection
-            title="Unmatched statement lines"
+            title="On the statement, not in the app"
+            subtitle="Create or Ignore"
             count={draftTxs.length}
             tone="warn"
+            hideWhenEmpty
           >
             <TransactionTable
               rows={draftTxs}

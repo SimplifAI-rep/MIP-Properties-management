@@ -11,6 +11,7 @@ export function VerifyGroupSection({
   children,
   tone = 'default',
   defaultOpen = false,
+  hideWhenEmpty = false,
 }: {
   title: string;
   subtitle?: string;
@@ -19,8 +20,11 @@ export function VerifyGroupSection({
   tone?: 'default' | 'warn' | 'ok';
   /** When true, the table starts expanded. Default is collapsed. */
   defaultOpen?: boolean;
+  /** When true, render nothing if count is 0. */
+  hideWhenEmpty?: boolean;
 }) {
   const [open, setOpen] = useState(defaultOpen);
+  if (hideWhenEmpty && count === 0) return null;
   const border =
     tone === 'warn'
       ? 'border-amber-300 dark:border-amber-700/60'

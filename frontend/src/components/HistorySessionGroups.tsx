@@ -25,14 +25,14 @@ export function HistorySessionGroups({
   });
 
   if (kind === 'bank') {
-    if (bankQuery.isLoading) return <p className="text-sm muted-text px-1">Loading period…</p>;
+    if (bankQuery.isLoading) return <p className="text-sm muted-text px-1">Loading…</p>;
     if (bankQuery.isError || !bankQuery.data) {
       return <p className="text-sm text-red-600 px-1">Could not load this period.</p>;
     }
     return <BankHistoryGroups session={bankQuery.data} />;
   }
 
-  if (ccQuery.isLoading) return <p className="text-sm muted-text px-1">Loading period…</p>;
+  if (ccQuery.isLoading) return <p className="text-sm muted-text px-1">Loading…</p>;
   if (ccQuery.isError || !ccQuery.data) {
     return <p className="text-sm text-red-600 px-1">Could not load this period.</p>;
   }
@@ -44,35 +44,37 @@ function BankHistoryGroups({ session }: { session: BankReconcileSession }) {
   const notInExcelTxs = txsFromApi(
     session.not_in_excel_txs as Record<string, unknown>[] | undefined,
   );
-  // Created lines live in Matched (able_txs); ignored lines stay here for history.
   const notBank = session.lines.filter((l) => l.status === 'ignored');
   const draftTxs = notBank.map(bankDraftToUnified);
 
   return (
     <div className="space-y-3">
       <VerifyGroupSection
-        title="Matched"
-        subtitle="Confirmed matches from this bank period."
+        title="Found on statement"
+        subtitle="View only"
         count={ableTxs.length}
         tone="ok"
+        hideWhenEmpty
       >
         <TransactionTable rows={ableTxs} showActions={false} emptyMessage="None." />
       </VerifyGroupSection>
 
       <VerifyGroupSection
-        title="Missing from statement"
-        subtitle="App transactions not found on the statement."
+        title="In the app, not on the statement"
+        subtitle="View only"
         count={notInExcelTxs.length}
         tone="warn"
+        hideWhenEmpty
       >
         <TransactionTable rows={notInExcelTxs} showActions={false} emptyMessage="None." />
       </VerifyGroupSection>
 
       <VerifyGroupSection
-        title="Unmatched statement lines"
-        subtitle="Statement lines that were ignored."
+        title="On the statement, not in the app"
+        subtitle="View only"
         count={draftTxs.length}
         tone="warn"
+        hideWhenEmpty
       >
         <TransactionTable rows={draftTxs} showActions={false} emptyMessage="None." />
       </VerifyGroupSection>
@@ -85,35 +87,37 @@ function CcHistoryGroups({ session }: { session: CcReconcileSession }) {
   const notInExcelTxs = txsFromApi(
     session.not_in_excel_txs as Record<string, unknown>[] | undefined,
   );
-  // Created lines live in Matched (able_txs); ignored lines stay here for history.
   const notBank = session.lines.filter((l) => l.status === 'ignored');
   const draftTxs = notBank.map(ccDraftToUnified);
 
   return (
     <div className="space-y-3">
       <VerifyGroupSection
-        title="Matched"
-        subtitle="Confirmed matches from this card period."
+        title="Found on statement"
+        subtitle="View only"
         count={ableTxs.length}
         tone="ok"
+        hideWhenEmpty
       >
         <TransactionTable rows={ableTxs} showActions={false} emptyMessage="None." />
       </VerifyGroupSection>
 
       <VerifyGroupSection
-        title="Missing from statement"
-        subtitle="Card expenses not found on the statement."
+        title="In the app, not on the statement"
+        subtitle="View only"
         count={notInExcelTxs.length}
         tone="warn"
+        hideWhenEmpty
       >
         <TransactionTable rows={notInExcelTxs} showActions={false} emptyMessage="None." />
       </VerifyGroupSection>
 
       <VerifyGroupSection
-        title="Unmatched statement lines"
-        subtitle="Statement charges that were ignored."
+        title="On the statement, not in the app"
+        subtitle="View only"
         count={draftTxs.length}
         tone="warn"
+        hideWhenEmpty
       >
         <TransactionTable rows={draftTxs} showActions={false} emptyMessage="None." />
       </VerifyGroupSection>

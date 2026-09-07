@@ -312,16 +312,12 @@ def test_step4_match_confirm_cannot_complete_then_ignore(client, db):
     settings = client.get("/api/v1/bank-settings").json()
     assert settings["last_verification_date"] == "2026-07-08"
 
-    # Re-upload does not recreate the verified expense
+    # Re-upload of the same period creates no new verification group
     count_before = db.query(Expense).count()
     again = _upload(client, SAMPLE_BANK, "/api/v1/bank-settings/reconcile/sessions")
-    assert again.status_code == 200
+    assert again.status_code == 400
+    assert "No new bank transactions" in again.json()["detail"]
     assert db.query(Expense).count() == count_before
-    assert not any(
-        line.get("proposed_tx_id") == str(expense.id)
-        for line in again.json()["lines"]
-        if line["status"] == "proposed_match"
-    )
 
 
 def test_step4_add_from_bank_creates_verified(client, db):
@@ -533,7 +529,7 @@ def test_step7_settlement_group_no_double_count_in_n(client, db):
 
 
 def test_frontend_verification_surface_exists():
-    """Static presence checks for Verification IA claimed in the design doc."""
+    """Static presence checks for Verification IA (client-friendly UX copy)."""
     frontend = ROOT / "frontend" / "src"
     if not frontend.exists():
         frontend = ROOT.parent / "frontend" / "src"
@@ -544,41 +540,43 @@ def test_frontend_verification_surface_exists():
     assert "Verification" in shell
     page = (frontend / "pages" / "VerificationPage.tsx").read_text(encoding="utf-8")
     assert "VerificationWorkspace" in page
-    assert "BankVerificationPanel" in page
+    assert "Bank balance" in page
+    assert "Checked through" in page
+    assert "Still to check" in page
     workspace = (frontend / "components" / "VerificationWorkspace.tsx").read_text(
         encoding="utf-8"
     )
     assert "BankReconcilePanel" in workspace
     assert "CcReconcilePanel" in workspace
     assert "HistorySessionGroups" in workspace
-    assert "Bank history" in workspace
+    assert "Finished periods" in workspace
+    assert "Upload bank statement" in workspace
+    assert "Check credit card" in workspace
     bank_panel = (frontend / "components" / "BankReconcilePanel.tsx").read_text(
         encoding="utf-8"
     )
-    assert "Able to verify" in bank_panel
-    assert "Not in Excel" in bank_panel
-    assert "Not in bank" in bank_panel
-    assert "Create transaction" in bank_panel
-    assert "Confirm CC settlements" in bank_panel or "Confirm CC settlement" in bank_panel
-    page_text = (frontend / "pages" / "VerificationPage.tsx").read_text(encoding="utf-8")
-    assert "Opening O" in page_text
-    assert "Bank balance B" in page_text
-    assert "Verified Gap" in page_text
+    assert "Found on statement" in bank_panel
+    assert "In the app, not on the statement" in bank_panel
+    assert "On the statement, not in the app" in bank_panel
+    assert "Finish period" in bank_panel
+    assert "Confirm all found" in bank_panel
+    assert "card payments" in bank_panel
     cc_panel = (frontend / "components" / "CcReconcilePanel.tsx").read_text(
         encoding="utf-8"
     )
-    assert "Able to verify" in cc_panel
-    assert "Not in Excel" in cc_panel
-    assert "Not in bank" in cc_panel
+    assert "Found on statement" in cc_panel
+    assert "In the app, not on the statement" in cc_panel
+    assert "On the statement, not in the app" in cc_panel
+    assert "Finish period" in cc_panel
     dash = (frontend / "pages" / "DashboardPage.tsx").read_text(encoding="utf-8")
     assert "BankVerificationSummaryCard" in dash
     assert "BankVerificationPanel" not in dash
     tx_page = (frontend / "pages" / "TransactionsPage.tsx").read_text(encoding="utf-8")
     assert "Paid by card" in tx_page
     table = (frontend / "components" / "TransactionTable.tsx").read_text(encoding="utf-8")
-    assert "CC-pending" in table
-    assert "CC-verified" in table
-    assert "CC bank-confirmed" in table
+    assert "Card pending" in table
+    assert "Card verified" in table
+    assert "Bank settled" in table
     alerts = (frontend / "pages" / "AlertsPage.tsx").read_text(encoding="utf-8")
     assert "cc_unmatched" in alerts
     assert "Open Verification" in alerts

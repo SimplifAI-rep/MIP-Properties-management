@@ -57,10 +57,12 @@ export function VerificationWorkspace() {
   const cc_history = workspace?.cc_history ?? [];
   const credit_cards = workspace?.credit_cards ?? [];
 
+  const openBankSession = bank_groups.find(
+    (g) => g.status === 'unverified' && Boolean(g.session_id),
+  );
+  const openBankHasCc = Boolean(openBankSession?.has_cc_deduction);
+
   const showCard = useMemo(() => {
-    const openBankHasCc = bank_groups.some(
-      (g) => g.status === 'unverified' && g.session_id && g.has_cc_deduction,
-    );
     const hasOpenCc =
       Boolean(workspace?.cc_active_session_id) ||
       credit_cards.some((c) => Boolean(c.open_session_id));
@@ -68,7 +70,7 @@ export function VerificationWorkspace() {
       bank_groups.some((g) => g.has_cc_deduction) &&
       ((workspace?.cc_pool.pending_count ?? 0) > 0 || hasOpenCc);
     return openBankHasCc || hasOpenCc || bankWithCcPending;
-  }, [bank_groups, credit_cards, workspace]);
+  }, [bank_groups, credit_cards, openBankHasCc, workspace]);
 
   const pastPeriods = useMemo(() => {
     const verifiedBanks = bank_groups.filter(
@@ -133,7 +135,7 @@ export function VerificationWorkspace() {
           <span className="text-slate-500 w-3 shrink-0 text-xs" aria-hidden>
             {bankOpen ? '▾' : '▸'}
           </span>
-          Bank
+          <span>1. Upload bank statement</span>
         </button>
         {bankOpen ? (
           <div className="border-t border-slate-200 p-3 sm:p-4 dark:border-slate-700 space-y-3">
@@ -150,30 +152,31 @@ export function VerificationWorkspace() {
                   <span className="text-slate-500 w-3 shrink-0 text-xs" aria-hidden>
                     {cardOpen ? '▾' : '▸'}
                   </span>
-                  Card
-                  <span className="ml-auto text-xs font-normal muted-text">
-                    Required for bank card-payment rows
-                  </span>
+                  <span>4. Check credit card</span>
                 </button>
                 {cardOpen ? (
-                  <div className="border-t border-slate-200 p-3 dark:border-slate-700">
+                  <div className="border-t border-slate-200 p-3 dark:border-slate-700 space-y-2">
+                    <p className="text-sm muted-text px-1">
+                      Your bank statement includes a card payment — upload that card
+                      statement next.
+                    </p>
                     <CcReconcilePanel />
                   </div>
                 ) : null}
               </div>
-            ) : (
-              <p className="text-xs muted-text px-1">
-                Card verification appears here only when the bank statement includes a
-                credit-card payment deduction.
+            ) : openBankSession ? (
+              <p className="text-sm text-emerald-700 dark:text-emerald-300 px-1">
+                No card payment on this statement — card check is not needed.
               </p>
-            )}
+            ) : null}
           </div>
         ) : null}
       </div>
 
       <div className="space-y-2">
+        <h3 className="text-sm font-medium px-1">Finished periods</h3>
         {pastPeriods.length === 0 ? (
-          <p className="text-sm muted-text px-1">No completed periods yet.</p>
+          <p className="text-sm muted-text px-1">No finished periods yet.</p>
         ) : (
           pastPeriods.map((period) => {
             const open = openPastKey === period.key;
@@ -193,7 +196,7 @@ export function VerificationWorkspace() {
                   <span className="text-slate-500 w-3 shrink-0 text-xs" aria-hidden>
                     {open ? '▾' : '▸'}
                   </span>
-                  <span className="font-medium">{period.dateLabel}</span>
+                  <span className="font-medium tabular-nums">{period.dateLabel}</span>
                   <span className="ml-auto flex flex-wrap items-center gap-1.5">
                     <span className="badge-bank-verified">Bank</span>
                     {period.hasCcDeduction ? (
@@ -205,6 +208,7 @@ export function VerificationWorkspace() {
                 </button>
                 {open ? (
                   <div className="border-t border-slate-200 px-2 py-3 dark:border-slate-700 space-y-4">
+                    <p className="text-xs muted-text px-1">View only</p>
                     <div className="space-y-2">
                       <h4 className="px-1 text-sm font-medium">Bank statement</h4>
                       <HistorySessionGroups kind="bank" sessionId={period.bankSessionId} />
@@ -219,13 +223,12 @@ export function VerificationWorkspace() {
                         ))
                       ) : (
                         <p className="text-xs muted-text px-1 sm:ml-3">
-                          Bank had a card payment — no completed card period linked yet.
+                          Bank had a card payment — no finished card period linked yet.
                         </p>
                       )
                     ) : (
                       <p className="text-xs muted-text px-1 sm:ml-3">
-                        No credit-card deduction on this bank statement — card verification
-                        was not required.
+                        No card payment on this bank statement — card check was not needed.
                       </p>
                     )}
                   </div>

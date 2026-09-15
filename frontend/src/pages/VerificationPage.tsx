@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
 import { VerificationWorkspace } from '../components/VerificationWorkspace';
-import { formatCurrency, formatDate } from '../components/ui/States';
+import { Card, formatCurrency, formatDate } from '../components/ui/States';
 
 export function VerificationPage() {
   const settingsQuery = useQuery({
@@ -16,8 +16,8 @@ export function VerificationPage() {
 
   const settings = settingsQuery.data;
   const workspace = workspaceQuery.data;
-  const bankBalance =
-    settings?.opening_balance != null ? formatCurrency(settings.opening_balance) : 'Not set';
+  const openingSet = settings?.opening_balance != null;
+  const bankBalance = openingSet ? formatCurrency(settings!.opening_balance!) : 'Not set';
   const checkedThrough = settings?.last_verification_date
     ? formatDate(settings.last_verification_date)
     : '—';
@@ -25,7 +25,7 @@ export function VerificationPage() {
     (settings?.unverified_count ?? 0) + (workspace?.cc_pool.pending_count ?? 0);
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       <div>
         <h2 className="page-heading">Verification</h2>
         <p className="page-desc mt-1">
@@ -33,19 +33,25 @@ export function VerificationPage() {
         </p>
       </div>
 
-      <div className="flex flex-wrap items-end gap-x-8 gap-y-3 rounded-lg border border-slate-200 px-4 py-3 dark:border-slate-700">
-        <div>
-          <p className="label-text">Bank balance</p>
-          <p className="mt-1 text-lg font-semibold tabular-nums">{bankBalance}</p>
-        </div>
-        <div>
-          <p className="label-text">Checked through</p>
-          <p className="mt-1 text-lg font-semibold tabular-nums">{checkedThrough}</p>
-        </div>
-        <div>
-          <p className="label-text">Still to check</p>
-          <p className="mt-1 text-lg font-semibold tabular-nums">{stillToCheck}</p>
-        </div>
+      <div className="grid gap-3 sm:grid-cols-3">
+        <Card
+          title="Bank balance"
+          value={bankBalance}
+          subtitle={openingSet ? 'Opening balance' : 'Ask an admin to set it'}
+          tooltip="Opening balance the verification starts from."
+        />
+        <Card
+          title="Checked through"
+          value={checkedThrough}
+          subtitle="End of the last finished period"
+          tooltip="Statements are checked forward from this date."
+        />
+        <Card
+          title="Still to check"
+          value={stillToCheck}
+          subtitle={stillToCheck === 0 ? 'All caught up' : 'Transactions waiting'}
+          tooltip="App transactions not yet confirmed against a statement."
+        />
       </div>
 
       <VerificationWorkspace />

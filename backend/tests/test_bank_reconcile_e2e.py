@@ -13,6 +13,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.api.deps import get_db
+from app.core.admin_auth import require_admin
 from app.core.database import Base
 from app.main import app
 from app.models.deposit import Deposit
@@ -66,6 +67,7 @@ def client(db):
         yield db
 
     app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[require_admin] = lambda: "test-admin"
     with TestClient(app) as test_client:
         yield test_client
     app.dependency_overrides.clear()
@@ -550,8 +552,9 @@ def test_frontend_verification_surface_exists():
     assert "CcReconcilePanel" in workspace
     assert "HistorySessionGroups" in workspace
     assert "Finished periods" in workspace
-    assert "Upload bank statement" in workspace
-    assert "Check credit card" in workspace
+    assert "Current period" in workspace
+    assert "Bank statement" in workspace
+    assert "Credit card" in workspace
     bank_panel = (frontend / "components" / "BankReconcilePanel.tsx").read_text(
         encoding="utf-8"
     )
@@ -560,7 +563,8 @@ def test_frontend_verification_surface_exists():
     assert "On the statement, not in the app" in bank_panel
     assert "Finish period" in bank_panel
     assert "Confirm all found" in bank_panel
-    assert "card payments" in bank_panel
+    assert "Upload bank statement" in bank_panel
+    assert "Card payments" in bank_panel
     cc_panel = (frontend / "components" / "CcReconcilePanel.tsx").read_text(
         encoding="utf-8"
     )

@@ -1,16 +1,18 @@
 import { useQuery } from '@tanstack/react-query';
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { api } from '../api/client';
 import type { VerificationBankGroup, VerificationCcHistoryGroup } from '../types';
 import { BankReconcilePanel } from './BankReconcilePanel';
 import { CcReconcilePanel } from './CcReconcilePanel';
 import { HistorySessionGroups } from './HistorySessionGroups';
+import { Chevron } from './verifyGroups';
 import { formatDate } from './ui/States';
 
 type PastCardStatement = {
   key: string;
   label: string;
   sessionId: string;
+  count: number;
 };
 
 type PastBankPeriod = {
@@ -19,6 +21,7 @@ type PastBankPeriod = {
   sortDate: string;
   bankSessionId: string;
   hasCcDeduction: boolean;
+  itemCount: number;
   cards: PastCardStatement[];
 };
 
@@ -43,6 +46,46 @@ function cardBelongsToBank(
   return false;
 }
 
+/** One numbered step inside the current period. */
+function StepSection({
+  step,
+  title,
+  meta,
+  open,
+  onToggle,
+  children,
+}: {
+  step: number;
+  title: string;
+  meta?: ReactNode;
+  open: boolean;
+  onToggle: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <section className="overflow-hidden rounded-lg border border-slate-200 dark:border-slate-700">
+      <button
+        type="button"
+        className="flex w-full items-center gap-2 px-3 py-2.5 text-left hover:bg-slate-50 dark:hover:bg-slate-900/40"
+        onClick={onToggle}
+        aria-expanded={open}
+      >
+        <Chevron open={open} />
+        <span className="text-sm font-medium">
+          <span className="muted-text font-normal">Step {step} · </span>
+          {title}
+        </span>
+        {meta ? <span className="ml-auto shrink-0">{meta}</span> : null}
+      </button>
+      {open ? (
+        <div className="border-t border-slate-200 p-3 sm:p-4 dark:border-slate-700">
+          {children}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
 export function VerificationWorkspace() {
   const workspaceQuery = useQuery({
     queryKey: ['verification-workspace'],
@@ -61,16 +104,16 @@ export function VerificationWorkspace() {
     (g) => g.status === 'unverified' && Boolean(g.session_id),
   );
   const openBankHasCc = Boolean(openBankSession?.has_cc_deduction);
+  const hasOpenCc =
+    Boolean(workspace?.cc_active_session_id) ||
+    credit_cards.some((c) => Boolean(c.open_session_id));
 
   const showCard = useMemo(() => {
-    const hasOpenCc =
-      Boolean(workspace?.cc_active_session_id) ||
-      credit_cards.some((c) => Boolean(c.open_session_id));
     const bankWithCcPending =
       bank_groups.some((g) => g.has_cc_deduction) &&
       ((workspace?.cc_pool.pending_count ?? 0) > 0 || hasOpenCc);
     return openBankHasCc || hasOpenCc || bankWithCcPending;
-  }, [bank_groups, credit_cards, openBankHasCc, workspace]);
+  }, [bank_groups, hasOpenCc, openBankHasCc, workspace]);
 
   const pastPeriods = useMemo(() => {
     const verifiedBanks = bank_groups.filter(
@@ -100,15 +143,20 @@ export function VerificationWorkspace() {
             key: `cc:${card.session_id}`,
             label: card.card_last4 ? `Card ••${card.card_last4}` : 'Card statement',
             sessionId: card.session_id,
+            count: card.transaction_count ?? 0,
           });
         }
       }
+      const itemCount =
+        (bank.transaction_count ?? 0) +
+        cards.reduce((sum, card) => sum + card.count, 0);
       return {
         key: `bank:${bank.session_id}`,
         sortDate,
         dateLabel,
         bankSessionId: bank.session_id!,
         hasCcDeduction: Boolean(bank.has_cc_deduction),
+        itemCount,
         cards,
       };
     });
@@ -124,66 +172,61 @@ export function VerificationWorkspace() {
   }
 
   return (
-    <div className="space-y-4">
-      <div className="rounded-lg border border-slate-200 dark:border-slate-700 overflow-hidden">
-        <button
-          type="button"
-          className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm font-medium hover:bg-slate-50 dark:hover:bg-slate-900/40"
-          onClick={() => setBankOpen((prev) => !prev)}
-          aria-expanded={bankOpen}
+    <div className="space-y-5">
+      <section className="panel space-y-3 p-4 sm:p-5">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h3 className="section-title text-base">Current period</h3>
+          {openBankSession ? (
+            <span className="badge-warning">In progress</span>
+          ) : (
+            <span className="badge-neutral">Nothing open</span>
+          )}
+        </div>
+
+        <StepSection
+          step={1}
+          title="Bank statement"
+          open={bankOpen}
+          onToggle={() => setBankOpen((prev) => !prev)}
         >
-          <span className="text-slate-500 w-3 shrink-0 text-xs" aria-hidden>
-            {bankOpen ? '▾' : '▸'}
-          </span>
-          <span>1. Upload bank statement</span>
-        </button>
-        {bankOpen ? (
-          <div className="border-t border-slate-200 p-3 sm:p-4 dark:border-slate-700 space-y-3">
-            <BankReconcilePanel />
+          <BankReconcilePanel />
+        </StepSection>
 
-            {showCard ? (
-              <div className="ml-0 sm:ml-3 rounded-lg border border-slate-200 dark:border-slate-700 overflow-hidden">
-                <button
-                  type="button"
-                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm font-medium hover:bg-slate-50 dark:hover:bg-slate-900/40"
-                  onClick={() => setCardOpen((prev) => !prev)}
-                  aria-expanded={cardOpen}
-                >
-                  <span className="text-slate-500 w-3 shrink-0 text-xs" aria-hidden>
-                    {cardOpen ? '▾' : '▸'}
-                  </span>
-                  <span>4. Check credit card</span>
-                </button>
-                {cardOpen ? (
-                  <div className="border-t border-slate-200 p-3 dark:border-slate-700 space-y-2">
-                    <p className="text-sm muted-text px-1">
-                      Your bank statement includes a card payment — upload that card
-                      statement next.
-                    </p>
-                    <CcReconcilePanel />
-                  </div>
-                ) : null}
-              </div>
-            ) : openBankSession ? (
-              <p className="text-sm text-emerald-700 dark:text-emerald-300 px-1">
-                No card payment on this statement — card check is not needed.
-              </p>
-            ) : null}
-          </div>
+        {showCard ? (
+          <StepSection
+            step={2}
+            title="Credit card"
+            open={cardOpen}
+            onToggle={() => setCardOpen((prev) => !prev)}
+          >
+            <div className="space-y-3">
+              {!hasOpenCc ? (
+                <p className="text-sm muted-text">
+                  Your bank statement includes a card payment — upload that card
+                  statement next.
+                </p>
+              ) : null}
+              <CcReconcilePanel />
+            </div>
+          </StepSection>
+        ) : openBankSession ? (
+          <p className="px-1 text-sm muted-text">
+            No card payment on this statement — no card check needed.
+          </p>
         ) : null}
-      </div>
+      </section>
 
-      <div className="space-y-2">
-        <h3 className="text-sm font-medium px-1">Finished periods</h3>
+      <section className="space-y-2">
+        <h3 className="section-title px-1 text-base">Finished periods</h3>
         {pastPeriods.length === 0 ? (
-          <p className="text-sm muted-text px-1">No finished periods yet.</p>
+          <p className="px-1 text-sm muted-text">No finished periods yet.</p>
         ) : (
           pastPeriods.map((period) => {
             const open = openPastKey === period.key;
             return (
               <div
                 key={period.key}
-                className="rounded-md border border-slate-200 dark:border-slate-700 overflow-hidden"
+                className="overflow-hidden rounded-lg border border-slate-200 dark:border-slate-700"
               >
                 <button
                   type="button"
@@ -193,10 +236,13 @@ export function VerificationWorkspace() {
                   }
                   aria-expanded={open}
                 >
-                  <span className="text-slate-500 w-3 shrink-0 text-xs" aria-hidden>
-                    {open ? '▾' : '▸'}
-                  </span>
+                  <Chevron open={open} />
                   <span className="font-medium tabular-nums">{period.dateLabel}</span>
+                  {period.itemCount > 0 ? (
+                    <span className="muted-text tabular-nums">
+                      {period.itemCount} items
+                    </span>
+                  ) : null}
                   <span className="ml-auto flex flex-wrap items-center gap-1.5">
                     <span className="badge-bank-verified">Bank</span>
                     {period.hasCcDeduction ? (
@@ -204,30 +250,30 @@ export function VerificationWorkspace() {
                         Card{period.cards.length ? ` · ${period.cards.length}` : ''}
                       </span>
                     ) : null}
+                    <span className="badge-neutral">View only</span>
                   </span>
                 </button>
                 {open ? (
-                  <div className="border-t border-slate-200 px-2 py-3 dark:border-slate-700 space-y-4">
-                    <p className="text-xs muted-text px-1">View only</p>
+                  <div className="space-y-4 border-t border-slate-200 px-3 py-3 dark:border-slate-700">
                     <div className="space-y-2">
-                      <h4 className="px-1 text-sm font-medium">Bank statement</h4>
+                      <h4 className="section-title text-sm">Bank statement</h4>
                       <HistorySessionGroups kind="bank" sessionId={period.bankSessionId} />
                     </div>
                     {period.hasCcDeduction ? (
                       period.cards.length > 0 ? (
                         period.cards.map((card) => (
-                          <div key={card.key} className="space-y-2 sm:ml-3">
-                            <h4 className="px-1 text-sm font-medium">{card.label}</h4>
+                          <div key={card.key} className="space-y-2">
+                            <h4 className="section-title text-sm">{card.label}</h4>
                             <HistorySessionGroups kind="cc" sessionId={card.sessionId} />
                           </div>
                         ))
                       ) : (
-                        <p className="text-xs muted-text px-1 sm:ml-3">
+                        <p className="px-1 text-xs muted-text">
                           Bank had a card payment — no finished card period linked yet.
                         </p>
                       )
                     ) : (
-                      <p className="text-xs muted-text px-1 sm:ml-3">
+                      <p className="px-1 text-xs muted-text">
                         No card payment on this bank statement — card check was not needed.
                       </p>
                     )}
@@ -237,7 +283,7 @@ export function VerificationWorkspace() {
             );
           })
         )}
-      </div>
+      </section>
     </div>
   );
 }

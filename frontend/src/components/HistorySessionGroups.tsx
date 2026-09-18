@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useMemo, useState, type ReactNode } from 'react';
 import { api } from '../api/client';
 import type { BankReconcileSession, CcReconcileSession } from '../types';
-import { VerifyTable } from './VerifyTable';
+import { TransactionTable } from './TransactionTable';
 import { VerifyGroupSection } from './verifyGroups';
 import { MoneyValue } from './ui/MoneyValue';
 import { bankDraftToUnified, ccDraftToUnified, txsFromApi } from '../utils/verifyTxDisplay';
@@ -66,6 +66,34 @@ function Stat({
   );
 }
 
+/**
+ * Every list in a finished period uses the same full transaction rows as the
+ * Transactions page. Balance is hidden (the session payload has no running
+ * balance) and so are actions, since finished periods are read-only.
+ */
+function HistoryTable({
+  rows,
+  emptyMessage,
+  frameClassName = '',
+}: {
+  rows: UnifiedTransaction[];
+  emptyMessage?: string;
+  /** Lists inside a VerifyGroupSection inherit its frame and pass nothing here. */
+  frameClassName?: string;
+}) {
+  const long = rows.length > 10;
+  return (
+    <TransactionTable
+      rows={rows}
+      showActions={false}
+      showBalance={false}
+      stickyHeader={long}
+      emptyMessage={emptyMessage}
+      className={`${frameClassName} overflow-auto${long ? ' max-h-[26rem]' : ''}`.trim()}
+    />
+  );
+}
+
 /** Verified transactions with a search box — the main thing you open a period for. */
 function VerifiedTransactions({ rows }: { rows: UnifiedTransaction[] }) {
   const [query, setQuery] = useState('');
@@ -124,17 +152,15 @@ function VerifiedTransactions({ rows }: { rows: UnifiedTransaction[] }) {
         </p>
       ) : null}
 
-      <div className="overflow-hidden rounded-lg border border-emerald-300 dark:border-emerald-700/50">
-        <VerifyTable
-          rows={filtered}
-          scrollable={filtered.length > 10}
-          emptyMessage={
-            rows.length === 0
-              ? 'No transactions were verified in this period.'
-              : 'Nothing matches that search.'
-          }
-        />
-      </div>
+      <HistoryTable
+        rows={filtered}
+        emptyMessage={
+          rows.length === 0
+            ? 'No transactions were verified in this period.'
+            : 'Nothing matches that search.'
+        }
+        frameClassName="rounded-lg border border-emerald-300 dark:border-emerald-700/50"
+      />
     </div>
   );
 }
@@ -216,7 +242,7 @@ function BankHistoryGroups({ session }: { session: BankReconcileSession }) {
         tone="warn"
         hideWhenEmpty
       >
-        <VerifyTable rows={skippedLines} />
+        <HistoryTable rows={skippedLines} />
       </VerifyGroupSection>
 
       <VerifyGroupSection
@@ -226,7 +252,7 @@ function BankHistoryGroups({ session }: { session: BankReconcileSession }) {
         tone="warn"
         hideWhenEmpty
       >
-        <VerifyTable rows={notOnStatement} />
+        <HistoryTable rows={notOnStatement} />
       </VerifyGroupSection>
     </div>
   );
@@ -265,7 +291,7 @@ function CcHistoryGroups({ session }: { session: CcReconcileSession }) {
         tone="warn"
         hideWhenEmpty
       >
-        <VerifyTable rows={skippedLines} />
+        <HistoryTable rows={skippedLines} />
       </VerifyGroupSection>
 
       <VerifyGroupSection
@@ -275,7 +301,7 @@ function CcHistoryGroups({ session }: { session: CcReconcileSession }) {
         tone="warn"
         hideWhenEmpty
       >
-        <VerifyTable rows={notOnStatement} />
+        <HistoryTable rows={notOnStatement} />
       </VerifyGroupSection>
     </div>
   );

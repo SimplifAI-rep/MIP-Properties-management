@@ -49,8 +49,6 @@ export interface VerifyTableProps {
   renderActions?: (row: UnifiedTransaction) => ReactNode;
   /** Row currently being saved — shows a spinner instead of its buttons. */
   pendingRowId?: string | null;
-  /** Keep long lists inside a scroll box with a sticky header. */
-  scrollable?: boolean;
 }
 
 export function VerifyTable({
@@ -58,7 +56,6 @@ export function VerifyTable({
   emptyMessage = 'None.',
   renderActions,
   pendingRowId,
-  scrollable = false,
 }: VerifyTableProps) {
   const [openId, setOpenId] = useState<string | null>(null);
 
@@ -68,7 +65,7 @@ export function VerifyTable({
 
   const showActions = Boolean(renderActions);
 
-  const table = (
+  return (
     <table className="w-full table-fixed text-sm">
       <colgroup>
         <col className="w-[16%]" />
@@ -76,7 +73,7 @@ export function VerifyTable({
         <col className="w-[20%]" />
         {showActions ? <col className="w-[18%]" /> : null}
       </colgroup>
-      <thead className={`table-head ${scrollable ? 'sticky top-0 z-10' : ''}`}>
+      <thead className="table-head">
         <tr>
           <th className="px-3 py-2 text-left font-medium">Date</th>
           <th className="px-3 py-2 text-left font-medium">Description</th>
@@ -150,7 +147,4 @@ export function VerifyTable({
       </tbody>
     </table>
   );
-
-  if (!scrollable) return table;
-  return <div className="max-h-[26rem] overflow-y-auto">{table}</div>;
 }

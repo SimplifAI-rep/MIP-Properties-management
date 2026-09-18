@@ -222,9 +222,18 @@ function ReceiptCell({ row }: { row: UnifiedTransaction }) {
   );
 }
 
-export function TransactionTableHeader({ showActions = true }: { showActions?: boolean }) {
+export function TransactionTableHeader({
+  showActions = true,
+  showBalance = true,
+  sticky = false,
+}: {
+  showActions?: boolean;
+  /** Off for views without a running balance (e.g. a finished verification period). */
+  showBalance?: boolean;
+  sticky?: boolean;
+}) {
   return (
-    <thead className="table-head">
+    <thead className={`table-head${sticky ? ' sticky top-0 z-10' : ''}`}>
       <tr>
         <th className="px-2 py-3 font-medium">
           <Tooltip content="SimplifAI unique transaction id (date-based).">Ref</Tooltip>
@@ -247,11 +256,13 @@ export function TransactionTableHeader({ showActions = true }: { showActions?: b
         <th className="px-2 py-3 font-medium">
           <Tooltip content="Excel Amount (out) or Inflow (in).">Amount</Tooltip>
         </th>
-        <th className="px-2 py-3 font-medium">
-          <Tooltip content="Running company-float balance after this row (like Excel Balance).">
-            Balance
-          </Tooltip>
-        </th>
+        {showBalance ? (
+          <th className="px-2 py-3 font-medium">
+            <Tooltip content="Running company-float balance after this row (like Excel Balance).">
+              Balance
+            </Tooltip>
+          </th>
+        ) : null}
         <th className="px-2 py-3 font-medium">
           <Tooltip content="Excel Company — vendor or payee.">Company</Tooltip>
         </th>
@@ -269,7 +280,13 @@ export function TransactionTableHeader({ showActions = true }: { showActions?: b
   );
 }
 
-export function TransactionTableColgroup({ showActions = true }: { showActions?: boolean }) {
+export function TransactionTableColgroup({
+  showActions = true,
+  showBalance = true,
+}: {
+  showActions?: boolean;
+  showBalance?: boolean;
+}) {
   return (
     <colgroup>
       <col className="w-[8%]" />
@@ -279,7 +296,7 @@ export function TransactionTableColgroup({ showActions = true }: { showActions?:
       <col className="w-[7%]" />
       <col className="w-[9%]" />
       <col className="w-[7%]" />
-      <col className="w-[7%]" />
+      {showBalance ? <col className="w-[7%]" /> : null}
       <col className="w-[7%]" />
       <col className="w-[8%]" />
       <col className="w-[7%]" />
@@ -294,10 +311,12 @@ export function TransactionDisplayCells({
   row,
   reviewMarker,
   actions,
+  showBalance = true,
 }: {
   row: UnifiedTransaction;
   reviewMarker?: ReactNode;
   actions?: ReactNode;
+  showBalance?: boolean;
 }) {
   const marker = reviewMarker ?? (row.needs_review ? <ReviewBangStatic row={row} /> : null);
 
@@ -343,19 +362,21 @@ export function TransactionDisplayCells({
           </>
         )}
       </td>
-      <td
-        className={`px-2 py-3 tabular-nums font-medium truncate ${
-          row.balance_after == null
-            ? 'muted-text'
-            : Number(row.balance_after) >= 0
-              ? 'amount-deposit'
-              : 'amount-expense'
-        }`}
-      >
-        {row.balance_after == null
-          ? '—'
-          : formatCurrency(row.balance_after, row.currency)}
-      </td>
+      {showBalance ? (
+        <td
+          className={`px-2 py-3 tabular-nums font-medium truncate ${
+            row.balance_after == null
+              ? 'muted-text'
+              : Number(row.balance_after) >= 0
+                ? 'amount-deposit'
+                : 'amount-expense'
+          }`}
+        >
+          {row.balance_after == null
+            ? '—'
+            : formatCurrency(row.balance_after, row.currency)}
+        </td>
+      ) : null}
       <td className="px-2 py-3 muted-text truncate" title={row.company || undefined}>
         {row.company || '—'}
       </td>
@@ -385,6 +406,10 @@ export interface TransactionTableProps {
   onRowClick?: (row: UnifiedTransaction) => void;
   /** When false, hides the Actions column (default true with feedback). */
   showActions?: boolean;
+  /** When false, hides the running-balance column. */
+  showBalance?: boolean;
+  /** Keeps the header visible when the wrapper scrolls. */
+  stickyHeader?: boolean;
   renderActions?: (row: UnifiedTransaction) => ReactNode;
   className?: string;
 }
@@ -394,6 +419,8 @@ export function TransactionTable({
   emptyMessage = 'No transactions.',
   onRowClick,
   showActions = true,
+  showBalance = true,
+  stickyHeader = false,
   renderActions,
   className,
 }: TransactionTableProps) {
@@ -404,8 +431,12 @@ export function TransactionTable({
   return (
     <div className={className ?? 'overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-700'}>
       <table className="table-shell">
-        <TransactionTableColgroup showActions={showActions} />
-        <TransactionTableHeader showActions={showActions} />
+        <TransactionTableColgroup showActions={showActions} showBalance={showBalance} />
+        <TransactionTableHeader
+          showActions={showActions}
+          showBalance={showBalance}
+          sticky={stickyHeader}
+        />
         <tbody>
           {rows.map((row) => (
             <tr
@@ -415,6 +446,7 @@ export function TransactionTable({
             >
               <TransactionDisplayCells
                 row={row}
+                showBalance={showBalance}
                 actions={
                   showActions
                     ? (renderActions?.(row) ?? (

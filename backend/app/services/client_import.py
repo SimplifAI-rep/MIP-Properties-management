@@ -1687,6 +1687,7 @@ class ClientDataImportService:
                                 payment_method="credit_card",
                                 vendor_name=merchant,
                                 description=merchant,
+                                card_last4=None if card_last4 == "unknown" else card_last4,
                                 import_key=import_key,
                                 source_file=filename,
                             )

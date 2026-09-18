@@ -1,6 +1,6 @@
 """Step 4: bank Excel match / verify session."""
 
-from datetime import date
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 
@@ -13,6 +13,7 @@ from sqlalchemy.pool import StaticPool
 from app.api.deps import get_db
 from app.core.database import Base
 from app.main import app
+from app.models.deposit import Deposit
 from app.models.expense import Expense
 from app.services.bank_reconcile_gap import parse_bank_statement_lines
 from app.services.seed import PROPERTY_ROTHSCHILD_ID, seed_reference_data
@@ -173,8 +174,7 @@ def test_reconcile_propose_confirm_ignore_complete(client, db):
     assert completed.status_code == 200, completed.text
     assert completed.json()["status"] == "completed"
 
-    # Fresh upload cannot complete until non-settlement lines are cleared.
-    # Card payment rows alone do not block Complete (they wait for Card linkage).
+    # Same statement dates again: no new lines after last verification → no session.
     with SAMPLE_BANK.open("rb") as handle:
         open_resp = client.post(
             "/api/v1/bank-settings/reconcile/sessions",
@@ -186,13 +186,131 @@ def test_reconcile_propose_confirm_ignore_complete(client, db):
                 )
             },
         )
-    assert open_resp.status_code == 200, open_resp.text
-    open_session = open_resp.json()
-    assert open_session["can_complete"] is False
-    blocked = client.post(
-        f"/api/v1/bank-settings/reconcile/sessions/{open_session['id']}/complete"
-    )
-    assert blocked.status_code == 400
+    assert open_resp.status_code == 400, open_resp.text
+    assert "No new bank transactions" in open_resp.json()["detail"]
 
     settings = client.get("/api/v1/bank-settings").json()
     assert settings["last_verification_date"] == "2026-07-08"
+
+
+@pytest.mark.skipif(not SAMPLE_BANK.exists(), reason="sample bank Excel not present")
+def test_upload_keeps_only_lines_after_last_verification(client, db):
+    """Next statement starts after last verification end date."""
+    from app.services.bank_settings import get_or_create_settings
+
+    settings = get_or_create_settings(db)
+    settings.opening_balance = Decimal("174447.63")
+    settings.opening_balance_as_of = date(2026, 6, 1)
+    settings.last_verification_date = date(2026, 6, 30)
+    settings.gap_tolerance_amount = Decimal("999999.00")
+    db.add(settings)
+    db.commit()
+
+    parsed = parse_bank_statement_lines(SAMPLE_BANK.read_bytes())
+    before_or_on = [
+        line
+        for line in parsed["lines"]
+        if line.get("transaction_date") and line["transaction_date"] <= "2026-06-30"
+    ]
+    after = [
+        line
+        for line in parsed["lines"]
+        if line.get("transaction_date") and line["transaction_date"] > "2026-06-30"
+    ]
+    assert before_or_on and after
+
+    with SAMPLE_BANK.open("rb") as handle:
+        created = client.post(
+            "/api/v1/bank-settings/reconcile/sessions",
+            files={
+                "file": (
+                    "Bank Account example.xlsx",
+                    handle,
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                )
+            },
+        )
+    assert created.status_code == 200, created.text
+    session = created.json()
+    assert session["statement_start_date"] >= "2026-07-01"
+    assert len(session["lines"]) == len(after)
+    assert all(
+        (line.get("transaction_date") or "") > "2026-06-30" for line in session["lines"]
+    )
+
+
+@pytest.mark.skipif(not SAMPLE_BANK.exists(), reason="sample bank Excel not present")
+def test_upload_skips_bank_verified_asmachta_duplicates(client, db):
+    """Bank-verified asmachta rows are excluded; unverified same asmachta is not."""
+    from app.services.bank_settings import get_or_create_settings
+
+    settings = get_or_create_settings(db)
+    settings.opening_balance = Decimal("174447.63")
+    settings.opening_balance_as_of = date(2026, 6, 1)
+    settings.last_verification_date = date(2026, 6, 1)
+    settings.gap_tolerance_amount = Decimal("999999.00")
+    db.add(settings)
+    db.commit()
+
+    parsed = parse_bank_statement_lines(SAMPLE_BANK.read_bytes())
+    credit = next(
+        line
+        for line in parsed["lines"]
+        if line["side"] == "credit"
+        and line.get("asmachta")
+        and line.get("transaction_date")
+        and line["transaction_date"] > "2026-06-01"
+    )
+    debit = next(
+        line
+        for line in parsed["lines"]
+        if line["side"] == "debit"
+        and line.get("asmachta")
+        and line.get("transaction_date")
+        and line["transaction_date"] > "2026-06-01"
+        and line["asmachta"] != credit["asmachta"]
+    )
+
+    # Verified deposit with bank asmachta → duplicate, must be skipped
+    db.add(
+        Deposit(
+            property_id=PROPERTY_ROTHSCHILD_ID,
+            transaction_date=date.fromisoformat(credit["transaction_date"]),
+            amount=Decimal(credit["amount"]),
+            currency="ILS",
+            source="manual",
+            bank_verified_at=datetime.now(timezone.utc),
+            bank_asmachta=credit["asmachta"],
+        )
+    )
+    # Unverified expense with same asmachta as a debit → still included (not bank-verified)
+    db.add(
+        Expense(
+            property_id=PROPERTY_ROTHSCHILD_ID,
+            transaction_date=date.fromisoformat(debit["transaction_date"]),
+            amount=Decimal(debit["amount"]),
+            category="maintenance",
+            source="manual",
+            payment_method="bank_transfer",
+            bank_asmachta=debit["asmachta"],
+            bank_verified_at=None,
+        )
+    )
+    db.commit()
+
+    with SAMPLE_BANK.open("rb") as handle:
+        created = client.post(
+            "/api/v1/bank-settings/reconcile/sessions",
+            files={
+                "file": (
+                    "Bank Account example.xlsx",
+                    handle,
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                )
+            },
+        )
+    assert created.status_code == 200, created.text
+    session = created.json()
+    fps = {line["fingerprint"] for line in session["lines"]}
+    assert credit["fingerprint"] not in fps
+    assert debit["fingerprint"] in fps

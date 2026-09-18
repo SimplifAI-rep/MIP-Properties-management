@@ -6,6 +6,16 @@ export function txsFromApi(items: Record<string, unknown>[] | undefined): Unifie
   return (items ?? []).map((item) => unifiedFromRecord(item));
 }
 
+/**
+ * What a statement-only row is, in the language of the verification lists.
+ * Drafts have no property or owner, so those cells read as not-applicable.
+ */
+function draftSection(status: string): string {
+  if (status === 'added') return 'Created from statement';
+  if (status === 'ignored') return 'Skipped';
+  return 'Statement draft';
+}
+
 /** Synthetic row for Excel-only drafts (not yet in the app). */
 export function bankDraftToUnified(line: BankReconcileLine): UnifiedTransaction {
   return {
@@ -13,16 +23,16 @@ export function bankDraftToUnified(line: BankReconcileLine): UnifiedTransaction 
     kind: line.side === 'credit' ? 'deposit' : 'expense',
     property_id: '',
     transaction_date: line.transaction_date,
-    client_prop_id: '',
+    client_prop_id: '—',
     property_name: '—',
-    owner_name: '',
+    owner_name: '—',
     amount: line.amount,
     currency: 'ILS',
     transaction_ref: line.asmachta ? `אסמכתא ${line.asmachta}` : null,
     bank_verified_at: line.status === 'added' ? new Date().toISOString() : null,
     bank_asmachta: line.asmachta,
     bank_reconcile_exclude: false,
-    section: line.status === 'added' ? 'Created from statement' : 'Statement draft',
+    section: draftSection(line.status),
     notes: line.description,
     company: null,
     payment_method: null,
@@ -42,9 +52,9 @@ export function ccDraftToUnified(line: CcReconcileLine): UnifiedTransaction {
     kind: 'expense',
     property_id: '',
     transaction_date: line.transaction_date,
-    client_prop_id: '',
+    client_prop_id: '—',
     property_name: '—',
-    owner_name: '',
+    owner_name: '—',
     amount: line.amount,
     currency: 'ILS',
     transaction_ref: line.proposed_tx_ref ?? null,
@@ -52,8 +62,8 @@ export function ccDraftToUnified(line: CcReconcileLine): UnifiedTransaction {
     bank_asmachta: null,
     bank_reconcile_exclude: false,
     cc_verified_at: line.status === 'added' ? new Date().toISOString() : null,
-    section: line.status === 'added' ? 'Created from statement' : 'Statement draft',
-    notes: line.details || line.merchant,
+    section: draftSection(line.status),
+    notes: line.details || line.merchant || null,
     company: line.merchant ?? null,
     payment_method: 'credit_card',
     source: 'credit_card',

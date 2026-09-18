@@ -3,8 +3,10 @@ import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { api } from '../api/client';
 import type { BankReconcileSession } from '../types';
-import { TransactionTable } from './TransactionTable';
-import { VerifyGroupSection } from './verifyGroups';
+import { VerifyTable, VerifySpinner } from './VerifyTable';
+import { VerifyGroupSection, VerifyProgress, VerifyRowTable } from './verifyGroups';
+import { ConfirmButton } from './ui/ConfirmButton';
+import { FileDropzone } from './ui/FileDropzone';
 import { formatCurrency, formatDate } from './ui/States';
 import { getUserErrorMessage } from '../utils/errors';
 import {
@@ -14,6 +16,21 @@ import {
 import { bankDraftToUnified, txsFromApi } from '../utils/verifyTxDisplay';
 import type { UnifiedTransaction } from '../utils/unifiedTransaction';
 
+const LINE_STATUS_KEYS = [
+  'proposed_match',
+  'proposed_settlement',
+  'matched',
+  'ignored',
+  'unmatched',
+  'added',
+  'settled',
+];
+
+/** Upload rejected because the period is already verified — a success, not a failure. */
+function isCaughtUpMessage(message: string): boolean {
+  return /no new bank transactions/i.test(message);
+}
+
 export function BankReconcilePanel() {
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -21,15 +38,31 @@ export function BankReconcilePanel() {
     () => searchParams.get('session'),
   );
   const [message, setMessage] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [bankAccountId, setBankAccountId] = useState<string>('');
+  const [pendingRowId, setPendingRowId] = useState<string | null>(null);
+  const [pendingBulk, setPendingBulk] = useState<string | null>(null);
+
+  // Follow URL only when the URL itself changes. Do not depend on sessionId —
+  // otherwise an account switch optimistically updates state while the URL is
+  // still stale and this effect snaps back to the previous session.
+  const urlSessionId = searchParams.get('session');
+  useEffect(() => {
+    setSessionId(urlSessionId);
+  }, [urlSessionId]);
 
   useEffect(() => {
-    const fromUrl = searchParams.get('session');
-    if (fromUrl && fromUrl !== sessionId) {
-      setSessionId(fromUrl);
-    }
-  }, [searchParams, sessionId]);
+    if (!message) return;
+    const timer = setTimeout(() => setMessage(null), 6000);
+    return () => clearTimeout(timer);
+  }, [message]);
+
+  useEffect(() => {
+    if (!notice) return;
+    const timer = setTimeout(() => setNotice(null), 10000);
+    return () => clearTimeout(timer);
+  }, [notice]);
 
   const workspaceQuery = useQuery({
     queryKey: ['verification-workspace'],
@@ -50,13 +83,15 @@ export function BankReconcilePanel() {
     setBankAccountId((withOpen ?? operatingAccounts[0]).id);
   }, [operatingAccounts, bankAccountId]);
 
-  // Keep selected account in sync with the loaded session
+  // Keep selected account in sync with the loaded session only when IDs match.
   useEffect(() => {
-    const accountId = sessionQuery.data?.bank_account_id;
+    const loaded = sessionQuery.data;
+    if (!loaded || !sessionId || loaded.id !== sessionId) return;
+    const accountId = loaded.bank_account_id;
     if (accountId && accountId !== bankAccountId) {
       setBankAccountId(accountId);
     }
-  }, [sessionQuery.data?.bank_account_id, bankAccountId]);
+  }, [sessionQuery.data, sessionId, bankAccountId]);
 
   function selectBankAccount(nextId: string) {
     setBankAccountId(nextId);
@@ -70,6 +105,7 @@ export function BankReconcilePanel() {
       return next;
     });
     setMessage(null);
+    setNotice(null);
     setError(null);
   }
 
@@ -83,16 +119,23 @@ export function BankReconcilePanel() {
         next.set('session', created.id);
         return next;
       });
-      setMessage('Statement opened. Confirm matches below.');
-
+      setMessage('Statement opened. Check the lists below.');
+      setNotice(null);
       setError(null);
       void queryClient.invalidateQueries({ queryKey: ['bank-reconcile-session'] });
       invalidateAlertData(queryClient);
       invalidateVerificationWorkspace(queryClient);
     },
     onError: (err) => {
-      setError(getUserErrorMessage(err));
+      const text = getUserErrorMessage(err);
       setMessage(null);
+      if (isCaughtUpMessage(text)) {
+        setNotice(text);
+        setError(null);
+      } else {
+        setError(text);
+        setNotice(null);
+      }
     },
   });
 
@@ -115,6 +158,10 @@ export function BankReconcilePanel() {
       setError(null);
     },
     onError: (err) => setError(getUserErrorMessage(err)),
+    onSettled: () => {
+      setPendingRowId(null);
+      setPendingBulk(null);
+    },
   });
 
   const completeMutation = useMutation({
@@ -134,7 +181,7 @@ export function BankReconcilePanel() {
         return next;
       });
       setMessage(
-        `Period completed${
+        `Period finished${
           completed.statement_end_date
             ? ` through ${formatDate(completed.statement_end_date)}`
             : ''
@@ -150,7 +197,8 @@ export function BankReconcilePanel() {
     queryFn: api.getProperties,
   });
 
-  const session: BankReconcileSession | undefined = sessionQuery.data;
+  const session: BankReconcileSession | undefined =
+    sessionId && sessionQuery.data?.id === sessionId ? sessionQuery.data : undefined;
   const busy =
     createMutation.isPending || actionsMutation.isPending || completeMutation.isPending;
   const activeSession = session?.status === 'in_progress' ? session : undefined;
@@ -223,29 +271,48 @@ export function BankReconcilePanel() {
   );
   const draftTxs: UnifiedTransaction[] = notInBankLines.map(bankDraftToUnified);
 
+  const counts = activeSession?.counts ?? {};
+  const totalItems =
+    LINE_STATUS_KEYS.reduce((sum, key) => sum + (counts[key] ?? 0), 0) +
+    (counts.app_unmatched ?? 0) +
+    (counts.app_ignored ?? 0);
+  const remainingItems = (counts.unresolved_bank ?? 0) + (counts.unresolved_app ?? 0);
+  const handledItems = Math.max(0, totalItems - remainingItems);
+
+  function runActions(
+    bulkKey: string | null,
+    rowId: string | null,
+    actions: Parameters<typeof api.applyBankReconcileActions>[1],
+  ) {
+    if (!activeSession || actions.length === 0) return;
+    setPendingBulk(bulkKey);
+    setPendingRowId(rowId);
+    actionsMutation.mutate({ id: activeSession.id, actions });
+  }
+
   function confirmAllProposed() {
-    if (!activeSession || proposed.length === 0) return;
-    actionsMutation.mutate({
-      id: activeSession.id,
-      actions: proposed.map((line) => ({
+    runActions(
+      'confirm',
+      null,
+      proposed.map((line) => ({
         action: 'confirm_match' as const,
         fingerprint: line.fingerprint,
         kind: (line.proposed_kind as 'deposit' | 'expense') || undefined,
         tx_id: line.proposed_tx_id || undefined,
       })),
-    });
+    );
   }
 
   function confirmAllSettlements() {
-    if (!activeSession || proposedSettlements.length === 0) return;
-    actionsMutation.mutate({
-      id: activeSession.id,
-      actions: proposedSettlements.map((line) => ({
+    runActions(
+      'settle-confirm',
+      null,
+      proposedSettlements.map((line) => ({
         action: 'confirm_settlement' as const,
         fingerprint: line.fingerprint,
         member_ids: line.proposed_member_ids || undefined,
       })),
-    });
+    );
   }
 
   function bufferPropertyId(): string | null {
@@ -259,309 +326,309 @@ export function BankReconcilePanel() {
   }
 
   function ignoreBank(fingerprint: string) {
-    if (!activeSession) return;
-    actionsMutation.mutate({
-      id: activeSession.id,
-      actions: [{ action: 'ignore_bank', fingerprint }],
-    });
+    runActions(null, fingerprint, [{ action: 'ignore_bank', fingerprint }]);
   }
 
   function ignoreAllBank() {
-    if (!activeSession || notInBankLines.length === 0) return;
-    actionsMutation.mutate({
-      id: activeSession.id,
-      actions: notInBankLines.map((line) => ({
+    runActions(
+      'ignore-bank',
+      null,
+      notInBankLines.map((line) => ({
         action: 'ignore_bank' as const,
         fingerprint: line.fingerprint,
       })),
-    });
+    );
   }
 
   function ignoreAllSettlements() {
-    if (!activeSession || proposedSettlements.length === 0) return;
-    actionsMutation.mutate({
-      id: activeSession.id,
-      actions: proposedSettlements.map((line) => ({
+    runActions(
+      'settle-ignore',
+      null,
+      proposedSettlements.map((line) => ({
         action: 'ignore_bank' as const,
         fingerprint: line.fingerprint,
       })),
-    });
+    );
   }
 
   function addFromBank(fingerprint: string) {
-    if (!activeSession) return;
     const propertyId = bufferPropertyId();
     if (!propertyId) return;
-    actionsMutation.mutate({
-      id: activeSession.id,
-      actions: [{ action: 'add_from_bank', fingerprint, property_id: propertyId }],
-    });
+    runActions(null, fingerprint, [
+      { action: 'add_from_bank', fingerprint, property_id: propertyId },
+    ]);
   }
 
   function createAllFromBank() {
-    if (!activeSession || notInBankLines.length === 0) return;
     const propertyId = bufferPropertyId();
     if (!propertyId) return;
-    actionsMutation.mutate({
-      id: activeSession.id,
-      actions: notInBankLines.map((line) => ({
+    runActions(
+      'create-bank',
+      null,
+      notInBankLines.map((line) => ({
         action: 'add_from_bank' as const,
         fingerprint: line.fingerprint,
         property_id: propertyId,
       })),
-    });
+    );
   }
 
   function ignoreApp(kind: 'deposit' | 'expense', txId: string) {
-    if (!activeSession) return;
-    actionsMutation.mutate({
-      id: activeSession.id,
-      actions: [{ action: 'ignore_app', kind, tx_id: txId }],
-    });
+    runActions(null, txId, [{ action: 'ignore_app', kind, tx_id: txId }]);
   }
 
   function ignoreAllApp() {
-    if (!activeSession) return;
     const pending = notInExcelTxs.filter((tx) => !ignoredAppIds.has(tx.id));
-    if (pending.length === 0) return;
-    actionsMutation.mutate({
-      id: activeSession.id,
-      actions: pending.map((tx) => ({
+    runActions(
+      'ignore-app',
+      null,
+      pending.map((tx) => ({
         action: 'ignore_app' as const,
         kind: tx.kind,
         tx_id: tx.id,
       })),
-    });
+    );
+  }
+
+  function confirmOne(tx: UnifiedTransaction) {
+    const match = fingerprintByTxId.get(tx.id);
+    if (!match) return;
+    runActions(null, tx.id, [
+      {
+        action: 'confirm_match',
+        fingerprint: match.fingerprint,
+        kind: match.kind,
+        tx_id: tx.id,
+      },
+    ]);
   }
 
   const pendingMissingCount = notInExcelTxs.filter(
     (tx) => !ignoredAppIds.has(tx.id),
   ).length;
+
   const completeBlockers: string[] = [];
   if (activeSession && !activeSession.can_complete) {
-    if (proposed.length > 0) {
-      completeBlockers.push(`${proposed.length} matches left to confirm`);
-    }
-    if (proposedSettlements.length > 0) {
-      completeBlockers.push(
-        `${proposedSettlements.length} card settlement line(s) left — confirm or ignore`,
-      );
-    }
-    if (notInBankLines.length > 0) {
-      completeBlockers.push(`${notInBankLines.length} unmatched statement lines`);
-    }
-    if (pendingMissingCount > 0) {
-      completeBlockers.push(`${pendingMissingCount} missing from statement`);
+    if (remainingItems > 0) {
+      completeBlockers.push(`Still ${remainingItems} to handle`);
     }
     if (
       activeSession.gap_verified != null &&
       activeSession.within_tolerance_verified === false
     ) {
       completeBlockers.push(
-        `Balance still off by ${formatCurrency(activeSession.gap_verified)} — ask an admin`,
+        `Balance off by ${formatCurrency(activeSession.gap_verified)} — ask an admin`,
       );
     }
     if (completeBlockers.length === 0) {
-      completeBlockers.push('Period is not ready to complete yet');
+      completeBlockers.push('Not ready to finish yet');
     }
   }
 
-  function confirmOne(tx: UnifiedTransaction) {
-    if (!activeSession) return;
-    const match = fingerprintByTxId.get(tx.id);
-    if (!match) return;
-    actionsMutation.mutate({
-      id: activeSession.id,
-      actions: [
-        {
-          action: 'confirm_match',
-          fingerprint: match.fingerprint,
-          kind: match.kind,
-          tx_id: tx.id,
-        },
-      ],
-    });
-  }
+  const showUpload = !activeSession && !sessionQuery.isLoading;
 
   return (
     <div className="space-y-3">
-      <div className="flex flex-wrap items-center gap-2">
-        {operatingAccounts.length > 1 ? (
-          <label className="text-sm flex items-center gap-2 min-w-0">
-            <span className="label-text shrink-0">Account</span>
-            <select
-              className="field py-1 text-sm min-w-[12rem] max-w-full"
-              value={bankAccountId}
-              disabled={busy}
-              onChange={(e) => selectBankAccount(e.target.value)}
-            >
-              {operatingAccounts.map((account) => (
-                <option key={account.id} value={account.id}>
-                  {account.label}
-                  {account.open_session_id ? ' · in progress' : ''}
-                </option>
-              ))}
-            </select>
-          </label>
-        ) : null}
-        <label className="btn-primary cursor-pointer text-sm">
-          {createMutation.isPending ? 'Uploading…' : 'Upload statement'}
-          <input
-            type="file"
-            accept=".xlsx,.xls"
-            className="hidden"
-            disabled={
-              busy ||
-              (operatingAccounts.length > 0 && !bankAccountId) ||
-              Boolean(activeSession)
-            }
-            onChange={(e) => {
-              const file = e.target.files?.[0];
-              e.target.value = '';
-              if (file) {
-                createMutation.mutate({
-                  file,
-                  bankAccountId: bankAccountId || null,
-                });
-              }
-            }}
-          />
+      {operatingAccounts.length > 1 ? (
+        <label className="flex flex-wrap items-center gap-2 text-sm">
+          <span className="label-text mb-0 shrink-0">Account</span>
+          <select
+            className="field w-auto min-w-[12rem] max-w-full py-1 text-sm"
+            value={bankAccountId}
+            disabled={busy}
+            onChange={(e) => selectBankAccount(e.target.value)}
+          >
+            {operatingAccounts.map((account) => (
+              <option key={account.id} value={account.id}>
+                {account.label}
+                {account.open_session_id ? ' · in progress' : ''}
+              </option>
+            ))}
+          </select>
         </label>
-        {message ? (
-          <p className="text-sm text-emerald-700 dark:text-emerald-300">{message}</p>
-        ) : null}
-        {error ? <p className="text-sm text-red-600">{error}</p> : null}
-      </div>
+      ) : null}
+
+      {showUpload ? (
+        <FileDropzone
+          label="Upload bank statement"
+          busy={createMutation.isPending}
+          disabled={busy || (operatingAccounts.length > 0 && !bankAccountId)}
+          disabledHint="Choose an account first"
+          onFile={(file) =>
+            createMutation.mutate({ file, bankAccountId: bankAccountId || null })
+          }
+        >
+          <p className="text-sm font-medium">Start a new bank period</p>
+          <p className="mt-1 text-xs muted-text">
+            Choose the Excel from the bank · check the lists · finish the period
+          </p>
+        </FileDropzone>
+      ) : null}
+
+      {notice ? (
+        <p
+          role="status"
+          className="rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm text-emerald-800 dark:border-emerald-700/60 dark:bg-emerald-950/30 dark:text-emerald-200"
+        >
+          You're all caught up — {notice}
+        </p>
+      ) : null}
+      {message ? (
+        <p role="status" className="text-sm text-emerald-700 dark:text-emerald-300">
+          {message}
+        </p>
+      ) : null}
+      {error ? (
+        <p role="alert" className="text-sm text-red-600">
+          {error}
+        </p>
+      ) : null}
 
       {sessionQuery.isLoading && sessionId ? (
         <p className="text-sm muted-text">Loading…</p>
       ) : null}
 
       {activeSession ? (
-        <>
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-sm">
-            <span className="tabular-nums muted-text">
-              {formatDate(activeSession.statement_start_date)} →{' '}
-              {formatDate(activeSession.statement_end_date)}
-              {activeAccountLabel ? ` · ${activeAccountLabel}` : ''}
-            </span>
-            {proposed.length > 0 ? (
-              <button
-                type="button"
-                className="btn-primary text-sm"
-                disabled={busy}
-                onClick={confirmAllProposed}
-              >
-                Confirm all matches ({proposed.length})
-              </button>
-            ) : null}
-            {notInBankLines.length > 0 ? (
-              <>
-                <button
-                  type="button"
-                  className="btn-primary text-sm"
-                  disabled={busy || propertiesQuery.isLoading}
-                  onClick={createAllFromBank}
-                >
-                  Create all ({notInBankLines.length})
-                </button>
-                <button
-                  type="button"
-                  className="btn-secondary text-sm"
-                  disabled={busy}
-                  onClick={ignoreAllBank}
-                >
-                  Ignore all ({notInBankLines.length})
-                </button>
-              </>
-            ) : null}
-            {notInExcelTxs.some((tx) => !ignoredAppIds.has(tx.id)) ? (
-              <button
-                type="button"
-                className="btn-secondary text-sm"
-                disabled={busy}
-                onClick={ignoreAllApp}
-              >
-                Ignore all missing ({pendingMissingCount})
-              </button>
-            ) : null}
-            {proposedSettlements.length > 0 ? (
-              <>
-                {proposedSettlements.some(
-                  (l) => (l.proposed_member_ids?.length ?? 0) > 0,
-                ) ? (
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+            <p className="text-sm">
+              <span className="font-medium tabular-nums">
+                {formatDate(activeSession.statement_start_date)} →{' '}
+                {formatDate(activeSession.statement_end_date)}
+              </span>
+              {activeAccountLabel ? (
+                <span className="muted-text"> · {activeAccountLabel}</span>
+              ) : null}
+            </p>
+            {actionsMutation.isPending ? <VerifySpinner label="Saving…" /> : null}
+          </div>
+
+          <VerifyProgress handled={handledItems} total={totalItems} />
+
+          <VerifyGroupSection
+            title="Found on statement"
+            subtitle="Confirm these"
+            count={ableTxs.length}
+            tone="ok"
+            defaultOpen
+            hideWhenEmpty
+            actions={
+              proposed.length > 0 ? (
+                pendingBulk === 'confirm' ? (
+                  <VerifySpinner />
+                ) : (
                   <button
                     type="button"
-                    className="btn-secondary text-sm"
+                    className="btn-secondary text-xs"
                     disabled={busy}
-                    onClick={confirmAllSettlements}
+                    onClick={confirmAllProposed}
                   >
-                    Confirm settlements (
-                    {
-                      proposedSettlements.filter(
-                        (l) => (l.proposed_member_ids?.length ?? 0) > 0,
-                      ).length
-                    }
-                    )
+                    Confirm all found ({proposed.length})
                   </button>
-                ) : null}
-                <button
-                  type="button"
-                  className="btn-secondary text-sm"
-                  disabled={busy}
-                  onClick={ignoreAllSettlements}
-                >
-                  Ignore settlements ({proposedSettlements.length})
-                </button>
-              </>
-            ) : null}
-            <button
-              type="button"
-              className="btn-secondary text-sm"
-              disabled={busy || !activeSession.can_complete}
-              onClick={() => completeMutation.mutate(activeSession.id)}
-            >
-              {completeMutation.isPending ? 'Completing…' : 'Complete period'}
-            </button>
-          </div>
-          {completeBlockers.length > 0 ? (
-            <p className="text-sm text-amber-700 dark:text-amber-300">
-              {completeBlockers.join(' · ')}
-            </p>
-          ) : null}
-
-          <VerifyGroupSection title="Matched" count={ableTxs.length} tone="ok">
-            <TransactionTable
+                )
+              ) : null
+            }
+          >
+            <VerifyTable
               rows={ableTxs}
-              emptyMessage="No matches yet."
+              pendingRowId={pendingRowId}
               renderActions={(row) =>
                 proposedTxIds.has(row.id) ? (
                   <button
                     type="button"
                     className="btn-secondary text-xs"
                     disabled={busy}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      confirmOne(row);
-                    }}
+                    onClick={() => confirmOne(row)}
                   >
                     Confirm
                   </button>
                 ) : (
-                  <span className="text-xs muted-text">Verified</span>
+                  <span className="text-xs muted-text">Checked</span>
                 )
               }
             />
           </VerifyGroupSection>
 
           <VerifyGroupSection
-            title="Missing from statement"
+            title="On the statement, not in the app"
+            subtitle="Create or Ignore"
+            count={draftTxs.length}
+            tone="warn"
+            defaultOpen
+            hideWhenEmpty
+            actions={
+              notInBankLines.length > 0 ? (
+                <>
+                  <ConfirmButton
+                    label={`Create all (${notInBankLines.length})`}
+                    confirmLabel={`Create ${notInBankLines.length}`}
+                    disabled={busy || propertiesQuery.isLoading}
+                    pending={pendingBulk === 'create-bank'}
+                    onConfirm={createAllFromBank}
+                  />
+                  <ConfirmButton
+                    label={`Ignore all (${notInBankLines.length})`}
+                    confirmLabel={`Ignore ${notInBankLines.length}`}
+                    disabled={busy}
+                    pending={pendingBulk === 'ignore-bank'}
+                    onConfirm={ignoreAllBank}
+                  />
+                </>
+              ) : null
+            }
+          >
+            <VerifyTable
+              rows={draftTxs}
+              pendingRowId={pendingRowId}
+              renderActions={(row) => {
+                const line = notInBankLines.find((l) => l.fingerprint === row.id);
+                if (!line) return null;
+                return (
+                  <>
+                    <button
+                      type="button"
+                      className="btn-primary text-xs"
+                      disabled={busy || propertiesQuery.isLoading}
+                      onClick={() => addFromBank(line.fingerprint)}
+                    >
+                      Create
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-secondary text-xs"
+                      disabled={busy}
+                      onClick={() => ignoreBank(line.fingerprint)}
+                    >
+                      Ignore
+                    </button>
+                  </>
+                );
+              }}
+            />
+          </VerifyGroupSection>
+
+          <VerifyGroupSection
+            title="In the app, not on the statement"
+            subtitle="Ignore if OK"
             count={notInExcelTxs.length}
             tone="warn"
+            defaultOpen
+            hideWhenEmpty
+            actions={
+              pendingMissingCount > 0 ? (
+                <ConfirmButton
+                  label={`Ignore all (${pendingMissingCount})`}
+                  confirmLabel={`Ignore ${pendingMissingCount}`}
+                  disabled={busy}
+                  pending={pendingBulk === 'ignore-app'}
+                  onConfirm={ignoreAllApp}
+                />
+              ) : null
+            }
           >
-            <TransactionTable
+            <VerifyTable
               rows={notInExcelTxs}
-              emptyMessage="None."
+              pendingRowId={pendingRowId}
               renderActions={(row) =>
                 ignoredAppIds.has(row.id) ? (
                   <span className="text-xs muted-text">Ignored</span>
@@ -570,10 +637,7 @@ export function BankReconcilePanel() {
                     type="button"
                     className="btn-secondary text-xs"
                     disabled={busy}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      ignoreApp(row.kind, row.id);
-                    }}
+                    onClick={() => ignoreApp(row.kind, row.id)}
                   >
                     Ignore
                   </button>
@@ -582,113 +646,95 @@ export function BankReconcilePanel() {
             />
           </VerifyGroupSection>
 
-          <VerifyGroupSection
-            title="Unmatched statement lines"
-            count={draftTxs.length}
-            tone="warn"
-          >
-            <TransactionTable
-              rows={draftTxs}
-              emptyMessage="None."
-              renderActions={(row) => {
-                const line = notInBankLines.find((l) => l.fingerprint === row.id);
-                if (!line) return null;
-                return (
-                  <div className="flex flex-wrap gap-1">
-                    <button
-                      type="button"
-                      className="btn-primary text-xs"
-                      disabled={busy || propertiesQuery.isLoading}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        addFromBank(line.fingerprint);
-                      }}
-                    >
-                      Create
-                    </button>
+          {proposedSettlements.length > 0 ? (
+            <VerifyGroupSection
+              title="Card payments on the bank statement"
+              subtitle="Covered by the card statement — no action needed to finish"
+              count={proposedSettlements.length}
+              actions={
+                <>
+                  {pendingBulk === 'settle-confirm' ? (
+                    <VerifySpinner />
+                  ) : (
                     <button
                       type="button"
                       className="btn-secondary text-xs"
                       disabled={busy}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        ignoreBank(line.fingerprint);
-                      }}
+                      onClick={confirmAllSettlements}
                     >
-                      Ignore
+                      Confirm all
                     </button>
-                  </div>
-                );
-              }}
-            />
-          </VerifyGroupSection>
-
-          {proposedSettlements.length > 0 ? (
-            <details className="rounded-lg border border-slate-200 dark:border-slate-700">
-              <summary className="cursor-pointer select-none px-3 py-2 text-sm font-medium">
-                More · card settlements ({proposedSettlements.length})
-              </summary>
-              <div className="border-t border-slate-200 px-3 py-2 dark:border-slate-700 space-y-2">
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    className="btn-secondary text-sm"
+                  )}
+                  <ConfirmButton
+                    label="Ignore all"
+                    confirmLabel={`Ignore ${proposedSettlements.length}`}
                     disabled={busy}
-                    onClick={confirmAllSettlements}
+                    pending={pendingBulk === 'settle-ignore'}
+                    onConfirm={ignoreAllSettlements}
+                  />
+                </>
+              }
+            >
+              <VerifyRowTable headers={['Card payment', 'Details', 'Action']}>
+                {proposedSettlements.map((line) => (
+                  <tr
+                    key={line.fingerprint}
+                    className="border-t border-slate-100 dark:border-slate-800"
                   >
-                    Confirm all settlements
-                  </button>
-                </div>
-                <table className="w-full text-sm">
-                  <thead className="table-head">
-                    <tr>
-                      <th className="px-2 py-1.5 text-left">Settlement</th>
-                      <th className="px-2 py-1.5 text-left">Group</th>
-                      <th className="px-2 py-1.5 text-left">Action</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {proposedSettlements.map((line) => (
-                      <tr
-                        key={line.fingerprint}
-                        className="border-t border-slate-200 dark:border-slate-700"
-                      >
-                        <td className="px-2 py-1.5">
-                          {formatDate(line.transaction_date)} · −
-                          {formatCurrency(line.amount)}
-                        </td>
-                        <td className="px-2 py-1.5 text-xs muted-text">
-                          {line.proposed_summary}
-                        </td>
-                        <td className="px-2 py-1.5">
-                          <button
-                            type="button"
-                            className="btn-secondary text-xs"
-                            disabled={busy}
-                            onClick={() =>
-                              actionsMutation.mutate({
-                                id: activeSession.id,
-                                actions: [
-                                  {
-                                    action: 'confirm_settlement',
-                                    fingerprint: line.fingerprint,
-                                    member_ids: line.proposed_member_ids || undefined,
-                                  },
-                                ],
-                              })
-                            }
-                          >
-                            Confirm
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </details>
+                    <td className="px-3 py-2 whitespace-nowrap tabular-nums">
+                      {formatDate(line.transaction_date)} · −{formatCurrency(line.amount)}
+                    </td>
+                    <td className="px-3 py-2 text-xs muted-text">
+                      {line.proposed_summary}
+                    </td>
+                    <td className="px-3 py-2">
+                      {pendingRowId === line.fingerprint ? (
+                        <VerifySpinner />
+                      ) : (
+                        <button
+                          type="button"
+                          className="btn-secondary text-xs"
+                          disabled={busy}
+                          onClick={() =>
+                            runActions(null, line.fingerprint, [
+                              {
+                                action: 'confirm_settlement',
+                                fingerprint: line.fingerprint,
+                                member_ids: line.proposed_member_ids || undefined,
+                              },
+                            ])
+                          }
+                        >
+                          Confirm
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </VerifyRowTable>
+            </VerifyGroupSection>
           ) : null}
-        </>
+
+          <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-200 pt-3 dark:border-slate-700">
+            {completeBlockers.length > 0 ? (
+              <p className="text-sm text-amber-700 dark:text-amber-300">
+                {completeBlockers.join(' · ')}
+              </p>
+            ) : (
+              <p className="text-sm text-emerald-700 dark:text-emerald-300">
+                Everything is handled — ready to finish.
+              </p>
+            )}
+            <button
+              type="button"
+              className="btn-primary"
+              disabled={busy || !activeSession.can_complete}
+              onClick={() => completeMutation.mutate(activeSession.id)}
+            >
+              {completeMutation.isPending ? 'Finishing…' : 'Finish period'}
+            </button>
+          </div>
+        </div>
       ) : null}
     </div>
   );

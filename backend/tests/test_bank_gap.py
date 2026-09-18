@@ -9,6 +9,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.api.deps import get_db
+from app.core.admin_auth import require_admin
 from app.core.database import Base
 from app.main import app
 from app.models.expense import Expense
@@ -51,6 +52,7 @@ def client(db):
         yield db
 
     app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[require_admin] = lambda: "test-admin"
     with TestClient(app) as test_client:
         yield test_client
     app.dependency_overrides.clear()

@@ -51,6 +51,17 @@ def _is_cc_settlement_line(description: str | None) -> bool:
     return any(needle.lower() in text for needle in _CC_SETTLEMENT_NEEDLES)
 
 
+def count_cc_deduction_lines(lines: list[dict] | None) -> int:
+    """How many bank statement rows are credit-card payment deductions."""
+    total = 0
+    for line in lines or []:
+        if line.get("proposed_kind") == "cc_settlement" or _is_cc_settlement_line(
+            line.get("description")
+        ):
+            total += 1
+    return total
+
+
 def _parse_iso_date(value: str | None) -> date | None:
     if not value:
         return None
@@ -408,6 +419,126 @@ def _unmatched_app_rows(
     return out
 
 
+def _normalized_asmachta(value: str | None) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _bank_verified_asmachta_sets(
+    db: Session,
+    *,
+    bank_account_id: UUID | None,
+    is_default_account: bool,
+) -> tuple[set[str], set[str]]:
+    """Asmachtot already used by bank-verified app rows (credits / debits).
+
+    Only bank-verified deposits/expenses count — never unverified or CC-only rows.
+    CC settlement groups contribute debit asmachtot for card-payment bank lines.
+    """
+    credit: set[str] = set()
+    debit: set[str] = set()
+
+    dep_filters = [
+        Deposit.bank_verified_at.is_not(None),
+        Deposit.bank_asmachta.is_not(None),
+        Deposit.bank_asmachta != "",
+    ]
+    if bank_account_id is not None:
+        dep_filters.append(
+            deposit_belongs_to_account_clause(
+                bank_account_id, is_default=is_default_account
+            )
+        )
+    for raw in db.scalars(select(Deposit.bank_asmachta).where(and_(*dep_filters))):
+        key = _normalized_asmachta(raw)
+        if key:
+            credit.add(key)
+
+    if is_default_account:
+        for raw in db.scalars(
+            select(Expense.bank_asmachta).where(
+                Expense.bank_verified_at.is_not(None),
+                Expense.bank_asmachta.is_not(None),
+                Expense.bank_asmachta != "",
+            )
+        ):
+            key = _normalized_asmachta(raw)
+            if key:
+                debit.add(key)
+        for raw in db.scalars(
+            select(CcSettlementGroup.bank_asmachta).where(
+                CcSettlementGroup.bank_asmachta.is_not(None),
+                CcSettlementGroup.bank_asmachta != "",
+            )
+        ):
+            key = _normalized_asmachta(raw)
+            if key:
+                debit.add(key)
+
+    return credit, debit
+
+
+def _filter_statement_lines_for_new_period(
+    lines: list[dict],
+    *,
+    last_verified: date | None,
+    credit_asmachtas: set[str],
+    debit_asmachtas: set[str],
+) -> list[dict]:
+    """Keep only lines after last verification that are not bank-verified duplicates."""
+    kept: list[dict] = []
+    for line in lines:
+        line_date = _parse_iso_date(line.get("transaction_date"))
+        if (
+            last_verified is not None
+            and line_date is not None
+            and line_date <= last_verified
+        ):
+            continue
+        asmachta = _normalized_asmachta(line.get("asmachta"))
+        if asmachta:
+            side = line.get("side")
+            if side == "credit" and asmachta in credit_asmachtas:
+                continue
+            if side == "debit" and asmachta in debit_asmachtas:
+                continue
+        kept.append(line)
+    return kept
+
+
+def _find_bank_verified_duplicate(
+    db: Session,
+    *,
+    side: str,
+    asmachta: str | None,
+    bank_account_id: UUID | None,
+    is_default_account: bool,
+) -> Deposit | Expense | None:
+    """Return an existing bank-verified row with the same asmachta, if any."""
+    key = _normalized_asmachta(asmachta)
+    if not key:
+        return None
+    if side == "credit":
+        filters = [
+            Deposit.bank_verified_at.is_not(None),
+            Deposit.bank_asmachta == key,
+        ]
+        if bank_account_id is not None:
+            filters.append(
+                deposit_belongs_to_account_clause(
+                    bank_account_id, is_default=is_default_account
+                )
+            )
+        return db.scalars(select(Deposit).where(and_(*filters))).first()
+    filters = [
+        Expense.bank_verified_at.is_not(None),
+        Expense.bank_asmachta == key,
+    ]
+    return db.scalars(select(Expense).where(and_(*filters))).first()
+
+
 def create_session_from_upload(
     db: Session,
     *,
@@ -445,12 +576,43 @@ def create_session_from_upload(
     parsed = parse_bank_statement_lines(content)
     account_row, company = resolve_account_settings(db, bank_account_id=account.id)
     opening = effective_opening_balance(account_row, company)
-    after = effective_opening_as_of(account_row, company) or effective_last_verification(
-        account_row, company
+    last_verified = effective_last_verification(account_row, company)
+    after = effective_opening_as_of(account_row, company) or last_verified
+
+    credit_asmachtas, debit_asmachtas = _bank_verified_asmachta_sets(
+        db,
+        bank_account_id=account.id,
+        is_default_account=is_default,
     )
-    date_from = parsed["statement_start_date"]
-    date_to = parsed["statement_end_date"]
-    lines = parsed["lines"]
+    lines = _filter_statement_lines_for_new_period(
+        parsed["lines"],
+        last_verified=last_verified,
+        credit_asmachtas=credit_asmachtas,
+        debit_asmachtas=debit_asmachtas,
+    )
+    if not lines:
+        if last_verified is not None:
+            raise ValueError(
+                "No new bank transactions to check. Already verified through "
+                f"{last_verified.isoformat()}."
+            )
+        raise ValueError(
+            "No new bank transactions to check — all statement lines already "
+            "match bank-verified transactions."
+        )
+
+    kept_dates = [
+        d
+        for d in (_parse_iso_date(line.get("transaction_date")) for line in lines)
+        if d is not None
+    ]
+    date_from = min(kept_dates) if kept_dates else parsed["statement_start_date"]
+    date_to = max(kept_dates) if kept_dates else parsed["statement_end_date"]
+    if last_verified is not None:
+        period_start = last_verified + timedelta(days=1)
+        if date_from is None or date_from < period_start:
+            date_from = period_start
+
     _propose_matches(
         db,
         lines,
@@ -569,6 +731,7 @@ def session_summary(db: Session, session: BankReconcileSession) -> dict:
     not_in_excel_txs = load_transactions_by_ids(
         db, deposit_ids=not_excel_dep, expense_ids=not_excel_exp
     )
+    cc_deduction_count = count_cc_deduction_lines(lines)
 
     return {
         "id": str(session.id),
@@ -597,6 +760,8 @@ def session_summary(db: Session, session: BankReconcileSession) -> dict:
             "unresolved_app": unresolved_app,
         },
         "can_complete": can_complete,
+        "has_cc_deduction": cc_deduction_count > 0,
+        "cc_deduction_count": cc_deduction_count,
         "lines": lines,
         "unmatched_app": apps,
         "able_txs": able_txs,
@@ -735,6 +900,29 @@ def apply_actions(db: Session, session: BankReconcileSession, actions: list[dict
             tx_date = _parse_iso_date(line.get("transaction_date"))
             asmachta = line.get("asmachta")
             desc = line.get("description")
+            default = get_default_operating_account(db)
+            is_default = (
+                default is not None
+                and session.bank_account_id is not None
+                and session.bank_account_id == default.id
+            ) or (session.bank_account_id is None and default is not None)
+            dup = _find_bank_verified_duplicate(
+                db,
+                side=line["side"],
+                asmachta=asmachta,
+                bank_account_id=session.bank_account_id,
+                is_default_account=is_default,
+            )
+            if dup is not None:
+                # Attach to the existing bank-verified row instead of creating a duplicate.
+                line["status"] = "matched"
+                line["proposed_kind"] = (
+                    "deposit" if line["side"] == "credit" else "expense"
+                )
+                line["proposed_tx_id"] = str(dup.id)
+                line["proposed_tx_ref"] = getattr(dup, "transaction_ref", None)
+                line["proposed_summary"] = "Already bank-verified (duplicate asmachta)"
+                continue
             if line["side"] == "credit":
                 row = Deposit(
                     property_id=prop.id,

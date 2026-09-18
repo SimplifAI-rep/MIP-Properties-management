@@ -158,7 +158,15 @@ def test_cc_reconcile_match_confirm_no_duplicate(client, db):
     assert expense.transaction_ref == expense_ref
     assert db.query(Expense).count() == before_count
 
-    # Re-upload: already CC-verified expense should not be proposed again as a new create
+    completed = client.post(
+        f"/api/v1/bank-settings/cc-reconcile/sessions/{session['id']}/complete"
+    )
+    assert completed.status_code == 200
+    assert completed.json()["status"] == "completed"
+
+    # Re-upload once the period is finished: the already CC-verified expense must
+    # not be proposed again as a new create. (Uploading while a period is still
+    # open is rejected, so the period has to be completed first.)
     with SAMPLE_CC.open("rb") as handle:
         again = client.post(
             "/api/v1/bank-settings/cc-reconcile/sessions",
@@ -169,15 +177,10 @@ def test_cc_reconcile_match_confirm_no_duplicate(client, db):
                     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 )
             },
-        ).json()
+        )
+    assert again.status_code == 200, again.text
     assert not any(
         row.get("proposed_tx_id") == expense_id and row["status"] == "proposed_match"
-        for row in again["lines"]
+        for row in again.json()["lines"]
     )
     assert db.query(Expense).count() == before_count
-
-    completed = client.post(
-        f"/api/v1/bank-settings/cc-reconcile/sessions/{session['id']}/complete"
-    )
-    assert completed.status_code == 200
-    assert completed.json()["status"] == "completed"

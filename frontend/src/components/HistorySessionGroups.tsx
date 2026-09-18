@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useMemo, useState, type ReactNode } from 'react';
 import { api } from '../api/client';
 import type { BankReconcileSession, CcReconcileSession } from '../types';
-import { TransactionTable } from './TransactionTable';
+import { VerifyTransactionTable } from './VerifyTransactionTable';
 import { VerifyGroupSection } from './verifyGroups';
 import { MoneyValue } from './ui/MoneyValue';
 import { bankDraftToUnified, ccDraftToUnified, txsFromApi } from '../utils/verifyTxDisplay';
@@ -66,34 +66,6 @@ function Stat({
   );
 }
 
-/**
- * Every list in a finished period uses the same full transaction rows as the
- * Transactions page. Balance is hidden (the session payload has no running
- * balance) and so are actions, since finished periods are read-only.
- */
-function HistoryTable({
-  rows,
-  emptyMessage,
-  frameClassName = '',
-}: {
-  rows: UnifiedTransaction[];
-  emptyMessage?: string;
-  /** Lists inside a VerifyGroupSection inherit its frame and pass nothing here. */
-  frameClassName?: string;
-}) {
-  const long = rows.length > 10;
-  return (
-    <TransactionTable
-      rows={rows}
-      showActions={false}
-      showBalance={false}
-      stickyHeader={long}
-      emptyMessage={emptyMessage}
-      className={`${frameClassName} overflow-auto${long ? ' max-h-[26rem]' : ''}`.trim()}
-    />
-  );
-}
-
 /** Verified transactions with a search box — the main thing you open a period for. */
 function VerifiedTransactions({ rows }: { rows: UnifiedTransaction[] }) {
   const [query, setQuery] = useState('');
@@ -152,7 +124,7 @@ function VerifiedTransactions({ rows }: { rows: UnifiedTransaction[] }) {
         </p>
       ) : null}
 
-      <HistoryTable
+      <VerifyTransactionTable
         rows={filtered}
         emptyMessage={
           rows.length === 0
@@ -242,7 +214,7 @@ function BankHistoryGroups({ session }: { session: BankReconcileSession }) {
         tone="warn"
         hideWhenEmpty
       >
-        <HistoryTable rows={skippedLines} />
+        <VerifyTransactionTable rows={skippedLines} />
       </VerifyGroupSection>
 
       <VerifyGroupSection
@@ -252,7 +224,7 @@ function BankHistoryGroups({ session }: { session: BankReconcileSession }) {
         tone="warn"
         hideWhenEmpty
       >
-        <HistoryTable rows={notOnStatement} />
+        <VerifyTransactionTable rows={notOnStatement} />
       </VerifyGroupSection>
     </div>
   );
@@ -291,7 +263,7 @@ function CcHistoryGroups({ session }: { session: CcReconcileSession }) {
         tone="warn"
         hideWhenEmpty
       >
-        <HistoryTable rows={skippedLines} />
+        <VerifyTransactionTable rows={skippedLines} />
       </VerifyGroupSection>
 
       <VerifyGroupSection
@@ -301,7 +273,7 @@ function CcHistoryGroups({ session }: { session: CcReconcileSession }) {
         tone="warn"
         hideWhenEmpty
       >
-        <HistoryTable rows={notOnStatement} />
+        <VerifyTransactionTable rows={notOnStatement} />
       </VerifyGroupSection>
     </div>
   );

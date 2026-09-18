@@ -283,9 +283,12 @@ export function TransactionTableHeader({
 export function TransactionTableColgroup({
   showActions = true,
   showBalance = true,
+  actionsColWidth = 'w-[5%]',
 }: {
   showActions?: boolean;
   showBalance?: boolean;
+  /** Widen for text buttons — cells clip their overflow, so icons need less. */
+  actionsColWidth?: string;
 }) {
   return (
     <colgroup>
@@ -302,7 +305,7 @@ export function TransactionTableColgroup({
       <col className="w-[7%]" />
       <col className="w-[6%]" />
       <col className="w-[5%]" />
-      {showActions ? <col className="w-[5%]" /> : null}
+      {showActions ? <col className={actionsColWidth} /> : null}
     </colgroup>
   );
 }
@@ -410,6 +413,8 @@ export interface TransactionTableProps {
   showBalance?: boolean;
   /** Keeps the header visible when the wrapper scrolls. */
   stickyHeader?: boolean;
+  /** Widen the Actions column when it holds text buttons instead of icons. */
+  actionsColWidth?: string;
   renderActions?: (row: UnifiedTransaction) => ReactNode;
   className?: string;
 }
@@ -421,6 +426,7 @@ export function TransactionTable({
   showActions = true,
   showBalance = true,
   stickyHeader = false,
+  actionsColWidth,
   renderActions,
   className,
 }: TransactionTableProps) {
@@ -431,7 +437,11 @@ export function TransactionTable({
   return (
     <div className={className ?? 'overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-700'}>
       <table className="table-shell">
-        <TransactionTableColgroup showActions={showActions} showBalance={showBalance} />
+        <TransactionTableColgroup
+          showActions={showActions}
+          showBalance={showBalance}
+          actionsColWidth={actionsColWidth}
+        />
         <TransactionTableHeader
           showActions={showActions}
           showBalance={showBalance}
@@ -448,13 +458,15 @@ export function TransactionTable({
                 row={row}
                 showBalance={showBalance}
                 actions={
-                  showActions
-                    ? (renderActions?.(row) ?? (
-                        <div className="flex items-center gap-1">
-                          <FeedbackButton row={row} />
-                        </div>
-                      ))
-                    : undefined
+                  !showActions
+                    ? undefined
+                    : renderActions
+                      ? renderActions(row)
+                      : (
+                          <div className="flex items-center gap-1">
+                            <FeedbackButton row={row} />
+                          </div>
+                        )
                 }
               />
             </tr>

@@ -1,9 +1,10 @@
 """Drive the whole verification flow against the seeded test database.
 
-Runs on a throwaway copy of the fixture built by ``seed_test_db.py``, so the
-fixture itself stays pristine and ready for manual testing.
+Seeds a throwaway fixture with ``seed_test_db.py`` on every run, so the checks
+never depend on state left behind by manual testing. Pass a database path to
+run against a copy of that file instead.
 
-    backend\\.venv\\Scripts\\python.exe scripts\\verify_test_db.py [simplifai.db]
+    backend\\.venv\\Scripts\\python.exe scripts\\verify_test_db.py [some.db]
 
 Checks, in order:
   1. workspace exposes the finished May period (bank + card + settlement)
@@ -18,6 +19,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -62,13 +64,35 @@ def line_counts(session: dict) -> dict[str, int]:
 
 
 def main() -> int:
-    source = Path(sys.argv[1] if len(sys.argv) > 1 else ROOT / "simplifai.db").resolve()
-    if not source.exists():
-        raise SystemExit(f"Seed the fixture first: {source} not found")
-
     work_dir = Path(tempfile.mkdtemp(prefix="simplifai-verify-"))
     work_db = work_dir / "copy.db"
-    shutil.copy2(source, work_db)
+
+    if len(sys.argv) > 1:
+        source = Path(sys.argv[1]).resolve()
+        if not source.exists():
+            raise SystemExit(f"Database not found: {source}")
+        shutil.copy2(source, work_db)
+    else:
+        # Build the fixture from scratch every run. Pointing at a working
+        # database instead would make these checks depend on whatever manual
+        # testing left behind.
+        seeded = subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "scripts" / "seed_test_db.py"),
+                "--db",
+                str(work_db),
+                "--no-backup",
+            ],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+        )
+        if seeded.returncode != 0:
+            print(seeded.stdout)
+            print(seeded.stderr)
+            raise SystemExit("Could not seed the fixture")
+
     os.environ["DATABASE_URL"] = "sqlite:///" + str(work_db).replace("\\", "/")
 
     sys.path.insert(0, str(BACKEND))
@@ -87,9 +111,13 @@ def main() -> int:
         verified_banks = [g for g in ws["bank_groups"] if g["status"] == "verified"]
         check("finished bank periods", len(verified_banks), 1)
         check("finished period has card payment", verified_banks[0]["has_cc_deduction"], True)
-        # 5 bank rows plus the 3 card charges the settlement line covers
-        check("finished period items", verified_banks[0]["transaction_count"], 8)
+        # Bank rows only; the settlement's card charges belong to the card period
+        check("finished period items", verified_banks[0]["transaction_count"], 5)
+        check("finished period money in", verified_banks[0]["money_in"], "8500.00")
+        check("finished period money out", verified_banks[0]["money_out"], "4070.00")
+        check("finished period closing balance", verified_banks[0]["bank_balance"], "152300.00")
         check("finished card statements", len(ws.get("cc_history") or []), 1)
+        check("finished card charged total", (ws["cc_history"][0]).get("charged_total"), "1830.45")
         check("checked through", ws["last_verification_date"], "2026-05-31")
         check("operating accounts", len(ws.get("operating_accounts") or []), 2)
         check("known cards", len(ws.get("credit_cards") or []), 2)

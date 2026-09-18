@@ -3,8 +3,8 @@ import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { api } from '../api/client';
 import type { CcReconcileSession } from '../types';
-import { VerifyTable, VerifySpinner } from './VerifyTable';
-import { VerifyGroupSection, VerifyProgress } from './verifyGroups';
+import { VerifyTransactionTable } from './VerifyTransactionTable';
+import { VerifyGroupSection, VerifyProgress, VerifySpinner } from './verifyGroups';
 import { ConfirmButton } from './ui/ConfirmButton';
 import { FileDropzone } from './ui/FileDropzone';
 import { formatDate } from './ui/States';
@@ -479,7 +479,7 @@ export function CcReconcilePanel() {
               ) : null
             }
           >
-            <VerifyTable
+            <VerifyTransactionTable
               rows={ableTxs}
               pendingRowId={pendingRowId}
               renderActions={(row) =>
@@ -527,7 +527,7 @@ export function CcReconcilePanel() {
               ) : null
             }
           >
-            <VerifyTable
+            <VerifyTransactionTable
               rows={draftTxs}
               pendingRowId={pendingRowId}
               renderActions={(row) => {
@@ -576,7 +576,7 @@ export function CcReconcilePanel() {
               ) : null
             }
           >
-            <VerifyTable
+            <VerifyTransactionTable
               rows={notInExcelTxs}
               pendingRowId={pendingRowId}
               renderActions={(row) =>

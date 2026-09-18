@@ -4,34 +4,13 @@ import { api } from '../api/client';
 import type { VerificationBankGroup, VerificationCcHistoryGroup } from '../types';
 import { BankReconcilePanel } from './BankReconcilePanel';
 import { CcReconcilePanel } from './CcReconcilePanel';
-import { HistorySessionGroups } from './HistorySessionGroups';
+import {
+  VerificationTimeline,
+  type TimelineCard,
+  type TimelinePeriod,
+} from './VerificationTimeline';
 import { Chevron } from './verifyGroups';
 import { formatDate } from './ui/States';
-
-type PastCardStatement = {
-  key: string;
-  label: string;
-  sessionId: string;
-  count: number;
-};
-
-type PastBankPeriod = {
-  key: string;
-  dateLabel: string;
-  sortDate: string;
-  bankSessionId: string;
-  hasCcDeduction: boolean;
-  itemCount: number;
-  cards: PastCardStatement[];
-};
-
-function periodDate(group: {
-  date: string | null;
-  statement_start_date: string | null;
-  statement_end_date: string | null;
-}): string {
-  return group.date || group.statement_end_date || '';
-}
 
 function cardBelongsToBank(
   card: VerificationCcHistoryGroup,
@@ -93,8 +72,6 @@ export function VerificationWorkspace() {
   });
   const [bankOpen, setBankOpen] = useState(true);
   const [cardOpen, setCardOpen] = useState(true);
-  const [openPastKey, setOpenPastKey] = useState<string | null>(null);
-
   const workspace = workspaceQuery.data;
   const bank_groups = workspace?.bank_groups ?? [];
   const cc_history = workspace?.cc_history ?? [];
@@ -121,8 +98,7 @@ export function VerificationWorkspace() {
         g.status === 'verified' && Boolean(g.session_id),
     );
     const usedCc = new Set<string>();
-    const rows: PastBankPeriod[] = verifiedBanks.map((bank) => {
-      const sortDate = periodDate(bank);
+    const rows: TimelinePeriod[] = verifiedBanks.map((bank) => {
       const start = bank.statement_start_date;
       const end = bank.date || bank.statement_end_date;
       let dateLabel = '—';
@@ -133,7 +109,7 @@ export function VerificationWorkspace() {
       } else if (start) {
         dateLabel = formatDate(start);
       }
-      const cards: PastCardStatement[] = [];
+      const cards: TimelineCard[] = [];
       if (bank.has_cc_deduction) {
         for (const card of cc_history) {
           if (!card.session_id || usedCc.has(card.session_id)) continue;
@@ -152,17 +128,37 @@ export function VerificationWorkspace() {
         cards.reduce((sum, card) => sum + card.count, 0);
       return {
         key: `bank:${bank.session_id}`,
-        sortDate,
         dateLabel,
+        startDate: start ?? null,
+        endDate: end ?? null,
         bankSessionId: bank.session_id!,
+        bankAccountId: bank.bank_account_id ?? null,
         hasCcDeduction: Boolean(bank.has_cc_deduction),
         itemCount,
+        moneyIn: bank.money_in ?? null,
+        moneyOut: bank.money_out ?? null,
+        net:
+          bank.money_in != null || bank.money_out != null
+            ? Number(bank.money_in ?? 0) - Number(bank.money_out ?? 0)
+            : null,
+        closingBalance: bank.bank_balance ?? null,
         cards,
       };
     });
-    rows.sort((a, b) => (b.sortDate || '').localeCompare(a.sortDate || ''));
     return rows;
   }, [bank_groups, cc_history]);
+
+  /** Where each account's in-progress statement begins, for gap detection. */
+  const openStarts = useMemo(() => {
+    const out: Record<string, string> = {};
+    for (const group of bank_groups) {
+      if (group.status !== 'unverified') continue;
+      const start = group.statement_start_date;
+      if (!start) continue;
+      out[group.bank_account_id ?? 'default'] = start;
+    }
+    return out;
+  }, [bank_groups]);
 
   if (workspaceQuery.isLoading) {
     return <p className="text-sm muted-text">Loading…</p>;
@@ -216,74 +212,11 @@ export function VerificationWorkspace() {
         ) : null}
       </section>
 
-      <section className="space-y-2">
-        <h3 className="section-title px-1 text-base">Finished periods</h3>
-        {pastPeriods.length === 0 ? (
-          <p className="px-1 text-sm muted-text">No finished periods yet.</p>
-        ) : (
-          pastPeriods.map((period) => {
-            const open = openPastKey === period.key;
-            return (
-              <div
-                key={period.key}
-                className="overflow-hidden rounded-lg border border-slate-200 dark:border-slate-700"
-              >
-                <button
-                  type="button"
-                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-slate-50 dark:hover:bg-slate-900/40"
-                  onClick={() =>
-                    setOpenPastKey((prev) => (prev === period.key ? null : period.key))
-                  }
-                  aria-expanded={open}
-                >
-                  <Chevron open={open} />
-                  <span className="font-medium tabular-nums">{period.dateLabel}</span>
-                  {period.itemCount > 0 ? (
-                    <span className="muted-text tabular-nums">
-                      {period.itemCount} items
-                    </span>
-                  ) : null}
-                  <span className="ml-auto flex flex-wrap items-center gap-1.5">
-                    <span className="badge-bank-verified">Bank</span>
-                    {period.hasCcDeduction ? (
-                      <span className="badge-cc-verified">
-                        Card{period.cards.length ? ` · ${period.cards.length}` : ''}
-                      </span>
-                    ) : null}
-                    <span className="badge-neutral">View only</span>
-                  </span>
-                </button>
-                {open ? (
-                  <div className="space-y-4 border-t border-slate-200 px-3 py-3 dark:border-slate-700">
-                    <div className="space-y-2">
-                      <h4 className="section-title text-sm">Bank statement</h4>
-                      <HistorySessionGroups kind="bank" sessionId={period.bankSessionId} />
-                    </div>
-                    {period.hasCcDeduction ? (
-                      period.cards.length > 0 ? (
-                        period.cards.map((card) => (
-                          <div key={card.key} className="space-y-2">
-                            <h4 className="section-title text-sm">{card.label}</h4>
-                            <HistorySessionGroups kind="cc" sessionId={card.sessionId} />
-                          </div>
-                        ))
-                      ) : (
-                        <p className="px-1 text-xs muted-text">
-                          Bank had a card payment — no finished card period linked yet.
-                        </p>
-                      )
-                    ) : (
-                      <p className="px-1 text-xs muted-text">
-                        No card payment on this bank statement — card check was not needed.
-                      </p>
-                    )}
-                  </div>
-                ) : null}
-              </div>
-            );
-          })
-        )}
-      </section>
+      <VerificationTimeline
+        periods={pastPeriods}
+        openStarts={openStarts}
+        accounts={workspace?.operating_accounts ?? []}
+      />
     </div>
   );
 }

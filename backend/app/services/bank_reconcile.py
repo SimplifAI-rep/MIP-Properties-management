@@ -51,6 +51,31 @@ def _is_cc_settlement_line(description: str | None) -> bool:
     return any(needle.lower() in text for needle in _CC_SETTLEMENT_NEEDLES)
 
 
+def verified_tx_ids(lines: list[dict] | None) -> tuple[set[UUID], set[UUID]]:
+    """(deposit ids, expense ids) this session accepted from the bank statement.
+
+    Settlement members are deliberately left out: those are card charges verified
+    against a card statement, so they belong to that card's period, not this one.
+    """
+    deposits: set[UUID] = set()
+    expenses: set[UUID] = set()
+    for line in lines or []:
+        if line.get("status") not in ("proposed_match", "matched", "added"):
+            continue
+        kind = line.get("proposed_kind")
+        if kind not in ("deposit", "expense"):
+            continue
+        try:
+            uid = UUID(str(line["proposed_tx_id"]))
+        except (TypeError, ValueError, KeyError):
+            continue
+        if kind == "deposit":
+            deposits.add(uid)
+        else:
+            expenses.add(uid)
+    return deposits, expenses
+
+
 def count_cc_deduction_lines(lines: list[dict] | None) -> int:
     """How many bank statement rows are credit-card payment deductions."""
     total = 0
@@ -695,23 +720,7 @@ def session_summary(db: Session, session: BankReconcileSession) -> dict:
     if bank_balance is not None and opening is not None:
         can_complete = unresolved_bank == 0 and unresolved_app == 0 and within is True
 
-    able_dep: set[UUID] = set()
-    able_exp: set[UUID] = set()
-    for line in lines:
-        if line.get("status") not in ("proposed_match", "matched", "added"):
-            continue
-        tx_id = line.get("proposed_tx_id")
-        kind = line.get("proposed_kind")
-        if not tx_id or kind not in ("deposit", "expense"):
-            continue
-        try:
-            uid = UUID(str(tx_id))
-        except (TypeError, ValueError):
-            continue
-        if kind == "deposit":
-            able_dep.add(uid)
-        else:
-            able_exp.add(uid)
+    able_dep, able_exp = verified_tx_ids(lines)
 
     not_excel_dep: set[UUID] = set()
     not_excel_exp: set[UUID] = set()

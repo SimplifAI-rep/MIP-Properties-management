@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { VerifySpinner } from '../VerifyTable';
+import { VerifySpinner } from '../verifyGroups';
 
 /**
  * Two-step button for bulk actions that touch many rows at once.

@@ -739,6 +739,10 @@ class VerificationBankGroup(BaseModel):
     settlement_count: int = 0
     has_cc_deduction: bool = False
     cc_deduction_count: int = 0
+    # Finished periods only — what the period verified, and the closing balance
+    money_in: Decimal | None = None
+    money_out: Decimal | None = None
+    bank_balance: Decimal | None = None
 
 
 class VerificationCcHistoryGroup(BaseModel):
@@ -753,6 +757,7 @@ class VerificationCcHistoryGroup(BaseModel):
     filename: str | None = None
     card_last4: str | None = None
     transaction_count: int = 0
+    charged_total: Decimal | None = None
 
 
 class VerificationCcPoolSummary(BaseModel):

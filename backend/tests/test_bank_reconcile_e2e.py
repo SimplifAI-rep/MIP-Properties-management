@@ -550,11 +550,17 @@ def test_frontend_verification_surface_exists():
     )
     assert "BankReconcilePanel" in workspace
     assert "CcReconcilePanel" in workspace
-    assert "HistorySessionGroups" in workspace
-    assert "Finished periods" in workspace
+    assert "VerificationTimeline" in workspace
     assert "Current period" in workspace
     assert "Bank statement" in workspace
     assert "Credit card" in workspace
+    timeline = (frontend / "components" / "VerificationTimeline.tsx").read_text(
+        encoding="utf-8"
+    )
+    assert "HistorySessionGroups" in timeline
+    assert "Finished periods" in timeline
+    assert "View only" in timeline
+    assert "never checked" in timeline
     bank_panel = (frontend / "components" / "BankReconcilePanel.tsx").read_text(
         encoding="utf-8"
     )

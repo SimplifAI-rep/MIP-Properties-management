@@ -19,6 +19,18 @@ export function Chevron({ open }: { open: boolean }) {
   );
 }
 
+export function VerifySpinner({ label = 'Working…' }: { label?: string }) {
+  return (
+    <span className="inline-flex items-center gap-1.5 text-xs muted-text">
+      <span
+        className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-slate-300 border-t-slate-600 dark:border-slate-600 dark:border-t-slate-300"
+        aria-hidden
+      />
+      {label}
+    </span>
+  );
+}
+
 /** Thin progress bar for "how much of this statement is handled". */
 export function VerifyProgress({ handled, total }: { handled: number; total: number }) {
   if (total <= 0) return null;

@@ -761,6 +761,10 @@ export interface VerificationBankGroup {
   settlement_count: number;
   has_cc_deduction?: boolean;
   cc_deduction_count?: number;
+  /** Finished periods only. */
+  money_in?: string | null;
+  money_out?: string | null;
+  bank_balance?: string | null;
 }
 
 export interface VerificationCcHistoryGroup {
@@ -775,6 +779,7 @@ export interface VerificationCcHistoryGroup {
   filename: string | null;
   card_last4: string | null;
   transaction_count: number;
+  charged_total?: string | null;
 }
 
 export interface VerificationOperatingAccount {

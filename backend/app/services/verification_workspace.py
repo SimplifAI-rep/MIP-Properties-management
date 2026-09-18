@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import date
+from decimal import Decimal
 from uuid import UUID
 
 from sqlalchemy import and_, func, or_, select
@@ -15,7 +16,7 @@ from app.models.deposit import Deposit
 from app.models.expense import Expense
 from app.models.property import Property
 from app.services.bank_settings import get_or_create_settings
-from app.services.bank_reconcile import count_cc_deduction_lines
+from app.services.bank_reconcile import count_cc_deduction_lines, verified_tx_ids
 from app.services.deposit_query import deposit_to_read
 from app.services.expense_query import expense_to_read
 from app.services.source_file import load_batch_filenames, load_upload_filenames
@@ -83,6 +84,22 @@ def _open_period_filters(
         dep.append(Deposit.transaction_date <= date_to)
         exp.append(Expense.transaction_date <= date_to)
     return dep, exp
+
+
+def _sum_amounts(
+    db: Session, *, deposit_ids: set[UUID], expense_ids: set[UUID]
+) -> tuple[Decimal, Decimal]:
+    """(money in, money out) over the rows a period verified."""
+
+    def total(model, ids: set[UUID]) -> Decimal:
+        if not ids:
+            return Decimal("0")
+        raw = db.scalar(
+            select(func.coalesce(func.sum(model.amount), 0)).where(model.id.in_(ids))
+        )
+        return Decimal(str(raw or 0))
+
+    return total(Deposit, deposit_ids), total(Expense, expense_ids)
 
 
 def _count_open_bank_scoped(
@@ -168,7 +185,13 @@ def list_bank_groups(db: Session) -> list[dict]:
     ).all()
 
     for session in completed:
-        dep_ids, exp_ids, settle_ids = _session_linked_ids(session)
+        _, _, settle_ids = _session_linked_ids(session)
+        # Same rows the session detail shows as verified, so the overview totals
+        # and the expanded summary strip can never disagree.
+        dep_ids, exp_ids = verified_tx_ids(session.lines_json)
+        money_in, money_out = _sum_amounts(
+            db, deposit_ids=dep_ids, expense_ids=exp_ids
+        )
         end = session.statement_end_date
         cc_n = count_cc_deduction_lines(session.lines_json)
         groups.append(
@@ -192,6 +215,9 @@ def list_bank_groups(db: Session) -> list[dict]:
                 "settlement_count": len(settle_ids),
                 "has_cc_deduction": cc_n > 0,
                 "cc_deduction_count": cc_n,
+                "money_in": money_in,
+                "money_out": money_out,
+                "bank_balance": session.bank_balance,
             }
         )
 
@@ -439,10 +465,15 @@ def list_cc_history_groups(db: Session) -> list[dict]:
     ).all()
     groups: list[dict] = []
     for session in completed:
-        matched = 0
+        matched_ids: set[UUID] = set()
         for line in session.lines_json or []:
-            if line.get("status") in ("matched", "added") and line.get("proposed_tx_id"):
-                matched += 1
+            if line.get("status") not in ("matched", "added"):
+                continue
+            try:
+                matched_ids.add(UUID(str(line["proposed_tx_id"])))
+            except (TypeError, ValueError, KeyError):
+                continue
+        _, charged = _sum_amounts(db, deposit_ids=set(), expense_ids=matched_ids)
         end = session.statement_end_date
         title = (
             f"Verified through {end.isoformat()}"
@@ -465,7 +496,8 @@ def list_cc_history_groups(db: Session) -> list[dict]:
                 "session_id": str(session.id),
                 "filename": session.filename,
                 "card_last4": session.card_last4,
-                "transaction_count": matched,
+                "transaction_count": len(matched_ids),
+                "charged_total": charged,
             }
         )
     return groups

@@ -343,15 +343,22 @@ class ClientDataImportService:
         self.db.expire_all()
         gc.collect()
 
-    def import_all(self, *, include_bank: bool = True, include_credit_cards: bool = True) -> ImportStats:
+    def import_all(
+        self,
+        *,
+        include_bank: bool = True,
+        include_credit_cards: bool = True,
+        include_management: bool = True,
+    ) -> ImportStats:
         self._load_existing_keys()
         self._ensure_company_owner_and_buffer()
         self._report("Importing client list…")
         self._import_client_list()
         self._checkpoint()
-        self._report("Importing management ledger…")
-        self._import_management_workbook()
-        self._checkpoint()
+        if include_management:
+            self._report("Importing management ledger…")
+            self._import_management_workbook()
+            self._checkpoint()
         if include_bank:
             self._report("Importing bank statement…")
             self._import_bank_statement()
@@ -1718,9 +1725,17 @@ def import_client_data(
     db: Session,
     data_dir: Path | None = None,
     progress: ProgressCallback | None = None,
+    *,
+    include_bank: bool = True,
+    include_credit_cards: bool = True,
+    include_management: bool = True,
 ) -> ImportStats:
     service = ClientDataImportService(db, data_dir=data_dir, progress=progress)
-    return service.import_all()
+    return service.import_all(
+        include_bank=include_bank,
+        include_credit_cards=include_credit_cards,
+        include_management=include_management,
+    )
 
 
 def build_skip_report_excel(stats: ImportStats) -> bytes:

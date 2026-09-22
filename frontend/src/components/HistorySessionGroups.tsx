@@ -4,6 +4,7 @@ import { api } from '../api/client';
 import type { BankReconcileSession, CcReconcileSession } from '../types';
 import { VerifyTransactionTable } from './VerifyTransactionTable';
 import { VerifyGroupSection } from './verifyGroups';
+import { PeriodBalanceCheck } from './PeriodBalanceCheck';
 import { MoneyValue } from './ui/MoneyValue';
 import { bankDraftToUnified, ccDraftToUnified, txsFromApi } from '../utils/verifyTxDisplay';
 import type { UnifiedTransaction } from '../utils/unifiedTransaction';
@@ -179,31 +180,21 @@ function BankHistoryGroups({ session }: { session: BankReconcileSession }) {
     .filter((line) => line.status === 'ignored')
     .map(bankDraftToUnified);
 
-  const moneyIn = sumBy(verified, 'deposit');
-  const moneyOut = sumBy(verified, 'expense');
-
   return (
     <div className="space-y-3">
-      <dl className="grid grid-cols-2 gap-3 rounded-lg border border-slate-200 p-3 sm:grid-cols-4 dark:border-slate-700">
-        <Stat label="Money in" value={<MoneyValue amount={moneyIn} />} />
-        <Stat label="Money out" value={<MoneyValue amount={asOutflow(moneyOut)} />} />
-        <Stat
-          label="Net"
-          value={<MoneyValue amount={moneyIn - moneyOut} />}
-          hint="Verified in this period"
-        />
-        <Stat
-          label="Closing balance"
-          value={
-            session.bank_balance != null ? (
-              <MoneyValue amount={session.bank_balance} signed={false} />
-            ) : (
-              '—'
-            )
-          }
-          hint={session.filename ?? undefined}
-        />
-      </dl>
+      <PeriodBalanceCheck
+        check={{
+          openingBalance: session.opening_balance,
+          bankBalance: session.bank_balance,
+          verifiedNet: session.verified_net,
+          gapVerified: session.gap_verified,
+          withinTolerance: session.within_tolerance_verified,
+          bankIn: session.bank_in,
+          bankOut: session.bank_out,
+          appIn: session.app_in,
+          appOut: session.app_out,
+        }}
+      />
 
       <VerifiedTransactions rows={verified} />
 

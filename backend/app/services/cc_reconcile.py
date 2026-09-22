@@ -19,6 +19,7 @@ from app.models.cc_reconcile_session import CcReconcileSession
 from app.models.expense import Expense
 from app.models.property import Property
 from app.services.account_scope import ensure_cc_account
+from app.services.bank_reconcile import cc_deferral_allows_clause
 
 
 def _parse_amount(value: Any) -> Decimal | None:
@@ -169,10 +170,24 @@ def _cc_pending_filters(
         Expense.amount > 0,
         Expense.transaction_date.is_not(None),
     ]
+    allow = cc_deferral_allows_clause(date_from)
+    if allow is not None:
+        clauses.append(allow)
+    date_window: list = []
     if date_from is not None:
-        clauses.append(Expense.transaction_date >= date_from)
+        date_window.append(Expense.transaction_date >= date_from)
     if date_to is not None:
-        clauses.append(Expense.transaction_date <= date_to)
+        date_window.append(Expense.transaction_date <= date_to)
+    released = None
+    if date_from is not None:
+        released = and_(
+            Expense.cc_deferred_until.is_not(None),
+            Expense.cc_deferred_until < date_from,
+        )
+    if date_window and released is not None:
+        clauses.append(or_(and_(*date_window), released))
+    elif date_window:
+        clauses.extend(date_window)
     # Scope to this card, but still allow unassigned (legacy) card expenses to match
     if card_last4 and card_last4 != "unknown":
         clauses.append(
@@ -461,6 +476,28 @@ def apply_actions(db: Session, session: CcReconcileSession, actions: list[dict])
             reason = (action.get("reason") or "").strip() or "Ignored"
             app["status"] = "ignored"
             app["ignore_reason"] = reason
+
+        elif kind == "defer_cc_to_next":
+            until = session.statement_end_date or session.statement_start_date
+            if until is None:
+                raise ValueError("Cannot push card charges without a period end date")
+            requested: list[str] = []
+            if action.get("tx_id"):
+                requested.append(str(action["tx_id"]))
+            for mid in action.get("member_ids") or []:
+                requested.append(str(mid))
+            if not requested:
+                requested = [
+                    str(row["id"])
+                    for row in apps.values()
+                    if row.get("status") == "unmatched"
+                ]
+            for raw in requested:
+                row = db.get(Expense, UUID(str(raw)))
+                if row is None or row.payment_method != "credit_card":
+                    continue
+                row.cc_deferred_until = until
+                apps.pop(f"expense:{row.id}", None)
 
         elif kind == "add_from_cc":
             fp = action["fingerprint"]

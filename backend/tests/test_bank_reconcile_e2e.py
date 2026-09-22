@@ -545,6 +545,8 @@ def test_frontend_verification_surface_exists():
     assert "Bank balance" in page
     assert "Checked through" in page
     assert "Still to check" in page
+    assert "PeriodBalanceCheck" in page
+    assert "Last finished period" in page
     workspace = (frontend / "components" / "VerificationWorkspace.tsx").read_text(
         encoding="utf-8"
     )
@@ -571,11 +573,36 @@ def test_frontend_verification_surface_exists():
     assert "Confirm all found" in bank_panel
     assert "Upload bank statement" in bank_panel
     assert "Card payments" in bank_panel
+    assert "Push to next cycle" in bank_panel
+    assert "not in this payment" in bank_panel
+    assert "PeriodBalanceCheck" in bank_panel
+    assert "Finish anyway" in bank_panel
+    assert "balanceMismatchCopy" in bank_panel
+    history = (frontend / "components" / "HistorySessionGroups.tsx").read_text(
+        encoding="utf-8"
+    )
+    assert "PeriodBalanceCheck" in history
+    assert "PeriodBalanceCheck" in (
+        frontend / "components" / "PeriodBalanceCheck.tsx"
+    ).read_text(encoding="utf-8")
+    assert "Totals match" in (
+        frontend / "components" / "PeriodBalanceCheck.tsx"
+    ).read_text(encoding="utf-8")
+    assert "Bank in" in (
+        frontend / "components" / "PeriodBalanceCheck.tsx"
+    ).read_text(encoding="utf-8")
+    assert "App in" in (
+        frontend / "components" / "PeriodBalanceCheck.tsx"
+    ).read_text(encoding="utf-8")
+    assert "PeriodBalanceBadge" in timeline
+    assert "Totals match" in timeline
+    assert "Totals off" in timeline
     cc_panel = (frontend / "components" / "CcReconcilePanel.tsx").read_text(
         encoding="utf-8"
     )
     assert "Found on statement" in cc_panel
     assert "In the app, not on the statement" in cc_panel
+    assert "Push to next cycle" in cc_panel
     assert "On the statement, not in the app" in cc_panel
     assert "Finish period" in cc_panel
     dash = (frontend / "pages" / "DashboardPage.tsx").read_text(encoding="utf-8")

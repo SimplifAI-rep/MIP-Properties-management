@@ -318,17 +318,16 @@ export function CcReconcilePanel() {
     );
   }
 
-  function ignoreApp(txId: string) {
-    runActions(null, txId, [{ action: 'ignore_app', tx_id: txId }]);
-  }
-
-  function ignoreAllApp() {
+  function deferApp(txId?: string) {
     const pending = notInExcelTxs.filter((tx) => !ignoredAppIds.has(tx.id));
-    runActions(
-      'ignore-app',
-      null,
-      pending.map((tx) => ({ action: 'ignore_app' as const, tx_id: tx.id })),
-    );
+    runActions(txId ? null : 'defer-cc', txId ?? null, [
+      {
+        action: 'defer_cc_to_next' as const,
+        ...(txId
+          ? { tx_id: txId }
+          : { member_ids: pending.map((tx) => tx.id) }),
+      },
+    ]);
   }
 
   function confirmOne(tx: UnifiedTransaction) {
@@ -559,7 +558,7 @@ export function CcReconcilePanel() {
 
           <VerifyGroupSection
             title="In the app, not on the statement"
-            subtitle="Ignore if OK"
+            subtitle="Push to the next cycle — not in this card payment, and not counted in this period's totals"
             count={notInExcelTxs.length}
             tone="warn"
             defaultOpen
@@ -567,11 +566,11 @@ export function CcReconcilePanel() {
             actions={
               pendingMissingCount > 0 ? (
                 <ConfirmButton
-                  label={`Ignore all (${pendingMissingCount})`}
-                  confirmLabel={`Ignore ${pendingMissingCount}`}
+                  label={`Push to next cycle (${pendingMissingCount})`}
+                  confirmLabel={`Push ${pendingMissingCount}`}
                   disabled={busy}
-                  pending={pendingBulk === 'ignore-app'}
-                  onConfirm={ignoreAllApp}
+                  pending={pendingBulk === 'defer-cc'}
+                  onConfirm={() => deferApp()}
                 />
               ) : null
             }
@@ -587,9 +586,9 @@ export function CcReconcilePanel() {
                     type="button"
                     className="btn-secondary text-xs"
                     disabled={busy}
-                    onClick={() => ignoreApp(row.id)}
+                    onClick={() => deferApp(row.id)}
                   >
-                    Ignore
+                    Push to next cycle
                   </button>
                 )
               }

@@ -16,7 +16,11 @@ from app.models.deposit import Deposit
 from app.models.expense import Expense
 from app.models.property import Property
 from app.services.bank_settings import get_or_create_settings
-from app.services.bank_reconcile import count_cc_deduction_lines, verified_tx_ids
+from app.services.bank_reconcile import (
+    count_cc_deduction_lines,
+    statement_in_out,
+    verified_tx_ids,
+)
 from app.services.deposit_query import deposit_to_read
 from app.services.expense_query import expense_to_read
 from app.services.source_file import load_batch_filenames, load_upload_filenames
@@ -192,6 +196,21 @@ def list_bank_groups(db: Session) -> list[dict]:
         money_in, money_out = _sum_amounts(
             db, deposit_ids=dep_ids, expense_ids=exp_ids
         )
+        bank_in, bank_out = statement_in_out(session.lines_json)
+        opening = session.opening_balance
+        closing = session.bank_balance
+        tolerance = session.gap_tolerance_amount or Decimal("0.01")
+        period_net = money_in - money_out
+        gap_verified = None
+        within = None
+        if closing is not None and opening is not None:
+            gap_verified = closing - (opening + period_net)
+            flow_gap = (bank_in - bank_out) - period_net
+            within = abs(gap_verified) <= tolerance and abs(flow_gap) <= tolerance
+        else:
+            flow_gap = (bank_in - bank_out) - period_net
+            gap_verified = flow_gap
+            within = abs(flow_gap) <= tolerance
         end = session.statement_end_date
         cc_n = count_cc_deduction_lines(session.lines_json)
         groups.append(
@@ -217,7 +236,13 @@ def list_bank_groups(db: Session) -> list[dict]:
                 "cc_deduction_count": cc_n,
                 "money_in": money_in,
                 "money_out": money_out,
+                "bank_in": bank_in,
+                "bank_out": bank_out,
                 "bank_balance": session.bank_balance,
+                "opening_balance": opening,
+                "verified_net": period_net,
+                "gap_verified": gap_verified,
+                "within_tolerance": within,
             }
         )
 

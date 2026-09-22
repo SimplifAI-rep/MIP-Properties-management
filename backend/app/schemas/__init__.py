@@ -658,6 +658,7 @@ class BankReconcileAction(BaseModel):
         "ignore_bank",
         "ignore_app",
         "add_from_bank",
+        "defer_cc_to_next",
     ]
     fingerprint: str | None = None
     kind: Literal["deposit", "expense"] | None = None
@@ -684,6 +685,10 @@ class BankReconcileSessionResponse(BaseModel):
     gap_tolerance_amount: str
     verified_net: str
     all_scoped_net: str
+    bank_in: str | None = None
+    bank_out: str | None = None
+    app_in: str | None = None
+    app_out: str | None = None
     gap_verified: str | None = None
     within_tolerance_verified: bool | None = None
     counts: dict
@@ -694,14 +699,22 @@ class BankReconcileSessionResponse(BaseModel):
     unmatched_app: list[dict]
     able_txs: list[TransactionRead] = []
     not_in_excel_txs: list[TransactionRead] = []
+    leftover_cc_txs: list[TransactionRead] = []
 
 
 class CcReconcileAction(BaseModel):
-    action: Literal["confirm_match", "ignore_cc", "ignore_app", "add_from_cc"]
+    action: Literal[
+        "confirm_match",
+        "ignore_cc",
+        "ignore_app",
+        "add_from_cc",
+        "defer_cc_to_next",
+    ]
     fingerprint: str | None = None
     tx_id: UUID | None = None
     reason: str | None = None
     property_id: UUID | None = None
+    member_ids: list[UUID] | None = None
 
 
 class CcReconcileActionsRequest(BaseModel):
@@ -742,7 +755,13 @@ class VerificationBankGroup(BaseModel):
     # Finished periods only — what the period verified, and the closing balance
     money_in: Decimal | None = None
     money_out: Decimal | None = None
+    bank_in: Decimal | None = None
+    bank_out: Decimal | None = None
     bank_balance: Decimal | None = None
+    opening_balance: Decimal | None = None
+    verified_net: Decimal | None = None
+    gap_verified: Decimal | None = None
+    within_tolerance: bool | None = None
 
 
 class VerificationCcHistoryGroup(BaseModel):

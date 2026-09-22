@@ -1,9 +1,10 @@
 import { useMemo, useState } from 'react';
 import type { VerificationOperatingAccount } from '../types';
 import { HistorySessionGroups } from './HistorySessionGroups';
+import { PeriodBalanceBadge, periodBalanceState } from './PeriodBalanceCheck';
 import { Chevron } from './verifyGroups';
 import { MoneyValue } from './ui/MoneyValue';
-import { formatDate } from './ui/States';
+import { formatCurrency, formatDate } from './ui/States';
 
 /**
  * Finished periods as a vertical timeline. Periods tile the calendar — each one
@@ -30,7 +31,13 @@ export type TimelinePeriod = {
   moneyIn: string | null;
   moneyOut: string | null;
   net: number | null;
+  bankIn: string | null;
+  bankOut: string | null;
   closingBalance: string | null;
+  openingBalance: string | null;
+  verifiedNet: string | null;
+  gapVerified: string | null;
+  withinTolerance: boolean | null;
   cards: TimelineCard[];
 };
 
@@ -193,6 +200,32 @@ export function VerificationTimeline({
 
             const period = row.period;
             const expanded = openKey === period.key;
+            const balanceCheck = {
+              openingBalance: period.openingBalance,
+              bankBalance: period.closingBalance,
+              verifiedNet: period.verifiedNet,
+              gapVerified: period.gapVerified,
+              withinTolerance: period.withinTolerance,
+              bankIn: period.bankIn,
+              bankOut: period.bankOut,
+              appIn: period.moneyIn,
+              appOut: period.moneyOut,
+            };
+            const totals = periodBalanceState(balanceCheck);
+            const rowTone =
+              totals === 'match'
+                ? 'border-emerald-300 bg-emerald-50/70 dark:border-emerald-700/60 dark:bg-emerald-950/25'
+                : totals === 'mismatch'
+                  ? 'border-amber-300 bg-amber-50/70 dark:border-amber-700/60 dark:bg-amber-950/25'
+                  : 'border-slate-200 dark:border-slate-700';
+            const dotTone =
+              totals === 'match'
+                ? expanded
+                  ? 'bg-emerald-600'
+                  : 'bg-emerald-500'
+                : totals === 'mismatch'
+                  ? 'bg-amber-500'
+                  : 'bg-slate-400';
             return (
               <li key={row.key} className="relative pb-2 pl-7">
                 {single ? null : (
@@ -203,12 +236,10 @@ export function VerificationTimeline({
                   />
                 )}
                 <span
-                  className={`absolute left-[4px] top-4 h-3 w-3 rounded-full ring-2 ring-white dark:ring-slate-900 ${
-                    expanded ? 'bg-emerald-600' : 'bg-emerald-500'
-                  }`}
+                  className={`absolute left-[4px] top-4 h-3 w-3 rounded-full ring-2 ring-white dark:ring-slate-900 ${dotTone}`}
                   aria-hidden
                 />
-                <div className="overflow-hidden rounded-lg border border-slate-200 dark:border-slate-700">
+                <div className={`overflow-hidden rounded-lg border ${rowTone}`}>
                   <button
                     type="button"
                     className="flex w-full items-start gap-2 px-3 py-2 text-left text-sm hover:bg-slate-50 dark:hover:bg-slate-900/40"
@@ -216,6 +247,13 @@ export function VerificationTimeline({
                       setOpenKey((prev) => (prev === period.key ? null : period.key))
                     }
                     aria-expanded={expanded}
+                    aria-label={
+                      totals === 'match'
+                        ? `${period.dateLabel}, totals match`
+                        : totals === 'mismatch'
+                          ? `${period.dateLabel}, totals off`
+                          : period.dateLabel
+                    }
                   >
                     <span className="min-w-0 flex-1">
                       <span className="flex flex-wrap items-center gap-x-2">
@@ -234,34 +272,77 @@ export function VerificationTimeline({
                             )?.label ?? 'Operating account'}
                           </span>
                         ) : null}
+                        {totals === 'match' ? (
+                          <span className="text-xs font-medium text-emerald-700 dark:text-emerald-300">
+                            Totals match
+                          </span>
+                        ) : totals === 'mismatch' ? (
+                          <span className="text-xs font-medium text-amber-700 dark:text-amber-300">
+                            Totals off
+                            {period.gapVerified != null
+                              ? ` · ${formatCurrency(period.gapVerified)}`
+                              : ''}
+                          </span>
+                        ) : null}
                       </span>
-                      {period.net != null || period.closingBalance != null ? (
-                        <span className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs muted-text tabular-nums">
-                          {period.moneyIn != null ? (
+                      {period.net != null ||
+                      period.closingBalance != null ||
+                      period.bankIn != null ? (
+                        <span className="mt-0.5 flex flex-col gap-0.5 text-xs muted-text tabular-nums">
+                          <span className="flex flex-wrap items-center gap-x-3 gap-y-0.5">
                             <span>
-                              In <MoneyValue amount={period.moneyIn} signed={false} />
+                              Bank in{' '}
+                              <MoneyValue amount={period.bankIn ?? 0} signed={false} />
                             </span>
-                          ) : null}
-                          {period.moneyOut != null ? (
                             <span>
-                              Out <MoneyValue amount={period.moneyOut} signed={false} />
+                              Bank out{' '}
+                              <MoneyValue
+                                amount={
+                                  Number(period.bankOut ?? 0) === 0
+                                    ? 0
+                                    : -Math.abs(Number(period.bankOut ?? 0))
+                                }
+                              />
                             </span>
-                          ) : null}
-                          {period.net != null ? (
                             <span>
-                              Net <MoneyValue amount={period.net} />
+                              Bank net{' '}
+                              <MoneyValue
+                                amount={
+                                  Number(period.bankIn ?? 0) - Number(period.bankOut ?? 0)
+                                }
+                              />
                             </span>
-                          ) : null}
-                          {period.closingBalance != null ? (
+                          </span>
+                          <span className="flex flex-wrap items-center gap-x-3 gap-y-0.5">
                             <span>
-                              Closing{' '}
-                              <MoneyValue amount={period.closingBalance} signed={false} />
+                              App in{' '}
+                              <MoneyValue amount={period.moneyIn ?? 0} signed={false} />
                             </span>
-                          ) : null}
+                            <span>
+                              App out{' '}
+                              <MoneyValue
+                                amount={
+                                  Number(period.moneyOut ?? 0) === 0
+                                    ? 0
+                                    : -Math.abs(Number(period.moneyOut ?? 0))
+                                }
+                              />
+                            </span>
+                            <span>
+                              App net <MoneyValue amount={period.net ?? 0} />
+                            </span>
+                            {period.closingBalance != null ? (
+                              <span>
+                                Closing{' '}
+                                <MoneyValue amount={period.closingBalance} signed={false} />
+                              </span>
+                            ) : null}
+                          </span>
                         </span>
                       ) : null}
                     </span>
                     <span className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
+                      <PeriodBalanceBadge check={balanceCheck} />
                       <span className="badge-bank-verified">Bank</span>
                       {period.hasCcDeduction ? (
                         <span className="badge-cc-verified">

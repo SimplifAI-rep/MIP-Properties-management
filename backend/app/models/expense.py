@@ -123,5 +123,7 @@ class Expense(Base, TimestampMixin):
     cc_settlement_group_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("cc_settlement_groups.id"), nullable=True
     )
+    # Pushed to the next verification cycle — skip until the next period starts.
+    cc_deferred_until: Mapped[date | None] = mapped_column(Date, nullable=True)
 
     property: Mapped["Property"] = relationship(back_populates="expenses")

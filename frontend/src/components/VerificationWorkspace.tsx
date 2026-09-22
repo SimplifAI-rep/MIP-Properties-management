@@ -141,7 +141,13 @@ export function VerificationWorkspace() {
           bank.money_in != null || bank.money_out != null
             ? Number(bank.money_in ?? 0) - Number(bank.money_out ?? 0)
             : null,
+        bankIn: bank.bank_in ?? null,
+        bankOut: bank.bank_out ?? null,
         closingBalance: bank.bank_balance ?? null,
+        openingBalance: bank.opening_balance ?? null,
+        verifiedNet: bank.verified_net ?? null,
+        gapVerified: bank.gap_verified ?? null,
+        withinTolerance: bank.within_tolerance ?? null,
         cards,
       };
     });

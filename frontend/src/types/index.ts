@@ -640,7 +640,8 @@ export interface BankReconcileAction {
     | 'confirm_settlement'
     | 'ignore_bank'
     | 'ignore_app'
-    | 'add_from_bank';
+    | 'add_from_bank'
+    | 'defer_cc_to_next';
   fingerprint?: string;
   kind?: 'deposit' | 'expense';
   tx_id?: string;
@@ -695,6 +696,10 @@ export interface BankReconcileSession {
   gap_tolerance_amount: string;
   verified_net: string;
   all_scoped_net: string;
+  bank_in?: string | null;
+  bank_out?: string | null;
+  app_in?: string | null;
+  app_out?: string | null;
   gap_verified: string | null;
   within_tolerance_verified: boolean | null;
   counts: Record<string, number>;
@@ -705,14 +710,21 @@ export interface BankReconcileSession {
   unmatched_app: BankReconcileAppRow[];
   able_txs?: Record<string, unknown>[];
   not_in_excel_txs?: Record<string, unknown>[];
+  leftover_cc_txs?: Record<string, unknown>[];
 }
 
 export interface CcReconcileAction {
-  action: 'confirm_match' | 'ignore_cc' | 'ignore_app' | 'add_from_cc';
+  action:
+    | 'confirm_match'
+    | 'ignore_cc'
+    | 'ignore_app'
+    | 'add_from_cc'
+    | 'defer_cc_to_next';
   fingerprint?: string;
   tx_id?: string;
   reason?: string;
   property_id?: string;
+  member_ids?: string[];
 }
 
 export interface CcReconcileLine {
@@ -764,7 +776,13 @@ export interface VerificationBankGroup {
   /** Finished periods only. */
   money_in?: string | null;
   money_out?: string | null;
+  bank_in?: string | null;
+  bank_out?: string | null;
   bank_balance?: string | null;
+  opening_balance?: string | null;
+  verified_net?: string | null;
+  gap_verified?: string | null;
+  within_tolerance?: boolean | null;
 }
 
 export interface VerificationCcHistoryGroup {

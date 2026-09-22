@@ -116,6 +116,9 @@ def main() -> int:
         check("finished period money in", verified_banks[0]["money_in"], "8500.00")
         check("finished period money out", verified_banks[0]["money_out"], "4070.00")
         check("finished period closing balance", verified_banks[0]["bank_balance"], "152300.00")
+        check("finished period opening", verified_banks[0]["opening_balance"], "140000.00")
+        check("finished period gap computed", verified_banks[0]["gap_verified"] is not None, True)
+        check("finished period within tolerance", verified_banks[0]["within_tolerance"], True)
         check("finished card statements", len(ws.get("cc_history") or []), 1)
         check("finished card charged total", (ws["cc_history"][0]).get("charged_total"), "1830.45")
         check("checked through", ws["last_verification_date"], "2026-05-31")
@@ -128,6 +131,8 @@ def main() -> int:
         check("skipped statement lines", line_counts(past).get("ignored", 0), 1)
         check("app rows not on statement", len(past["not_in_excel_txs"]), 1)
         check("closing balance present", past["bank_balance"] is not None, True)
+        check("opening present", past["opening_balance"] is not None, True)
+        check("gap computed", past["gap_verified"] is not None, True)
 
         print("3. Upload June-July bank statement")
         created = upload(client, BANK_URL, BANK_XLSX)

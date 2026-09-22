@@ -10,6 +10,7 @@ import {
   VerifyRowTable,
   VerifySpinner,
 } from './verifyGroups';
+import { PeriodBalanceCheck, balanceMismatchCopy } from './PeriodBalanceCheck';
 import { ConfirmButton } from './ui/ConfirmButton';
 import { FileDropzone } from './ui/FileDropzone';
 import { formatCurrency, formatDate } from './ui/States';
@@ -274,6 +275,9 @@ export function BankReconcilePanel() {
   const notInExcelTxs: UnifiedTransaction[] = txsFromApi(
     activeSession?.not_in_excel_txs as Record<string, unknown>[] | undefined,
   );
+  const leftoverCcTxs: UnifiedTransaction[] = txsFromApi(
+    activeSession?.leftover_cc_txs as Record<string, unknown>[] | undefined,
+  );
   const draftTxs: UnifiedTransaction[] = notInBankLines.map(bankDraftToUnified);
 
   const counts = activeSession?.counts ?? {};
@@ -395,6 +399,15 @@ export function BankReconcilePanel() {
     );
   }
 
+  function deferLeftoverCc(txId?: string) {
+    runActions(txId ? null : 'defer-cc', txId ?? null, [
+      {
+        action: 'defer_cc_to_next' as const,
+        ...(txId ? { tx_id: txId } : {}),
+      },
+    ]);
+  }
+
   function confirmOne(tx: UnifiedTransaction) {
     const match = fingerprintByTxId.get(tx.id);
     if (!match) return;
@@ -417,18 +430,14 @@ export function BankReconcilePanel() {
     if (remainingItems > 0) {
       completeBlockers.push(`Still ${remainingItems} to handle`);
     }
-    if (
-      activeSession.gap_verified != null &&
-      activeSession.within_tolerance_verified === false
-    ) {
-      completeBlockers.push(
-        `Balance off by ${formatCurrency(activeSession.gap_verified)} — ask an admin`,
-      );
-    }
     if (completeBlockers.length === 0) {
       completeBlockers.push('Not ready to finish yet');
     }
   }
+  const gapOff =
+    Boolean(activeSession) &&
+    activeSession!.gap_verified != null &&
+    activeSession!.within_tolerance_verified === false;
 
   const showUpload = !activeSession && !sessionQuery.isLoading;
 
@@ -507,6 +516,20 @@ export function BankReconcilePanel() {
             </p>
             {actionsMutation.isPending ? <VerifySpinner label="Saving…" /> : null}
           </div>
+
+          <PeriodBalanceCheck
+            check={{
+              openingBalance: activeSession.opening_balance,
+              bankBalance: activeSession.bank_balance,
+              verifiedNet: activeSession.verified_net,
+              gapVerified: activeSession.gap_verified,
+              withinTolerance: activeSession.within_tolerance_verified,
+              bankIn: activeSession.bank_in,
+              bankOut: activeSession.bank_out,
+              appIn: activeSession.app_in,
+              appOut: activeSession.app_out,
+            }}
+          />
 
           <VerifyProgress handled={handledItems} total={totalItems} />
 
@@ -651,6 +674,42 @@ export function BankReconcilePanel() {
             />
           </VerifyGroupSection>
 
+          {leftoverCcTxs.length > 0 ? (
+            <VerifyGroupSection
+              title="Card charges not in this payment"
+              subtitle="Already in the app — push to the next cycle. Not counted in this period's totals."
+              count={leftoverCcTxs.length}
+              tone="warn"
+              defaultOpen
+              actions={
+                leftoverCcTxs.length > 0 ? (
+                  <ConfirmButton
+                    label={`Push to next cycle (${leftoverCcTxs.length})`}
+                    confirmLabel={`Push ${leftoverCcTxs.length}`}
+                    disabled={busy}
+                    pending={pendingBulk === 'defer-cc'}
+                    onConfirm={() => deferLeftoverCc()}
+                  />
+                ) : null
+              }
+            >
+              <VerifyTransactionTable
+                rows={leftoverCcTxs}
+                pendingRowId={pendingRowId}
+                renderActions={(row) => (
+                  <button
+                    type="button"
+                    className="btn-secondary text-xs"
+                    disabled={busy}
+                    onClick={() => deferLeftoverCc(row.id)}
+                  >
+                    Push to next cycle
+                  </button>
+                )}
+              />
+            </VerifyGroupSection>
+          ) : null}
+
           {proposedSettlements.length > 0 ? (
             <VerifyGroupSection
               title="Card payments on the bank statement"
@@ -725,19 +784,35 @@ export function BankReconcilePanel() {
               <p className="text-sm text-amber-700 dark:text-amber-300">
                 {completeBlockers.join(' · ')}
               </p>
+            ) : gapOff ? (
+              <p className="text-sm text-amber-700 dark:text-amber-300">
+                Everything is handled — {balanceMismatchCopy(activeSession.gap_verified)}.
+                Confirm to finish anyway.
+              </p>
             ) : (
               <p className="text-sm text-emerald-700 dark:text-emerald-300">
                 Everything is handled — ready to finish.
               </p>
             )}
-            <button
-              type="button"
-              className="btn-primary"
-              disabled={busy || !activeSession.can_complete}
-              onClick={() => completeMutation.mutate(activeSession.id)}
-            >
-              {completeMutation.isPending ? 'Finishing…' : 'Finish period'}
-            </button>
+            {gapOff && activeSession.can_complete ? (
+              <ConfirmButton
+                label="Finish anyway"
+                confirmLabel="Yes, finish anyway"
+                className="btn-primary"
+                disabled={busy}
+                pending={completeMutation.isPending}
+                onConfirm={() => completeMutation.mutate(activeSession.id)}
+              />
+            ) : (
+              <button
+                type="button"
+                className="btn-primary"
+                disabled={busy || !activeSession.can_complete}
+                onClick={() => completeMutation.mutate(activeSession.id)}
+              >
+                {completeMutation.isPending ? 'Finishing…' : 'Finish period'}
+              </button>
+            )}
           </div>
         </div>
       ) : null}

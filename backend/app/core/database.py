@@ -339,6 +339,7 @@ def _ensure_sqlite_bank_reconcile_columns() -> None:
         "cc_bank_confirmed_at": "DATETIME",
         "cc_settlement_group_id": "CHAR(36)",
         "card_last4": "VARCHAR(8)",
+        "cc_deferred_until": "DATE",
     }
 
     with engine.begin() as conn:

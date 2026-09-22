@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import copy
 from datetime import date, datetime, timedelta, timezone
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from uuid import UUID
 
 from sqlalchemy import and_, or_, select
@@ -74,6 +74,34 @@ def verified_tx_ids(lines: list[dict] | None) -> tuple[set[UUID], set[UUID]]:
         else:
             expenses.add(uid)
     return deposits, expenses
+
+
+def statement_in_out(
+    lines: list[dict] | None, *, include_settlements: bool = False
+) -> tuple[Decimal, Decimal]:
+    """(credits, debits) on the uploaded bank statement.
+
+    Card-payment (Mastercard) rows are left out by default: those are checked
+    on the card step, so including them here would make Bank net disagree with
+    App net even when every bank-scoped row matched.
+    """
+    incoming = Decimal("0")
+    outgoing = Decimal("0")
+    for line in lines or []:
+        if not include_settlements and (
+            line.get("proposed_kind") == "cc_settlement"
+            or _is_cc_settlement_line(line.get("description"))
+        ):
+            continue
+        try:
+            amount = Decimal(str(line.get("amount") or 0))
+        except (InvalidOperation, ValueError, TypeError):
+            continue
+        if line.get("side") == "credit":
+            incoming += amount
+        else:
+            outgoing += amount
+    return incoming, outgoing
 
 
 def count_cc_deduction_lines(lines: list[dict] | None) -> int:
@@ -174,7 +202,168 @@ def _score_expense(line: dict, row: Expense) -> int:
     return score
 
 
-def _propose_settlement_groups(db: Session, lines: list[dict]) -> None:
+def cc_deferral_allows_clause(period_start: date | None):
+    """SQL: not pushed to a later cycle than this period."""
+    if period_start is None:
+        return None
+    return or_(
+        Expense.cc_deferred_until.is_(None),
+        Expense.cc_deferred_until < period_start,
+    )
+
+
+def cc_deferral_blocks(row: Expense, period_start: date | None) -> bool:
+    until = getattr(row, "cc_deferred_until", None)
+    if until is None or period_start is None:
+        return False
+    return period_start <= until
+
+
+def _fit_settlement_members(
+    members: list[Expense], settle_amount: Decimal
+) -> tuple[list[Expense], list[Expense]]:
+    """Keep the subset that matches this bank card payment; the rest wait."""
+    tolerance = Decimal("1.00")
+    if not members:
+        return [], []
+    total = sum((row.amount for row in members), Decimal("0"))
+    if total <= settle_amount + tolerance:
+        return list(members), []
+
+    target_cents = int((settle_amount * 100).quantize(Decimal("1")))
+    cap = target_cents + int((tolerance * 100).quantize(Decimal("1")))
+    # 0/1 knapsack: reachable[sum] = (previous_sum, member_index)
+    reachable: dict[int, tuple[int, int] | None] = {0: None}
+    for index, row in enumerate(members):
+        cents = int((row.amount * 100).quantize(Decimal("1")))
+        if cents <= 0:
+            continue
+        snapshot = list(reachable.items())
+        for prev, _origin in snapshot:
+            nxt = prev + cents
+            if nxt > cap or nxt in reachable:
+                continue
+            reachable[nxt] = (prev, index)
+
+    best = min(reachable, key=lambda value: (abs(value - target_cents), -value))
+    selected_idx: set[int] = set()
+    cursor = best
+    while cursor and reachable[cursor] is not None:
+        prev, index = reachable[cursor]  # type: ignore[misc]
+        selected_idx.add(index)
+        cursor = prev
+    selected = [members[i] for i in sorted(selected_idx)]
+    leftover = [row for i, row in enumerate(members) if i not in selected_idx]
+    return selected, leftover
+
+
+def _settlement_member_ids(lines: list[dict]) -> set[str]:
+    out: set[str] = set()
+    for line in lines:
+        for mid in line.get("proposed_member_ids") or []:
+            out.add(str(mid))
+    return out
+
+
+def _leftover_cc_expense_ids(
+    db: Session,
+    *,
+    lines: list[dict],
+    period_start: date | None,
+    period_end: date | None,
+) -> list[UUID]:
+    """Card charges in the app that are not part of this statement's card payment(s)."""
+    taken = _settlement_member_ids(lines)
+    clauses = [
+        Expense.payment_method == "credit_card",
+        Expense.bank_reconcile_exclude.is_(False),
+        Expense.cc_settlement_group_id.is_(None),
+        Expense.cc_verified_at.is_not(None),
+        Expense.transaction_date.is_not(None),
+        Expense.amount > 0,
+    ]
+    allow = cc_deferral_allows_clause(period_start)
+    if allow is not None:
+        clauses.append(allow)
+    rows = list(db.scalars(select(Expense).where(and_(*clauses))))
+    leftover: list[Expense] = []
+    for row in rows:
+        if str(row.id) in taken:
+            continue
+        in_window = True
+        if period_start is not None and row.transaction_date is not None:
+            in_window = row.transaction_date >= period_start
+        if period_end is not None and row.transaction_date is not None:
+            in_window = in_window and row.transaction_date <= period_end
+        released = (
+            row.cc_deferred_until is not None
+            and period_start is not None
+            and row.cc_deferred_until < period_start
+        )
+        if in_window or released:
+            leftover.append(row)
+    leftover.sort(key=lambda row: (row.transaction_date or date.min, str(row.id)))
+    return [row.id for row in leftover]
+
+
+def _drop_deferred_from_open_cc_sessions(db: Session, expense_ids: set[str]) -> None:
+    from app.models.cc_reconcile_session import CcReconcileSession
+
+    if not expense_ids:
+        return
+    sessions = list(
+        db.scalars(
+            select(CcReconcileSession).where(CcReconcileSession.status == "in_progress")
+        )
+    )
+    for session in sessions:
+        apps = list(session.unmatched_app_json or [])
+        kept = [row for row in apps if str(row.get("id")) not in expense_ids]
+        if len(kept) == len(apps):
+            continue
+        session.unmatched_app_json = kept
+        flag_modified(session, "unmatched_app_json")
+
+
+def _strip_ids_from_settlements(
+    db: Session, lines: dict[str, dict], expense_ids: set[str]
+) -> None:
+    for line in lines.values():
+        members = [str(mid) for mid in (line.get("proposed_member_ids") or [])]
+        if not members:
+            continue
+        kept = [mid for mid in members if mid not in expense_ids]
+        if kept == members:
+            continue
+        line["proposed_member_ids"] = kept
+        if not kept:
+            line["status"] = "unmatched"
+            line["proposed_kind"] = "cc_settlement"
+            line["proposed_group_total"] = "0"
+            line["proposed_summary"] = (
+                "Card payment — no linked card-verified charges yet"
+            )
+            line["match_confidence"] = "low"
+            continue
+        try:
+            settle_amount = Decimal(str(line.get("amount") or 0))
+        except (InvalidOperation, ValueError, TypeError):
+            settle_amount = Decimal("0")
+        member_total = Decimal("0")
+        for mid in kept:
+            row = db.get(Expense, UUID(mid))
+            if row is not None:
+                member_total += row.amount
+        line["proposed_group_total"] = str(member_total)
+        line["proposed_summary"] = (
+            f"CC settlement → {len(kept)} CC-verified merchant(s) · "
+            f"group {member_total} vs bank {settle_amount}"
+        )
+
+
+def _propose_settlement_groups(
+    db: Session, lines: list[dict], *, period_start: date | None = None
+) -> None:
     """Link bank Mastercard settlement debits to CC-verified merchant date groups."""
     settlements = [
         line
@@ -222,15 +411,26 @@ def _propose_settlement_groups(db: Session, lines: list[dict]) -> None:
         for row in candidates:
             if row.id in used_ids or row.transaction_date is None:
                 continue
-            if window_start and row.transaction_date < window_start:
+            if cc_deferral_blocks(row, period_start):
                 continue
+            in_window = True
+            if window_start and row.transaction_date < window_start:
+                in_window = False
             if window_end and row.transaction_date > window_end:
+                in_window = False
+            released = (
+                row.cc_deferred_until is not None
+                and period_start is not None
+                and row.cc_deferred_until < period_start
+            )
+            if not in_window and not released:
                 continue
             members.append(row)
 
-        member_total = sum((row.amount for row in members), Decimal("0"))
+        selected, _leftover = _fit_settlement_members(members, settle_amount)
+        member_total = sum((row.amount for row in selected), Decimal("0"))
         # Only require bank confirmation when linked to Card-verified charges.
-        if not members:
+        if not selected:
             line["proposed_kind"] = "cc_settlement"
             line["proposed_member_ids"] = []
             line["proposed_group_total"] = "0"
@@ -255,20 +455,20 @@ def _propose_settlement_groups(db: Session, lines: list[dict]) -> None:
         else:
             confidence = "low"
 
-        for row in members:
+        for row in selected:
             used_ids.add(row.id)
 
         line["status"] = "proposed_settlement"
         line["proposed_kind"] = "cc_settlement"
         line["proposed_tx_id"] = None
         line["proposed_tx_ref"] = None
-        line["proposed_member_ids"] = [str(row.id) for row in members]
+        line["proposed_member_ids"] = [str(row.id) for row in selected]
         line["proposed_group_total"] = str(member_total)
         line["proposed_window_start"] = window_start.isoformat() if window_start else None
         line["proposed_window_end"] = window_end.isoformat() if window_end else None
         line["match_confidence"] = confidence
         line["proposed_summary"] = (
-            f"CC settlement → {len(members)} CC-verified merchant(s) · "
+            f"CC settlement → {len(selected)} CC-verified merchant(s) · "
             f"group {member_total} vs bank {settle_amount}"
         )
         if settle_date is not None:
@@ -305,7 +505,7 @@ def _propose_matches(
     # Stage C first: settlement lines are groups, not 1:1 merchant matches
     # Settlements only apply on the default operating account
     if is_default_account:
-        _propose_settlement_groups(db, lines)
+        _propose_settlement_groups(db, lines, period_start=date_from)
 
     dep_f, exp_f = _app_candidate_filters(
         date_from=date_from,
@@ -697,7 +897,7 @@ def session_summary(db: Session, session: BankReconcileSession) -> dict:
     app_unmatched = sum(1 for a in apps if a.get("status") == "unmatched")
     app_ignored = sum(1 for a in apps if a.get("status") == "ignored")
 
-    all_net, verified_net, _, _ = sum_bank_scoped_nets(
+    all_net, _, _, _ = sum_bank_scoped_nets(
         db,
         after_date=session.after_date,
         date_to=session.statement_end_date,
@@ -705,20 +905,11 @@ def session_summary(db: Session, session: BankReconcileSession) -> dict:
     opening = session.opening_balance
     bank_balance = session.bank_balance
     tolerance = session.gap_tolerance_amount or Decimal("0.01")
-    gap_verified = None
-    within = None
-    if bank_balance is not None and opening is not None:
-        gap_verified = bank_balance - (opening + verified_net)
-        within = abs(gap_verified) <= tolerance
 
     unresolved_bank = sum(1 for line in lines if _line_requires_bank_action(line))
     unresolved_app = app_unmatched
-    can_complete = unresolved_bank == 0 and unresolved_app == 0 and (
-        within is True or (bank_balance is None or opening is None)
-    )
-    # If O and B set, require gap within tolerance
-    if bank_balance is not None and opening is not None:
-        can_complete = unresolved_bank == 0 and unresolved_app == 0 and within is True
+    # Lists must be handled. A money mismatch is allowed if the user confirms it.
+    can_complete = unresolved_bank == 0 and unresolved_app == 0
 
     able_dep, able_exp = verified_tx_ids(lines)
 
@@ -736,11 +927,50 @@ def session_summary(db: Session, session: BankReconcileSession) -> dict:
 
     from app.services.verification_workspace import load_transactions_by_ids
 
+    leftover_cc_ids = _leftover_cc_expense_ids(
+        db,
+        lines=lines,
+        period_start=session.statement_start_date,
+        period_end=session.statement_end_date,
+    )
+    leftover_cc_id_set = {str(uid) for uid in leftover_cc_ids}
+    able_exp = {uid for uid in able_exp if str(uid) not in leftover_cc_id_set}
+
     able_txs = load_transactions_by_ids(db, deposit_ids=able_dep, expense_ids=able_exp)
     not_in_excel_txs = load_transactions_by_ids(
         db, deposit_ids=not_excel_dep, expense_ids=not_excel_exp
     )
+    leftover_cc_txs = load_transactions_by_ids(
+        db, deposit_ids=set(), expense_ids=set(leftover_cc_ids)
+    )
     cc_deduction_count = count_cc_deduction_lines(lines)
+    bank_in, bank_out = statement_in_out(lines)
+    app_in = Decimal("0")
+    app_out = Decimal("0")
+    for tx in able_txs:
+        if str(tx.get("id") or "") in leftover_cc_id_set:
+            continue
+        try:
+            amount = Decimal(str(tx.get("amount") or 0))
+        except (InvalidOperation, ValueError, TypeError):
+            continue
+        if tx.get("kind") == "deposit":
+            app_in += amount
+        else:
+            app_out += amount
+
+    period_net = app_in - app_out
+    bank_net = bank_in - bank_out
+    gap_verified = None
+    within = None
+    if bank_balance is not None and opening is not None:
+        gap_verified = bank_balance - (opening + period_net)
+        flow_gap = bank_net - period_net
+        within = abs(gap_verified) <= tolerance and abs(flow_gap) <= tolerance
+    else:
+        flow_gap = bank_net - period_net
+        gap_verified = flow_gap
+        within = abs(flow_gap) <= tolerance
 
     return {
         "id": str(session.id),
@@ -757,8 +987,12 @@ def session_summary(db: Session, session: BankReconcileSession) -> dict:
         "opening_balance": str(opening) if opening is not None else None,
         "after_date": session.after_date.isoformat() if session.after_date else None,
         "gap_tolerance_amount": str(tolerance),
-        "verified_net": str(verified_net),
+        "verified_net": str(period_net),
         "all_scoped_net": str(all_net),
+        "bank_in": str(bank_in),
+        "bank_out": str(bank_out),
+        "app_in": str(app_in),
+        "app_out": str(app_out),
         "gap_verified": str(gap_verified) if gap_verified is not None else None,
         "within_tolerance_verified": within,
         "counts": {
@@ -767,6 +1001,7 @@ def session_summary(db: Session, session: BankReconcileSession) -> dict:
             "app_ignored": app_ignored,
             "unresolved_bank": unresolved_bank,
             "unresolved_app": unresolved_app,
+            "leftover_cc": len(leftover_cc_ids),
         },
         "can_complete": can_complete,
         "has_cc_deduction": cc_deduction_count > 0,
@@ -775,6 +1010,7 @@ def session_summary(db: Session, session: BankReconcileSession) -> dict:
         "unmatched_app": apps,
         "able_txs": able_txs,
         "not_in_excel_txs": not_in_excel_txs,
+        "leftover_cc_txs": leftover_cc_txs,
     }
 
 
@@ -894,6 +1130,33 @@ def apply_actions(db: Session, session: BankReconcileSession, actions: list[dict
             app["status"] = "ignored"
             app["ignore_reason"] = reason
 
+        elif kind == "defer_cc_to_next":
+            until = session.statement_end_date or session.after_date
+            if until is None:
+                raise ValueError("Cannot push card charges without a period end date")
+            leftover_ids = _leftover_cc_expense_ids(
+                db,
+                lines=list(lines.values()),
+                period_start=session.statement_start_date,
+                period_end=session.statement_end_date,
+            )
+            requested: list[str] = []
+            if action.get("tx_id"):
+                requested.append(str(action["tx_id"]))
+            for mid in action.get("member_ids") or []:
+                requested.append(str(mid))
+            target_ids = requested or [str(uid) for uid in leftover_ids]
+            deferred: set[str] = set()
+            for raw in target_ids:
+                row = db.get(Expense, UUID(str(raw)))
+                if row is None or row.payment_method != "credit_card":
+                    continue
+                row.cc_deferred_until = until
+                deferred.add(str(row.id))
+                apps.pop(f"expense:{row.id}", None)
+            _strip_ids_from_settlements(db, lines, deferred)
+            _drop_deferred_from_open_cc_sessions(db, deferred)
+
         elif kind == "add_from_bank":
             fp = action["fingerprint"]
             line = lines.get(fp)
@@ -987,9 +1250,7 @@ def apply_actions(db: Session, session: BankReconcileSession, actions: list[dict
 def complete_session(db: Session, session: BankReconcileSession) -> BankReconcileSession:
     summary = session_summary(db, session)
     if not summary["can_complete"]:
-        raise ValueError(
-            "Cannot complete: unresolved bank/app lines remain, or Gap outside tolerance"
-        )
+        raise ValueError("Cannot complete: unresolved bank/app lines remain")
     settings = get_or_create_settings(db)
     if session.statement_end_date is not None:
         from app.models.bank_account import BankAccount

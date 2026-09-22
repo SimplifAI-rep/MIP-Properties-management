@@ -331,6 +331,8 @@ class TransactionRead(BaseModel):
     cc_verified_at: datetime | None = None
     cc_bank_confirmed_at: datetime | None = None
     cc_settlement_group_id: UUID | None = None
+    card_last4: str | None = None
+    cc_deferred_until: date | None = None
 
 
 class ExpenseRead(BaseModel):
@@ -368,6 +370,8 @@ class ExpenseRead(BaseModel):
     cc_verified_at: datetime | None = None
     cc_bank_confirmed_at: datetime | None = None
     cc_settlement_group_id: UUID | None = None
+    card_last4: str | None = None
+    cc_deferred_until: date | None = None
 
 
 class ExpenseCreate(BaseModel):
@@ -381,6 +385,7 @@ class ExpenseCreate(BaseModel):
     vendor_name: str | None = None
     reference: str | None = None
     description: str | None = None
+    card_last4: str | None = None
 
 
 class ExpenseUpdate(BaseModel):
@@ -395,6 +400,7 @@ class ExpenseUpdate(BaseModel):
     reference: str | None = None
     description: str | None = None
     notes: str | None = None
+    card_last4: str | None = None
 
 
 class ExpenseListResponse(BaseModel):

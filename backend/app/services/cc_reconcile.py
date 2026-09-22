@@ -11,7 +11,7 @@ from typing import Any
 from uuid import UUID
 
 import openpyxl
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -188,11 +188,9 @@ def _cc_pending_filters(
         clauses.append(or_(and_(*date_window), released))
     elif date_window:
         clauses.extend(date_window)
-    # Scope to this card, but still allow unassigned (legacy) card expenses to match
+    # Only this statement's last 4 — unassigned expenses must be tagged first
     if card_last4 and card_last4 != "unknown":
-        clauses.append(
-            or_(Expense.card_last4 == card_last4, Expense.card_last4.is_(None))
-        )
+        clauses.append(Expense.card_last4 == card_last4)
     return clauses
 
 
@@ -325,6 +323,21 @@ def create_session_from_upload(
                 f"A verification period is already open for card ••{card_last4}. "
                 "Complete or discard it before uploading another statement for this card."
             )
+
+    pending_n = db.scalar(
+        select(func.count())
+        .select_from(Expense)
+        .where(
+            and_(
+                *_cc_pending_filters(
+                    date_from=date_from, date_to=date_to, card_last4=card_last4
+                )
+            )
+        )
+    ) or 0
+    if pending_n == 0:
+        db.commit()
+        raise ValueError("No transactions for that period")
 
     _propose_matches(
         db, lines, date_from=date_from, date_to=date_to, card_last4=card_last4

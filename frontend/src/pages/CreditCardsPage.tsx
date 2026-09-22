@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { api } from '../api/client';
+import { TransactionTable } from '../components/TransactionTable';
 import {
   EmptyState,
   ErrorState,
@@ -8,6 +9,7 @@ import {
 } from '../components/ui/States';
 import { Tooltip } from '../components/ui/Tooltip';
 import { getUserErrorMessage } from '../utils/errors';
+import { recordToUnified } from '../utils/unifiedTransaction';
 import type { CreditCard } from '../types';
 
 function statusBadgeClass(active: boolean) {
@@ -20,6 +22,7 @@ export function CreditCardsPage() {
   const [label, setLabel] = useState('');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draftName, setDraftName] = useState('');
+  const [expandedLast4, setExpandedLast4] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -42,6 +45,16 @@ export function CreditCardsPage() {
       setError(getUserErrorMessage(err));
       setMessage(null);
     },
+  });
+
+  const cardTxQuery = useQuery({
+    queryKey: ['credit-card-transactions', expandedLast4],
+    queryFn: () =>
+      api.getAllExpenses({
+        card_last4: expandedLast4!,
+        include_running_balance: false,
+      }),
+    enabled: Boolean(expandedLast4),
   });
 
   const updateMutation = useMutation({
@@ -181,6 +194,7 @@ export function CreditCardsPage() {
                   <th className="px-5 py-3 font-medium">Card</th>
                   <th className="px-5 py-3 font-medium">Name</th>
                   <th className="px-5 py-3 font-medium">Status</th>
+                  <th className="px-5 py-3 font-medium">Transactions</th>
                 </tr>
               </thead>
               <tbody>
@@ -263,6 +277,22 @@ export function CreditCardsPage() {
                         </select>
                       </label>
                     </td>
+                    <td className="px-5 py-3">
+                      <button
+                        type="button"
+                        className="btn-secondary text-xs"
+                        aria-expanded={expandedLast4 === card.card_last4}
+                        onClick={() =>
+                          setExpandedLast4((current) =>
+                            current === card.card_last4 ? null : card.card_last4,
+                          )
+                        }
+                      >
+                        {expandedLast4 === card.card_last4
+                          ? 'Hide transactions'
+                          : 'View transactions'}
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -270,6 +300,40 @@ export function CreditCardsPage() {
           </div>
         )}
       </section>
+
+      {expandedLast4 ? (
+        <section className="panel overflow-hidden">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-5 py-3 dark:border-slate-800">
+            <h3 className="section-title text-sm">
+              Transactions on ••{expandedLast4}
+            </h3>
+            <button
+              type="button"
+              className="btn-secondary text-xs"
+              onClick={() => setExpandedLast4(null)}
+            >
+              Close
+            </button>
+          </div>
+          {cardTxQuery.isLoading ? (
+            <LoadingState />
+          ) : cardTxQuery.isError ? (
+            <ErrorState
+              message="We couldn't load this card's transactions."
+              error={cardTxQuery.error}
+            />
+          ) : (
+            <TransactionTable
+              rows={(cardTxQuery.data?.items ?? []).map((row) =>
+                recordToUnified(row as unknown as Record<string, unknown>, 'expense'),
+              )}
+              emptyMessage="No transactions linked to this card."
+              showBalance={false}
+              className="overflow-x-auto"
+            />
+          )}
+        </section>
+      ) : null}
     </div>
   );
 }

@@ -238,6 +238,8 @@ export interface Expense {
   cc_verified_at?: string | null;
   cc_bank_confirmed_at?: string | null;
   cc_settlement_group_id?: string | null;
+  card_last4?: string | null;
+  cc_deferred_until?: string | null;
 }
 
 export interface ExpenseListResponse {
@@ -271,6 +273,7 @@ export interface ExpenseFilters {
   category?: string;
   source?: string;
   payment_method?: string;
+  card_last4?: string;
   date_from?: string;
   date_to?: string;
   min_amount?: string;
@@ -296,6 +299,7 @@ export interface ExpenseCreate {
   vendor_name?: string;
   reference?: string;
   description?: string;
+  card_last4?: string | null;
 }
 
 export interface ExpenseUpdate {
@@ -310,6 +314,7 @@ export interface ExpenseUpdate {
   reference?: string | null;
   description?: string | null;
   notes?: string | null;
+  card_last4?: string | null;
 }
 
 export interface DepositUpdate {

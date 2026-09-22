@@ -98,6 +98,7 @@ def test_cc_reconcile_match_confirm_no_duplicate(client, db):
         payment_method="credit_card",
         vendor_name=line.get("merchant"),
         description=line.get("merchant"),
+        card_last4=parsed["card_last4"],
     )
     db.add(expense)
     db.commit()
@@ -178,9 +179,110 @@ def test_cc_reconcile_match_confirm_no_duplicate(client, db):
                 )
             },
         )
-    assert again.status_code == 200, again.text
-    assert not any(
-        row.get("proposed_tx_id") == expense_id and row["status"] == "proposed_match"
-        for row in again.json()["lines"]
-    )
+    assert again.status_code == 400, again.text
+    assert "No transactions for that period" in again.json()["detail"]
     assert db.query(Expense).count() == before_count
+
+
+@pytest.mark.skipif(not SAMPLE_CC.exists(), reason="sample CC Excel not present")
+def test_cc_upload_other_card_has_no_period_transactions(client, db):
+    parsed = parse_cc_statement_lines(SAMPLE_CC.read_bytes())
+    statement_last4 = parsed["card_last4"]
+    assert statement_last4 and statement_last4 != "unknown"
+    other_last4 = "0000" if statement_last4 != "0000" else "1111"
+    line = parsed["lines"][0]
+    db.add(
+        Expense(
+            property_id=PROPERTY_ROTHSCHILD_ID,
+            transaction_date=date.fromisoformat(line["transaction_date"]),
+            amount=Decimal(line["amount"]),
+            category="maintenance",
+            source="credit_card",
+            payment_method="credit_card",
+            vendor_name=line.get("merchant"),
+            description=line.get("merchant"),
+            card_last4=other_last4,
+        )
+    )
+    db.commit()
+
+    with SAMPLE_CC.open("rb") as handle:
+        created = client.post(
+            "/api/v1/bank-settings/cc-reconcile/sessions",
+            files={
+                "file": (
+                    "credit card 1 example.xlsx",
+                    handle,
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                )
+            },
+        )
+    assert created.status_code == 400, created.text
+    assert created.json()["detail"] == "No transactions for that period"
+
+
+@pytest.mark.skipif(not SAMPLE_CC.exists(), reason="sample CC Excel not present")
+def test_cc_upload_unassigned_card_does_not_match(client, db):
+    parsed = parse_cc_statement_lines(SAMPLE_CC.read_bytes())
+    line = parsed["lines"][0]
+    db.add(
+        Expense(
+            property_id=PROPERTY_ROTHSCHILD_ID,
+            transaction_date=date.fromisoformat(line["transaction_date"]),
+            amount=Decimal(line["amount"]),
+            category="maintenance",
+            source="credit_card",
+            payment_method="credit_card",
+            vendor_name=line.get("merchant"),
+            description=line.get("merchant"),
+        )
+    )
+    db.commit()
+
+    with SAMPLE_CC.open("rb") as handle:
+        created = client.post(
+            "/api/v1/bank-settings/cc-reconcile/sessions",
+            files={
+                "file": (
+                    "credit card 1 example.xlsx",
+                    handle,
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                )
+            },
+        )
+    assert created.status_code == 400, created.text
+    assert created.json()["detail"] == "No transactions for that period"
+
+
+def test_list_expenses_filters_by_card_last4(client, db):
+    db.add(
+        Expense(
+            property_id=PROPERTY_ROTHSCHILD_ID,
+            transaction_date=date(2026, 7, 15),
+            amount=Decimal("40.00"),
+            category="maintenance",
+            source="credit_card",
+            payment_method="credit_card",
+            vendor_name="On card",
+            card_last4="6947",
+        )
+    )
+    db.add(
+        Expense(
+            property_id=PROPERTY_ROTHSCHILD_ID,
+            transaction_date=date(2026, 7, 16),
+            amount=Decimal("25.00"),
+            category="maintenance",
+            source="credit_card",
+            payment_method="credit_card",
+            vendor_name="Other card",
+            card_last4="3848",
+        )
+    )
+    db.commit()
+
+    listed = client.get("/api/v1/expenses", params={"card_last4": "6947"})
+    assert listed.status_code == 200, listed.text
+    vendors = {row["vendor_name"] for row in listed.json()["items"]}
+    assert "On card" in vendors
+    assert "Other card" not in vendors

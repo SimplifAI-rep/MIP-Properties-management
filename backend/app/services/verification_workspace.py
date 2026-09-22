@@ -611,9 +611,7 @@ def verification_workspace(db: Session) -> dict:
             Expense.cc_verified_at.is_(None),
         ]
         if card_last:
-            pending_clauses.append(
-                or_(Expense.card_last4 == card_last, Expense.card_last4.is_(None))
-            )
+            pending_clauses.append(Expense.card_last4 == card_last)
         last = entry["last_verification_date"]
         if last:
             last_d = date.fromisoformat(last)

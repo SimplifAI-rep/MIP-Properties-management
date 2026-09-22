@@ -278,16 +278,20 @@
     @apply inline-flex whitespace-nowrap rounded-full bg-indigo-200 px-2.5 py-0.5 text-xs font-medium text-indigo-950 dark:bg-indigo-900 dark:text-indigo-100;
   }
 
+  .badge-cc-postponed {
+    @apply inline-flex whitespace-nowrap rounded-full bg-orange-200 px-2.5 py-0.5 text-xs font-medium text-orange-950 dark:bg-orange-900 dark:text-orange-100;
+  }
+
   .badge-cc-bank-confirmed {
     @apply inline-flex whitespace-nowrap rounded-full bg-violet-200 px-2.5 py-0.5 text-xs font-medium text-violet-950 dark:bg-violet-900 dark:text-violet-100;
   }
 
   .row-deposit {
-    @apply border-t border-emerald-100 bg-emerald-50/40 dark:border-emerald-900/30 dark:bg-emerald-950/20;
+    @apply border-t border-slate-100 dark:border-slate-800;
   }
 
   .row-expense {
-    @apply border-t border-rose-100 bg-rose-50/40 dark:border-rose-900/30 dark:bg-rose-950/20;
+    @apply border-t border-slate-100 dark:border-slate-800;
   }
 
   .row-resident-paid {

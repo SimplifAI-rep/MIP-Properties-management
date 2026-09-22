@@ -46,8 +46,8 @@ export function TransactionTypeBadges({
           <span className="badge-nearly-cc">Nearly CC</span>
         </Tooltip>
       ) : null}
-      {row.ledger_column === 'cash' ? (
-        <Tooltip content="From the Cash column in the ledger.">
+      {row.ledger_column === 'cash' || row.payment_method === 'cash' ? (
+        <Tooltip content="Paid in cash.">
           <span className="badge-cash-paid">Cash</span>
         </Tooltip>
       ) : null}
@@ -72,19 +72,35 @@ export function TransactionTypeBadges({
           <span className="badge-bank-verified">Verified</span>
         </Tooltip>
       ) : row.payment_method === 'credit_card' ? (
-        row.cc_bank_confirmed_at ? (
-          <Tooltip content="Card settlement confirmed on the bank statement.">
-            <span className="badge-cc-bank-confirmed">Bank settled</span>
-          </Tooltip>
-        ) : row.cc_verified_at ? (
-          <Tooltip content="Matched to a credit-card statement charge.">
-            <span className="badge-cc-verified">Card verified</span>
-          </Tooltip>
-        ) : (
-          <Tooltip content="Paid by card — awaiting card statement verification.">
-            <span className="badge-cc-pending">Card pending</span>
-          </Tooltip>
-        )
+        <>
+          {row.cc_bank_confirmed_at ? (
+            <Tooltip content="Card settlement confirmed on the bank statement.">
+              <span className="badge-cc-bank-confirmed">Bank settled</span>
+            </Tooltip>
+          ) : row.cc_verified_at ? (
+            <Tooltip content="Matched to a credit-card statement charge.">
+              <span className="badge-cc-verified">Credit card verified</span>
+            </Tooltip>
+          ) : row.cc_deferred_until ? (
+            <Tooltip
+              content={`Pushed to the next card cycle (after ${row.cc_deferred_until}).`}
+            >
+              <span className="badge-cc-postponed">Credit card postponed</span>
+            </Tooltip>
+          ) : (
+            <Tooltip
+              content={
+                row.card_last4
+                  ? `Paid by card ••${row.card_last4} — awaiting card statement verification.`
+                  : 'Paid by card — awaiting card statement verification.'
+              }
+            >
+              <span className="badge-cc-pending">
+                {row.card_last4 ? `Card ••${row.card_last4}` : 'Card pending'}
+              </span>
+            </Tooltip>
+          )}
+        </>
       ) : row.bank_reconcile_exclude || row.paid_by_owner || row.paid_by_resident ? (
         <Tooltip content="Excluded from bank reconciliation.">
           <span className="badge-neutral">Excluded</span>

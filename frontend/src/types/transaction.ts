@@ -22,6 +22,9 @@ export interface UnifiedTransaction {
   /** Set when a bank CC settlement debit confirmed this merchant's group. */
   cc_bank_confirmed_at?: string | null;
   cc_settlement_group_id?: string | null;
+  card_last4?: string | null;
+  /** Set when this card charge was pushed to a later verification cycle. */
+  cc_deferred_until?: string | null;
   /** Excel "Section" (expense category / deposit account cue). */
   section: string;
   /** Excel "Notes". */

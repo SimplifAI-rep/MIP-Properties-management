@@ -397,6 +397,7 @@ export const api = {
         category: filters.category,
         source: filters.source,
         payment_method: filters.payment_method,
+        card_last4: filters.card_last4,
         date_from: filters.date_from,
         date_to: filters.date_to,
         min_amount: filters.min_amount,

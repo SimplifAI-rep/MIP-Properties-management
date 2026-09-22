@@ -311,6 +311,7 @@ def apply_expense_list_filters(
     category: str | None = None,
     source: str | None = None,
     payment_method: str | None = None,
+    card_last4: str | None = None,
     search_text: str | None = None,
     date_from: date | None = None,
     date_to: date | None = None,
@@ -353,6 +354,8 @@ def apply_expense_list_filters(
         stmt = stmt.where(Expense.source == source)
     if payment_method:
         stmt = stmt.where(Expense.payment_method == payment_method)
+    if card_last4:
+        stmt = stmt.where(Expense.card_last4 == card_last4.strip())
     if search_text:
         pattern = f"%{search_text}%"
         stmt = stmt.where(

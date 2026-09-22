@@ -19,7 +19,9 @@ import type { UnifiedTransaction } from '../utils/unifiedTransaction';
 const LINE_STATUS_KEYS = ['proposed_match', 'matched', 'ignored', 'unmatched', 'added'];
 
 function isCaughtUpMessage(message: string): boolean {
-  return /no new (card|credit|bank) transactions/i.test(message);
+  return /no new (card|credit|bank) transactions|no transactions for that period/i.test(
+    message,
+  );
 }
 
 export function CcReconcilePanel() {
@@ -421,7 +423,9 @@ export function CcReconcilePanel() {
           role="status"
           className="rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm text-emerald-800 dark:border-emerald-700/60 dark:bg-emerald-950/30 dark:text-emerald-200"
         >
-          You're all caught up — {notice}
+          {/no transactions for that period/i.test(notice)
+            ? notice
+            : `You're all caught up — ${notice}`}
         </p>
       ) : null}
       {message ? (

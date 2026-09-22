@@ -2,7 +2,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
-import type { DepositCreate, ExpenseCreate } from '../types';
+import type { CreditCard, DepositCreate, ExpenseCreate } from '../types';
 import {
   TransactionDisplayCells,
   TransactionTableColgroup,
@@ -80,8 +80,91 @@ interface TransactionEditForm {
   notes: string;
   company: string;
   payment_method: string;
+  card_last4: string | null;
   source: string;
   is_rental_income: boolean;
+}
+
+function PaidWithSelect({
+  cards,
+  paymentMethod,
+  cardLast4,
+  onChange,
+  showCardOption = true,
+}: {
+  cards: CreditCard[];
+  paymentMethod: string;
+  cardLast4?: string | null;
+  onChange: (next: { payment_method: string; card_last4: string | null }) => void;
+  showCardOption?: boolean;
+}) {
+  const activeCards = cards.filter((card) => card.is_active);
+  const methodValue =
+    paymentMethod === 'credit_card' && showCardOption
+      ? 'credit_card'
+      : paymentMethod || 'company_account';
+  const extraMethods = METHODS.filter(
+    (method) => method !== 'cash' && method !== 'credit_card' && method !== 'company_account',
+  );
+  const knownCard =
+    Boolean(cardLast4) &&
+    (activeCards.some((card) => card.card_last4 === cardLast4) ||
+      Boolean(cardLast4 && !activeCards.some((card) => card.card_last4 === cardLast4)));
+
+  return (
+    <div className="space-y-2">
+      <select
+        className="field"
+        value={methodValue}
+        onChange={(event) => {
+          const next = event.target.value;
+          if (next === 'credit_card') {
+            const keep = knownCard ? cardLast4 ?? null : null;
+            onChange({
+              payment_method: 'credit_card',
+              card_last4:
+                keep ?? (activeCards.length === 1 ? activeCards[0].card_last4 : null),
+            });
+            return;
+          }
+          onChange({ payment_method: next, card_last4: null });
+        }}
+      >
+        <option value="company_account">{label('company_account')}</option>
+        <option value="cash">Cash</option>
+        {showCardOption ? <option value="credit_card">Credit card</option> : null}
+        {extraMethods.map((method) => (
+          <option key={method} value={method}>
+            {label(method)}
+          </option>
+        ))}
+      </select>
+      {showCardOption && paymentMethod === 'credit_card' ? (
+        <select
+          className="field"
+          required
+          aria-label="Select a card"
+          value={cardLast4 ?? ''}
+          onChange={(event) =>
+            onChange({
+              payment_method: 'credit_card',
+              card_last4: event.target.value || null,
+            })
+          }
+        >
+          <option value="">Select a card</option>
+          {activeCards.map((card) => (
+            <option key={card.id} value={card.card_last4}>
+              {card.label}
+            </option>
+          ))}
+          {cardLast4 && !activeCards.some((card) => card.card_last4 === cardLast4) ? (
+            <option value={cardLast4}>Card ••{cardLast4}</option>
+          ) : null}
+        </select>
+      ) : null}
+    </div>
+  );
 }
 
 
@@ -111,6 +194,7 @@ function makeEmptyForm(): ExpenseCreate {
     category: '',
     source: 'manual_company',
     payment_method: 'company_account',
+    card_last4: null,
     vendor_name: '',
     description: '',
   };
@@ -142,6 +226,7 @@ function rowToEditForm(row: UnifiedTransaction): TransactionEditForm {
     notes: row.notes ?? '',
     company: row.company ?? '',
     payment_method: row.payment_method || 'company_account',
+    card_last4: row.card_last4 ?? null,
     source: row.source || (row.kind === 'deposit' ? 'management_ledger' : 'manual_company'),
     is_rental_income: Boolean(row.is_rental_income),
   };
@@ -178,6 +263,11 @@ export function TransactionsPage() {
   const location = useLocation();
   const queryClient = useQueryClient();
   const { openFeedback } = useFeedback();
+  const creditCardsQuery = useQuery({
+    queryKey: ['credit-cards'],
+    queryFn: api.getCreditCards,
+  });
+  const creditCards = creditCardsQuery.data ?? [];
   const [kinds, setKinds] = useState<TypeFilterKind[]>(['deposit', 'expense']);
   const [page, setPage] = useState(1);
   const [propertyStatuses, setPropertyStatuses] = useState<PropertyStatusFilter[]>(['active']);
@@ -510,6 +600,8 @@ export function TransactionsPage() {
           category: section,
           source: payload.source || 'manual_company',
           payment_method: payload.payment_method || 'company_account',
+          card_last4:
+            payload.payment_method === 'credit_card' ? payload.card_last4 : null,
           vendor_name: payload.company.trim() || null,
           notes: notes || null,
           description: notes ? `${section} | ${notes}` : section,
@@ -924,6 +1016,10 @@ export function TransactionsPage() {
       setEditError(validationError('Please enter a date and an amount greater than 0.'));
       return;
     }
+    if (editForm.kind === 'expense' && editForm.payment_method === 'credit_card' && !editForm.card_last4) {
+      setEditError(validationError('Please select a credit card.'));
+      return;
+    }
     updateTransactionMutation.mutate(editForm);
   }
 
@@ -1217,26 +1313,21 @@ export function TransactionsPage() {
             </label>
             <label className="text-sm">
               <span className="label-text">
-                <Tooltip content="How the money was received (for your records).">
-                  Method
+                <Tooltip content="How the money was received — cash, bank, or another method.">
+                  Received with
                 </Tooltip>
               </span>
-              <select
-                className="field"
-                value={depositForm.payment_method ?? 'company_account'}
-                onChange={(event) =>
+              <PaidWithSelect
+                cards={[]}
+                showCardOption={false}
+                paymentMethod={depositForm.payment_method ?? 'company_account'}
+                onChange={(next) =>
                   setDepositForm((current) => ({
                     ...current,
-                    payment_method: event.target.value,
+                    payment_method: next.payment_method,
                   }))
                 }
-              >
-                {METHODS.map((item) => (
-                  <option key={item} value={item}>
-                    {label(item)}
-                  </option>
-                ))}
-              </select>
+              />
             </label>
             <label className="text-sm">
               <span className="label-text">
@@ -1348,6 +1439,10 @@ export function TransactionsPage() {
                 );
                 return;
               }
+              if (form.payment_method === 'credit_card' && !form.card_last4) {
+                setFormError(validationError('Please select a credit card.'));
+                return;
+              }
               const section = form.category.trim() || 'other';
               createMutation.mutate({
                 ...form,
@@ -1356,8 +1451,13 @@ export function TransactionsPage() {
                   ? `${section} | ${form.description.trim()}`
                   : section,
                 vendor_name: form.vendor_name?.trim() || undefined,
-                source: form.source || 'manual_company',
+                source:
+                  form.payment_method === 'credit_card'
+                    ? 'credit_card'
+                    : form.source || 'manual_company',
                 payment_method: form.payment_method || 'company_account',
+                card_last4:
+                  form.payment_method === 'credit_card' ? form.card_last4 || null : null,
               });
             }}
       >
@@ -1429,46 +1529,36 @@ export function TransactionsPage() {
                 ))}
               </datalist>
             </label>
-            <label className="text-sm">
+            <div className="text-sm">
               <span className="label-text">
-                <Tooltip content="Excel Method — how it was paid.">Method</Tooltip>
+                <Tooltip content="How this was paid — cash, a company card, or the bank.">
+                  Paid with
+                </Tooltip>
               </span>
-          <select
-            className="field"
-                value={form.payment_method}
-                onChange={(event) =>
-                  setForm((current) => ({ ...current, payment_method: event.target.value }))
-                }
-              >
-                {METHODS.map((item) => (
-                  <option key={item} value={item}>
-                    {label(item)}
-              </option>
-            ))}
-          </select>
-        </label>
-            <label className="text-sm flex items-end gap-2 pb-2">
-              <input
-                type="checkbox"
-                checked={form.payment_method === 'credit_card'}
-                onChange={(event) =>
+              <PaidWithSelect
+                cards={creditCards}
+                paymentMethod={form.payment_method}
+                cardLast4={form.card_last4}
+                onChange={(next) =>
                   setForm((current) => ({
                     ...current,
-                    payment_method: event.target.checked
-                      ? 'credit_card'
-                      : current.payment_method === 'credit_card'
-                        ? 'company_account'
-                        : current.payment_method,
-                    source: event.target.checked ? 'credit_card' : current.source,
+                    payment_method: next.payment_method,
+                    card_last4: next.card_last4,
+                    source:
+                      next.payment_method === 'credit_card'
+                        ? 'credit_card'
+                        : current.source === 'credit_card'
+                          ? 'manual_company'
+                          : current.source,
                   }))
                 }
               />
-              <span className="label-text mb-0">
-                <Tooltip content="Paid on the company credit card — awaits card statement verification (excluded from the bank gap as a merchant debit).">
-                  Paid by card
-                </Tooltip>
-              </span>
-            </label>
+              {creditCards.filter((card) => card.is_active).length === 0 ? (
+                <p className="mt-1 text-xs muted-text">
+                  Add cards on the Credit cards tab to pick one here.
+                </p>
+              ) : null}
+            </div>
         <label className="text-sm">
               <span className="label-text">
                 <Tooltip content="How this expense was recorded (e.g. standing order).">
@@ -1796,30 +1886,24 @@ export function TransactionsPage() {
                                       }
                                     />
                                   </label>
-                                  <label className="text-sm min-w-0">
-                                    <span className="label-text">Method</span>
-              <select
-                className="field"
-                                      value={editForm.payment_method}
-                                      onChange={(event) =>
-                                        patchEdit({ payment_method: event.target.value })
+                                  <div className="text-sm min-w-0">
+                                    <span className="label-text">Paid with</span>
+                                    <PaidWithSelect
+                                      cards={creditCards}
+                                      paymentMethod={editForm.payment_method}
+                                      cardLast4={editForm.card_last4}
+                                      onChange={(next) =>
+                                        patchEdit({
+                                          payment_method: next.payment_method,
+                                          card_last4: next.card_last4,
+                                          source:
+                                            next.payment_method === 'credit_card'
+                                              ? 'credit_card'
+                                              : editForm.source,
+                                        })
                                       }
-                                    >
-                                      {METHODS.map((item) => (
-                  <option key={item} value={item}>
-                    {label(item)}
-                  </option>
-                ))}
-                                      {editForm.payment_method &&
-                                      !(METHODS as readonly string[]).includes(
-                                        editForm.payment_method,
-                                      ) ? (
-                                        <option value={editForm.payment_method}>
-                                          {label(editForm.payment_method)}
-                                        </option>
-                                      ) : null}
-              </select>
-            </label>
+                                    />
+                                  </div>
                                   <label className="text-sm min-w-0">
                                     <span className="label-text">Company</span>
                                     <input

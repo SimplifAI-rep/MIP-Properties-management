@@ -70,6 +70,8 @@ function expenseToUnified(expense: Expense): UnifiedTransaction {
     cc_verified_at: expense.cc_verified_at ?? null,
     cc_bank_confirmed_at: expense.cc_bank_confirmed_at ?? null,
     cc_settlement_group_id: expense.cc_settlement_group_id ?? null,
+    card_last4: expense.card_last4 ?? null,
+    cc_deferred_until: expense.cc_deferred_until ?? null,
     section: expense.category || 'other',
     notes: expenseNotes(expense),
     company: expense.vendor_name,
@@ -135,6 +137,8 @@ export function unifiedFromRecord(row: Record<string, unknown>): UnifiedTransact
     cc_verified_at: asNullableString(row.cc_verified_at),
     cc_bank_confirmed_at: asNullableString(row.cc_bank_confirmed_at),
     cc_settlement_group_id: asNullableString(row.cc_settlement_group_id),
+    card_last4: asNullableString(row.card_last4),
+    cc_deferred_until: asNullableString(row.cc_deferred_until),
     section: asString(row.section, kind === 'expense' ? 'other' : 'Inflow'),
     notes: asNullableString(row.notes),
     company: asNullableString(row.company),
@@ -207,6 +211,8 @@ export function recordToUnified(
     cc_verified_at: asNullableString(row.cc_verified_at),
     cc_bank_confirmed_at: asNullableString(row.cc_bank_confirmed_at),
     cc_settlement_group_id: asNullableString(row.cc_settlement_group_id),
+    card_last4: asNullableString(row.card_last4),
+    cc_deferred_until: asNullableString(row.cc_deferred_until),
     section,
     notes,
     company: asNullableString(row.company) ?? asNullableString(row.vendor_name),
@@ -341,7 +347,13 @@ export function formatTransactionFeedback(row: UnifiedTransaction): string {
     `Company: ${row.company || '—'}`,
   ];
   if (row.kind === 'expense') {
-    if (row.payment_method) lines.push(`Method: ${row.payment_method}`);
+    if (row.payment_method) {
+      lines.push(
+        row.card_last4 && row.payment_method === 'credit_card'
+          ? `Method: credit card ••${row.card_last4}`
+          : `Method: ${row.payment_method}`,
+      );
+    }
     if (row.source) lines.push(`Source: ${row.source}`);
     if (row.paid_by_resident) lines.push('Flag: He/She paid');
     if (row.paid_by_owner) lines.push('Flag: Owner paid');

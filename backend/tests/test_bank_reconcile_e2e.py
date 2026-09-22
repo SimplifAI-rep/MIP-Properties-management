@@ -395,7 +395,8 @@ def test_step5_bank_alerts_require_reason_and_clear(client, db):
 
 
 def test_step6_cc_path_and_alerts(client, db):
-    cc_lines = parse_cc_statement_lines(SAMPLE_CC.read_bytes())["lines"]
+    parsed_cc = parse_cc_statement_lines(SAMPLE_CC.read_bytes())
+    cc_lines = parsed_cc["lines"]
     line = cc_lines[0]
     expense = Expense(
         property_id=PROPERTY_ROTHSCHILD_ID,
@@ -406,6 +407,7 @@ def test_step6_cc_path_and_alerts(client, db):
         payment_method="credit_card",
         vendor_name=line.get("merchant"),
         description=line.get("merchant"),
+        card_last4=parsed_cc["card_last4"],
     )
     db.add(expense)
     db.commit()
@@ -606,17 +608,22 @@ def test_frontend_verification_surface_exists():
     assert "Found on statement" in cc_panel
     assert "In the app, not on the statement" in cc_panel
     assert "Push to next cycle" in cc_panel
+    assert "no transactions for that period" in cc_panel
     assert "On the statement, not in the app" in cc_panel
     assert "Finish period" in cc_panel
     dash = (frontend / "pages" / "DashboardPage.tsx").read_text(encoding="utf-8")
     assert "BankVerificationSummaryCard" in dash
     assert "BankVerificationPanel" not in dash
     tx_page = (frontend / "pages" / "TransactionsPage.tsx").read_text(encoding="utf-8")
-    assert "Paid by card" in tx_page
+    assert "Credit card" in tx_page
+    assert "Select a card" in tx_page
     table = (frontend / "components" / "TransactionTable.tsx").read_text(encoding="utf-8")
     assert "Card pending" in table
-    assert "Card verified" in table
+    assert "Credit card verified" in table
+    assert "Credit card postponed" in table
     assert "Bank settled" in table
+    cards_page = (frontend / "pages" / "CreditCardsPage.tsx").read_text(encoding="utf-8")
+    assert "View transactions" in cards_page
     alerts = (frontend / "pages" / "AlertsPage.tsx").read_text(encoding="utf-8")
     assert "cc_unmatched" in alerts
     assert "Open Verification" in alerts

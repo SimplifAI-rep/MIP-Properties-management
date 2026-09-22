@@ -70,6 +70,8 @@ def expense_to_read(
         cc_verified_at=getattr(expense, "cc_verified_at", None),
         cc_bank_confirmed_at=getattr(expense, "cc_bank_confirmed_at", None),
         cc_settlement_group_id=getattr(expense, "cc_settlement_group_id", None),
+        card_last4=getattr(expense, "card_last4", None),
+        cc_deferred_until=getattr(expense, "cc_deferred_until", None),
     )
 
 
@@ -101,6 +103,7 @@ def list_expenses(
     category: str | None = None,
     source: str | None = None,
     payment_method: str | None = None,
+    card_last4: str | None = None,
     search_text: str | None = None,
     date_from: date | None = None,
     date_to: date | None = None,
@@ -137,6 +140,7 @@ def list_expenses(
         category=category,
         source=source,
         payment_method=payment_method,
+        card_last4=card_last4,
         search_text=search_text,
         date_from=date_from,
         date_to=date_to,
@@ -190,6 +194,11 @@ def create_expense(db: Session, payload: ExpenseCreate) -> ExpenseRead:
     if not owner:
         raise HTTPException(status_code=404, detail="Owner not found")
 
+    last4 = (payload.card_last4 or "").strip() or None
+    if payload.payment_method != "credit_card":
+        last4 = None
+    elif not last4:
+        raise HTTPException(status_code=400, detail="Select a credit card.")
     expense = Expense(
         property_id=payload.property_id,
         transaction_date=payload.transaction_date,
@@ -201,6 +210,8 @@ def create_expense(db: Session, payload: ExpenseCreate) -> ExpenseRead:
         vendor_name=payload.vendor_name,
         reference=payload.reference,
         description=payload.description,
+        card_last4=last4,
+        ledger_column="cash" if payload.payment_method == "cash" else None,
     )
     db.add(expense)
     db.commit()
@@ -243,6 +254,18 @@ def update_expense(db: Session, expense_id: UUID, payload: ExpenseUpdate) -> Exp
 
     for key, value in data.items():
         setattr(expense, key, value)
+
+    if expense.payment_method != "credit_card":
+        expense.card_last4 = None
+    elif "card_last4" in data:
+        last4 = (data.get("card_last4") or "").strip() or None
+        expense.card_last4 = last4
+        if not last4:
+            raise HTTPException(status_code=400, detail="Select a credit card.")
+    if expense.payment_method == "cash":
+        expense.ledger_column = "cash"
+    elif expense.ledger_column == "cash":
+        expense.ledger_column = None
 
     # Keep description in sync when section/notes style updates are sent
     if "category" in data and "description" not in data and expense.notes:

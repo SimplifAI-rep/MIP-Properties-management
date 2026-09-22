@@ -99,6 +99,8 @@ def expense_dict_to_transaction(item: dict[str, Any]) -> dict[str, Any]:
         cc_verified_at=item.get("cc_verified_at"),
         cc_bank_confirmed_at=item.get("cc_bank_confirmed_at"),
         cc_settlement_group_id=item.get("cc_settlement_group_id"),
+        card_last4=item.get("card_last4"),
+        cc_deferred_until=item.get("cc_deferred_until"),
     ).model_dump(mode="json")
 
 

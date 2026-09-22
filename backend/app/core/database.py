@@ -360,6 +360,7 @@ def _ensure_sqlite_bank_reconcile_columns() -> None:
                 ("opening_balance", "NUMERIC(14, 2)"),
                 ("opening_balance_as_of", "DATE"),
                 ("last_verification_date", "DATE"),
+                ("is_active", "BOOLEAN NOT NULL DEFAULT 1"),
             ):
                 if name not in existing:
                     conn.exec_driver_sql(

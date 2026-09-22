@@ -4,7 +4,7 @@ import uuid
 from datetime import date
 from decimal import Decimal
 
-from sqlalchemy import Date, ForeignKey, Numeric, String, UniqueConstraint
+from sqlalchemy import Boolean, Date, ForeignKey, Numeric, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import TimestampMixin, uuid_pk
@@ -28,6 +28,7 @@ class BankAccount(Base, TimestampMixin):
     opening_balance: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
     opening_balance_as_of: Mapped[date | None] = mapped_column(Date)
     last_verification_date: Mapped[date | None] = mapped_column(Date)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
     property: Mapped["Property | None"] = relationship(back_populates="bank_accounts")
     deposits: Mapped[list["Deposit"]] = relationship(back_populates="bank_account")

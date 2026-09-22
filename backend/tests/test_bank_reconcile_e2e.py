@@ -537,9 +537,12 @@ def test_frontend_verification_surface_exists():
         frontend = ROOT.parent / "frontend" / "src"
     app_tsx = (frontend / "App.tsx").read_text(encoding="utf-8")
     assert "VerificationPage" in app_tsx
+    assert "CreditCardsPage" in app_tsx
     assert 'path="verification"' in app_tsx or "path='verification'" in app_tsx
+    assert 'path="credit-cards"' in app_tsx or "path='credit-cards'" in app_tsx
     shell = (frontend / "components" / "layout" / "AppShell.tsx").read_text(encoding="utf-8")
     assert "Verification" in shell
+    assert "Credit cards" in shell
     page = (frontend / "pages" / "VerificationPage.tsx").read_text(encoding="utf-8")
     assert "VerificationWorkspace" in page
     assert "Bank balance" in page

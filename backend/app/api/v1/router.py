@@ -6,6 +6,7 @@ from app.api.v1 import (
     alerts,
     auth,
     bank_settings,
+    credit_cards,
     dashboard,
     deposits,
     expenses,
@@ -24,6 +25,7 @@ api_router.include_router(auth.router)
 api_router.include_router(meta.router)
 api_router.include_router(dashboard.router)
 api_router.include_router(bank_settings.router)
+api_router.include_router(credit_cards.router)
 api_router.include_router(owners.router)
 api_router.include_router(properties.router)
 api_router.include_router(deposits.router)

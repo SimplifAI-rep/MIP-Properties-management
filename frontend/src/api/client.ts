@@ -242,6 +242,26 @@ export const api = {
       `/bank-settings/cc-reconcile/sessions/${sessionId}/complete`,
       { method: 'POST' },
     ),
+  getCreditCards: () =>
+    request<import('../types').CreditCard[]>('/credit-cards'),
+  createCreditCard: (payload: {
+    card_last4: string;
+    label?: string;
+    bank_name?: string;
+    is_active?: boolean;
+  }) =>
+    request<import('../types').CreditCard>('/credit-cards', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  updateCreditCard: (
+    id: string,
+    payload: { label?: string; bank_name?: string; is_active?: boolean },
+  ) =>
+    request<import('../types').CreditCard>(`/credit-cards/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    }),
   getVerificationWorkspace: () =>
     request<import('../types').VerificationWorkspace>(
       '/bank-settings/verification-workspace',

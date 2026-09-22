@@ -801,6 +801,29 @@ class VerificationCreditCard(BaseModel):
     open_session_id: str | None = None
     pending_count: int = 0
     last_verification_date: str | None = None
+    is_active: bool = True
+
+
+class CreditCardRead(BaseModel):
+    id: str
+    card_last4: str
+    label: str
+    bank_name: str
+    is_active: bool = True
+    open_session_id: str | None = None
+
+
+class CreditCardCreate(BaseModel):
+    card_last4: str
+    label: str | None = None
+    bank_name: str | None = None
+    is_active: bool = True
+
+
+class CreditCardUpdate(BaseModel):
+    label: str | None = None
+    bank_name: str | None = None
+    is_active: bool | None = None
 
 
 class VerificationWorkspaceResponse(BaseModel):

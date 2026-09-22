@@ -577,6 +577,7 @@ def verification_workspace(db: Session) -> dict:
             "open_session_id": None,
             "pending_count": 0,
             "last_verification_date": None,
+            "is_active": bool(getattr(account, "is_active", True)),
         }
 
     for session in db.scalars(select(CcReconcileSession)):
@@ -592,6 +593,7 @@ def verification_workspace(db: Session) -> dict:
                 "open_session_id": None,
                 "pending_count": 0,
                 "last_verification_date": None,
+                "is_active": True,
             },
         )
         if session.status == "in_progress":

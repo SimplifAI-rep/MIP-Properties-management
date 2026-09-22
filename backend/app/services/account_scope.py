@@ -62,7 +62,9 @@ def list_operating_accounts(db: Session) -> list[BankAccount]:
     return [a for a in all_rows if not is_credit_card_account(a)]
 
 
-def list_credit_card_accounts(db: Session) -> list[BankAccount]:
+def list_credit_card_accounts(
+    db: Session, *, include_inactive: bool = True
+) -> list[BankAccount]:
     rows = list(
         db.scalars(
             select(BankAccount)
@@ -70,7 +72,10 @@ def list_credit_card_accounts(db: Session) -> list[BankAccount]:
             .order_by(BankAccount.account_number.asc())
         )
     )
-    return [a for a in rows if is_credit_card_account(a)]
+    cards = [a for a in rows if is_credit_card_account(a)]
+    if include_inactive:
+        return cards
+    return [a for a in cards if getattr(a, "is_active", True)]
 
 
 def get_default_operating_account(db: Session) -> BankAccount | None:
@@ -121,6 +126,9 @@ def ensure_cc_account(db: Session, card_last4: str, *, currency: str = "ILS") ->
         select(BankAccount).where(BankAccount.account_number == account_number)
     ).first()
     if existing:
+        if not getattr(existing, "is_active", True):
+            existing.is_active = True
+            db.add(existing)
         return existing
     account = BankAccount(
         property_id=None,
@@ -128,6 +136,7 @@ def ensure_cc_account(db: Session, card_last4: str, *, currency: str = "ILS") ->
         account_number=account_number,
         currency=currency,
         label=f"Credit card ••{last4}",
+        is_active=True,
     )
     db.add(account)
     db.flush()

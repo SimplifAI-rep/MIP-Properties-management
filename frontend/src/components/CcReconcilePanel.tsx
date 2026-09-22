@@ -59,7 +59,9 @@ export function CcReconcilePanel() {
     queryKey: ['verification-workspace'],
     queryFn: () => api.getVerificationWorkspace(),
   });
-  const creditCards = workspaceQuery.data?.credit_cards ?? [];
+  const creditCards = (workspaceQuery.data?.credit_cards ?? []).filter(
+    (card) => card.is_active !== false || Boolean(card.open_session_id),
+  );
 
   const sessionQuery = useQuery({
     queryKey: ['cc-reconcile-session', sessionId],

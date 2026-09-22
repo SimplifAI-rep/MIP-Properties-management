@@ -817,6 +817,16 @@ export interface VerificationCreditCard {
   open_session_id: string | null;
   pending_count: number;
   last_verification_date: string | null;
+  is_active?: boolean;
+}
+
+export interface CreditCard {
+  id: string;
+  card_last4: string;
+  label: string;
+  bank_name: string;
+  is_active: boolean;
+  open_session_id: string | null;
 }
 
 export interface VerificationWorkspace {

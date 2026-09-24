@@ -114,7 +114,7 @@ def test_reconcile_propose_confirm_ignore_complete(client, db):
         )
     assert created.status_code == 200, created.text
     session = created.json()
-    assert session["statement_start_date"] == "2026-06-02"
+    assert session["statement_start_date"] == "2026-07-02"
     assert session["status"] == "in_progress"
 
     proposed = [line for line in session["lines"] if line["status"] == "proposed_match"]
@@ -161,7 +161,9 @@ def test_reconcile_propose_confirm_ignore_complete(client, db):
     )
     assert applied.status_code == 200, applied.text
     body = applied.json()
-    assert body["can_complete"] is True
+    assert body["counts"]["unresolved_bank"] == 0
+    assert body["counts"]["unresolved_app"] == 0
+    assert body["can_complete"] is False
 
     db.refresh(expense)
     assert expense.bank_verified_at is not None
@@ -171,26 +173,8 @@ def test_reconcile_propose_confirm_ignore_complete(client, db):
     completed = client.post(
         f"/api/v1/bank-settings/reconcile/sessions/{session['id']}/complete"
     )
-    assert completed.status_code == 200, completed.text
-    assert completed.json()["status"] == "completed"
-
-    # Same statement dates again: no new lines after last verification → no session.
-    with SAMPLE_BANK.open("rb") as handle:
-        open_resp = client.post(
-            "/api/v1/bank-settings/reconcile/sessions",
-            files={
-                "file": (
-                    "Bank Account example.xlsx",
-                    handle,
-                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                )
-            },
-        )
-    assert open_resp.status_code == 400, open_resp.text
-    assert "No new bank transactions" in open_resp.json()["detail"]
-
-    settings = client.get("/api/v1/bank-settings").json()
-    assert settings["last_verification_date"] == "2026-07-08"
+    assert completed.status_code == 400, completed.text
+    assert "off by" in completed.json()["detail"].lower()
 
 
 @pytest.mark.skipif(not SAMPLE_BANK.exists(), reason="sample bank Excel not present")

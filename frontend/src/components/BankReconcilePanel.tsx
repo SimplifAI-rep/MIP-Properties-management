@@ -10,7 +10,11 @@ import {
   VerifyRowTable,
   VerifySpinner,
 } from './verifyGroups';
-import { PeriodBalanceCheck, balanceMismatchCopy } from './PeriodBalanceCheck';
+import {
+  PeriodBalanceCheck,
+  finishGapCopy,
+  gapExceedsFinishTolerance,
+} from './PeriodBalanceCheck';
 import { ConfirmButton } from './ui/ConfirmButton';
 import { FileDropzone } from './ui/FileDropzone';
 import { OwnerPropertyFields } from './ui/OwnerPropertyFields';
@@ -620,6 +624,7 @@ export function BankReconcilePanel() {
     (tx) => !ignoredAppIds.has(tx.id),
   ).length;
 
+  const gapOff = gapExceedsFinishTolerance(activeSession?.gap_verified);
   const completeBlockers: string[] = [];
   if (activeSession && !activeSession.can_complete) {
     if (remainingItems > 0) {
@@ -631,14 +636,13 @@ export function BankReconcilePanel() {
         `${unassigned} still on Needs assignment — pick a real owner and property`,
       );
     }
+    if (gapOff) {
+      completeBlockers.push(finishGapCopy(activeSession.gap_verified));
+    }
     if (completeBlockers.length === 0) {
       completeBlockers.push('Not ready to finish yet');
     }
   }
-  const gapOff =
-    Boolean(activeSession) &&
-    activeSession!.gap_verified != null &&
-    activeSession!.within_tolerance_verified === false;
 
   const showUpload = !activeSession && !sessionQuery.isLoading;
 
@@ -1176,35 +1180,19 @@ export function BankReconcilePanel() {
               <p className="text-sm text-amber-700 dark:text-amber-300">
                 {completeBlockers.join(' · ')}
               </p>
-            ) : gapOff ? (
-              <p className="text-sm text-amber-700 dark:text-amber-300">
-                Everything is handled — {balanceMismatchCopy(activeSession.gap_verified)}.
-                Confirm to finish anyway.
-              </p>
             ) : (
               <p className="text-sm text-emerald-700 dark:text-emerald-300">
                 Everything is handled — ready to finish.
               </p>
             )}
-            {gapOff && activeSession.can_complete ? (
-              <ConfirmButton
-                label="Finish anyway"
-                confirmLabel="Yes, finish anyway"
-                className="btn-primary"
-                disabled={busy}
-                pending={completeMutation.isPending}
-                onConfirm={() => completeMutation.mutate(activeSession.id)}
-              />
-            ) : (
-              <button
-                type="button"
-                className="btn-primary"
-                disabled={busy || !activeSession.can_complete}
-                onClick={() => completeMutation.mutate(activeSession.id)}
-              >
-                {completeMutation.isPending ? 'Finishing…' : 'Finish period'}
-              </button>
-            )}
+            <button
+              type="button"
+              className="btn-primary"
+              disabled={busy || !activeSession.can_complete}
+              onClick={() => completeMutation.mutate(activeSession.id)}
+            >
+              {completeMutation.isPending ? 'Finishing…' : 'Finish period'}
+            </button>
           </div>
         </div>
       ) : null}

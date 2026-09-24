@@ -56,10 +56,10 @@ Payback is a separate deposit. Finish only when `|gap| ≤ 0.01`.
 
 ## Phase F — Finish only when balanced
 
-- [ ] F1. `can_complete` also requires `|gap| ≤ 0.01`
-- [ ] F2. Remove **Finish anyway**
-- [ ] F3. Copy: period is off by ₪X — create a transaction for that amount
-- [ ] F4. Tests: finish blocked when gap is off; allowed at 0
+- [x] F1. `can_complete` also requires `|gap| ≤ 0.01`
+- [x] F2. Remove **Finish anyway**
+- [x] F3. Copy: period is off by ₪X — create a transaction for that amount
+- [x] F4. Tests: finish blocked when gap is off; allowed at 0
 
 ## Phase G — Check in the browser
 

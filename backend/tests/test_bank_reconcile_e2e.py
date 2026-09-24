@@ -300,7 +300,11 @@ def test_step4_match_confirm_cannot_complete_then_ignore(client, db):
         json={"actions": actions},
     )
     assert applied.status_code == 200
-    assert applied.json()["can_complete"] is True
+    body = applied.json()
+    assert body["counts"]["unresolved_bank"] == 0
+    assert body["counts"]["unresolved_app"] == 0
+    # Ignored leftover bank lines leave a gap — finish stays blocked.
+    assert body["can_complete"] is False
 
     db.refresh(expense)
     assert expense.bank_verified_at is not None
@@ -310,16 +314,8 @@ def test_step4_match_confirm_cannot_complete_then_ignore(client, db):
     completed = client.post(
         f"/api/v1/bank-settings/reconcile/sessions/{session['id']}/complete"
     )
-    assert completed.status_code == 200
-    settings = client.get("/api/v1/bank-settings").json()
-    assert settings["last_verification_date"] == "2026-07-08"
-
-    # Re-upload of the same period creates no new verification group
-    count_before = db.query(Expense).count()
-    again = _upload(client, SAMPLE_BANK, "/api/v1/bank-settings/reconcile/sessions")
-    assert again.status_code == 400
-    assert "No new bank transactions" in again.json()["detail"]
-    assert db.query(Expense).count() == count_before
+    assert completed.status_code == 400
+    assert "off by" in completed.json()["detail"].lower()
 
 
 def test_step4_add_from_bank_creates_verified(client, db):
@@ -591,9 +587,9 @@ def test_frontend_verification_surface_exists():
     assert "Push to next cycle" in bank_panel
     assert "not in this payment" in bank_panel
     assert "PeriodBalanceCheck" in bank_panel
-    assert "Finish anyway" in bank_panel
+    assert "Finish anyway" not in bank_panel
+    assert "finishGapCopy" in bank_panel
     assert "Restore the in-progress period" in bank_panel
-    assert "balanceMismatchCopy" in bank_panel
     history = (frontend / "components" / "HistorySessionGroups.tsx").read_text(
         encoding="utf-8"
     )
@@ -602,6 +598,9 @@ def test_frontend_verification_surface_exists():
         frontend / "components" / "PeriodBalanceCheck.tsx"
     ).read_text(encoding="utf-8")
     assert "Totals match" in (
+        frontend / "components" / "PeriodBalanceCheck.tsx"
+    ).read_text(encoding="utf-8")
+    assert "create a transaction for that amount" in (
         frontend / "components" / "PeriodBalanceCheck.tsx"
     ).read_text(encoding="utf-8")
     assert "Bank in" in (

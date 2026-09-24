@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -14,7 +14,6 @@ from app.api.deps import get_db
 from app.core.admin_auth import require_admin
 from app.core.database import Base
 from app.main import app
-from app.models.alert_action import AlertAction
 from app.models.expense import Expense
 from app.services.bank_reconcile_gap import parse_bank_statement_lines
 from app.services.seed import PROPERTY_ROTHSCHILD_ID, seed_reference_data
@@ -224,17 +223,18 @@ def test_fixing_session_clears_reconcile_alerts(client, db):
         json={"actions": actions},
     )
     assert applied.status_code == 200
-    assert applied.json()["can_complete"] is True
+    body = applied.json()
+    assert body["counts"]["unresolved_bank"] == 0
+    assert body["counts"]["unresolved_app"] == 0
+    assert body["can_complete"] is False
 
     completed = client.post(
         f"/api/v1/bank-settings/reconcile/sessions/{session['id']}/complete"
     )
-    assert completed.status_code == 200
+    assert completed.status_code == 400
 
     after = client.get("/api/v1/alerts?property_status=all").json()
-    reconcile_types = {"bank_unmatched", "app_unmatched", "bank_gap"}
-    assert not any(item["alert_type"] in reconcile_types for item in after["items"])
-    leftover = db.scalars(
-        select(AlertAction).where(AlertAction.alert_key.like("bank_unmatched:%"))
-    ).all()
-    assert leftover == []
+    assert not any(
+        item["alert_type"] in {"bank_unmatched", "app_unmatched"}
+        for item in after["items"]
+    )

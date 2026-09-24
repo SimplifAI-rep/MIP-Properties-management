@@ -33,6 +33,23 @@ export function balanceMismatchCopy(
     : `${amount} more in the app than in the bank`;
 }
 
+/** Finish is blocked until identity is ₪0. */
+export function finishGapCopy(
+  gap: string | number | null | undefined,
+): string {
+  const n = Number(gap ?? 0);
+  const amount = formatCurrency(Number.isFinite(n) ? Math.abs(n) : 0);
+  return `Period is off by ${amount} — create a transaction for that amount`;
+}
+
+export function gapExceedsFinishTolerance(
+  gap: string | number | null | undefined,
+): boolean {
+  if (gap == null || gap === '') return false;
+  const n = Number(gap);
+  return Number.isFinite(n) && Math.abs(n) > 0.01;
+}
+
 function asOutflow(amount: string | number | null | undefined): number | null {
   if (amount == null) return null;
   const n = Number(amount);

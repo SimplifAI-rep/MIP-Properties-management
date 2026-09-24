@@ -128,6 +128,7 @@ def _parse_iso_date(value: str | None) -> date | None:
 
 NEAR_MISS_AMOUNT = Decimal("2.00")
 NEAR_MISS_DAYS = 5
+FINISH_GAP_TOLERANCE = Decimal("0.01")
 _BANK_SKIP_PAYMENT_METHODS = ("credit_card", "owner_personal")
 
 
@@ -1101,8 +1102,7 @@ def session_summary(db: Session, session: BankReconcileSession) -> dict:
     unresolved_bank = sum(1 for line in lines if _line_requires_bank_action(line))
     unresolved_app = app_unmatched
     unassigned_count = session_unassigned_count(db, lines)
-    # Lists must be handled, and bank-created rows must leave UNASSIGNED.
-    can_complete = (
+    lists_ready = (
         unresolved_bank == 0 and unresolved_app == 0 and unassigned_count == 0
     )
 
@@ -1166,6 +1166,12 @@ def session_summary(db: Session, session: BankReconcileSession) -> dict:
         flow_gap = bank_net - period_net
         gap_verified = flow_gap
         within = abs(flow_gap) <= tolerance
+
+    gap_ok = (
+        gap_verified is not None and abs(gap_verified) <= FINISH_GAP_TOLERANCE
+    )
+    # Lists handled, bank-created rows off UNASSIGNED, and identity at ₪0.
+    can_complete = lists_ready and gap_ok
 
     response_lines = copy.deepcopy(lines)
     response_apps = copy.deepcopy(apps)
@@ -1514,7 +1520,18 @@ def apply_actions(db: Session, session: BankReconcileSession, actions: list[dict
 def complete_session(db: Session, session: BankReconcileSession) -> BankReconcileSession:
     summary = session_summary(db, session)
     if not summary["can_complete"]:
-        raise ValueError("Cannot complete: unresolved bank/app lines remain")
+        counts = summary.get("counts") or {}
+        if (
+            (counts.get("unresolved_bank") or 0) > 0
+            or (counts.get("unresolved_app") or 0) > 0
+            or (counts.get("unassigned") or 0) > 0
+        ):
+            raise ValueError("Cannot complete: unresolved bank/app lines remain")
+        gap = summary.get("gap_verified")
+        raise ValueError(
+            f"Cannot complete: period is off by {gap}. "
+            "Create a transaction for that amount."
+        )
     settings = get_or_create_settings(db)
     if session.statement_end_date is not None:
         from app.models.bank_account import BankAccount

@@ -652,3 +652,5 @@ def test_frontend_verification_surface_exists():
     alerts = (frontend / "pages" / "AlertsPage.tsx").read_text(encoding="utf-8")
     assert "cc_unmatched" in alerts
     assert "Open Verification" in alerts
+    assert "unassigned_transaction" in alerts
+    assert "Open Transactions" in alerts

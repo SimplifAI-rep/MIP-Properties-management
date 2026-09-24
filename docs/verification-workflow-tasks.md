@@ -30,11 +30,11 @@ Payback is a separate deposit. Finish only when `|gap| ≤ 0.01`.
 
 ## Phase C — Alerts
 
-- [ ] C1. Alert type for unassigned / needs-handling transactions
-- [ ] C2. Raise one alert per UNASSIGNED transaction
-- [ ] C3. Clear the alert when the property is no longer UNASSIGNED
-- [ ] C4. Alert links to Transactions (or open Verification if a period is in progress)
-- [ ] C5. Tests for alert create/clear
+- [x] C1. Alert type for unassigned / needs-handling transactions
+- [x] C2. Raise one alert per UNASSIGNED transaction
+- [x] C3. Clear the alert when the property is no longer UNASSIGNED
+- [x] C4. Alert links to Transactions (or open Verification if a period is in progress)
+- [x] C5. Tests for alert create/clear
 
 ## Phase D — Multiple files
 

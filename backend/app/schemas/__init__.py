@@ -508,6 +508,7 @@ class AlertRead(BaseModel):
         "upload_pending",
         "duplicate_deposit",
         "incomplete_import",
+        "unassigned_transaction",
         "low_balance",
         "bank_unmatched",
         "app_unmatched",

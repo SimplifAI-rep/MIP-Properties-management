@@ -30,6 +30,7 @@ from app.services.bank_reconcile import session_summary as bank_session_summary
 from app.services.cc_reconcile import session_summary as cc_session_summary
 from app.services.deposit_query import create_deposit, find_deposit_gaps
 from app.services.document_import import DocumentImportService
+from app.services.holding import UNASSIGNED_PROP_ID, UNASSIGNED_REVIEW_REASON, is_unassigned_property
 from app.services.running_balance import property_float_totals
 
 RECONCILE_ALERT_TYPES = frozenset(
@@ -62,6 +63,50 @@ def _incomplete_expense_key(expense_id: UUID) -> str:
 
 def _incomplete_deposit_key(deposit_id: UUID) -> str:
     return f"incomplete_import:deposit:{deposit_id}"
+
+
+def _unassigned_expense_key(expense_id: UUID) -> str:
+    return f"unassigned_transaction:expense:{expense_id}"
+
+
+def _unassigned_deposit_key(deposit_id: UUID) -> str:
+    return f"unassigned_transaction:deposit:{deposit_id}"
+
+
+def _is_unassigned_alert_row(row: Expense | Deposit, prop: Property | None) -> bool:
+    if is_unassigned_property(prop):
+        return True
+    reasons = (getattr(row, "review_reasons", None) or "").split(",")
+    return UNASSIGNED_REVIEW_REASON in {part.strip() for part in reasons}
+
+
+def _open_verification_link_for_tx(
+    db: Session, *, kind: str, tx_id: UUID
+) -> str | None:
+    tx_id_str = str(tx_id)
+    bank_sessions = db.scalars(
+        select(BankReconcileSession).where(BankReconcileSession.status == "in_progress")
+    ).all()
+    for session in bank_sessions:
+        for line in session.lines_json or []:
+            if str(line.get("proposed_tx_id") or "") != tx_id_str:
+                continue
+            if line.get("status") not in {"added", "matched"}:
+                continue
+            return _verification_link(session.id)
+    if kind != "expense":
+        return None
+    cc_sessions = db.scalars(
+        select(CcReconcileSession).where(CcReconcileSession.status == "in_progress")
+    ).all()
+    for session in cc_sessions:
+        for line in session.lines_json or []:
+            if str(line.get("proposed_tx_id") or "") != tx_id_str:
+                continue
+            if line.get("status") not in {"added", "matched"}:
+                continue
+            return f"/verification?cc_session={session.id}"
+    return None
 
 
 def _low_balance_key(property_id: UUID) -> str:
@@ -303,6 +348,134 @@ def _append_cc_reconcile_alerts(
         )
 
     _clear_alert_actions(db, recovered_keys)
+
+
+def _append_unassigned_transaction_alerts(
+    db: Session,
+    alerts: list[AlertRead],
+    closed_keys: set[str],
+    *,
+    property_status: str | None = "active",
+) -> None:
+    """One alert per transaction still sitting on Needs assignment / UNASSIGNED."""
+    holding = db.scalars(
+        select(Property).where(Property.client_prop_id == UNASSIGNED_PROP_ID)
+    ).first()
+    if holding is None:
+        return
+    if not _include_property_status(holding.status, property_status=property_status):
+        return
+
+    expenses = (
+        db.scalars(
+            select(Expense)
+            .options(joinedload(Expense.property).joinedload(Property.owner))
+            .where(Expense.property_id == holding.id)
+            .order_by(Expense.created_at.desc())
+        )
+        .unique()
+        .all()
+    )
+    deposits = (
+        db.scalars(
+            select(Deposit)
+            .options(joinedload(Deposit.property).joinedload(Property.owner))
+            .where(Deposit.property_id == holding.id)
+            .order_by(Deposit.created_at.desc())
+        )
+        .unique()
+        .all()
+    )
+
+    open_keys: set[str] = set()
+    for expense in expenses:
+        alert_id = _unassigned_expense_key(expense.id)
+        open_keys.add(alert_id)
+        if alert_id in closed_keys:
+            continue
+        amount = expense.amount
+        when = (
+            expense.transaction_date.isoformat() if expense.transaction_date else "unknown date"
+        )
+        link = _open_verification_link_for_tx(db, kind="expense", tx_id=expense.id)
+        alerts.append(
+            AlertRead(
+                id=alert_id,
+                alert_type="unassigned_transaction",
+                severity="warning",
+                title="Needs assignment — UNASSIGNED",
+                message=(
+                    f"Bank-created expense of {amount} on {when} is still on Needs "
+                    "assignment. Pick a real owner and property."
+                ),
+                property_id=expense.property_id,
+                property_name=expense.property.name if expense.property else None,
+                owner_name=(
+                    expense.property.owner.name
+                    if expense.property and expense.property.owner
+                    else None
+                ),
+                transaction_type="expense",
+                expense_id=expense.id,
+                transaction_date=expense.transaction_date,
+                amount=expense.amount,
+                section=expense.category,
+                notes=expense.notes,
+                review_reasons=expense.review_reasons,
+                created_at=expense.created_at,
+                link_path=link or "/transactions",
+            )
+        )
+
+    for deposit in deposits:
+        alert_id = _unassigned_deposit_key(deposit.id)
+        open_keys.add(alert_id)
+        if alert_id in closed_keys:
+            continue
+        amount = deposit.amount
+        when = (
+            deposit.transaction_date.isoformat() if deposit.transaction_date else "unknown date"
+        )
+        link = _open_verification_link_for_tx(db, kind="deposit", tx_id=deposit.id)
+        alerts.append(
+            AlertRead(
+                id=alert_id,
+                alert_type="unassigned_transaction",
+                severity="warning",
+                title="Needs assignment — UNASSIGNED",
+                message=(
+                    f"Bank-created deposit of {amount} on {when} is still on Needs "
+                    "assignment. Pick a real owner and property."
+                ),
+                property_id=deposit.property_id,
+                property_name=deposit.property.name if deposit.property else None,
+                owner_name=(
+                    deposit.property.owner.name
+                    if deposit.property and deposit.property.owner
+                    else None
+                ),
+                transaction_type="deposit",
+                deposit_id=deposit.id,
+                transaction_date=deposit.transaction_date,
+                amount=deposit.amount,
+                section=deposit.description,
+                notes=None,
+                review_reasons=deposit.review_reasons,
+                created_at=deposit.created_at,
+                link_path=link or "/transactions",
+            )
+        )
+
+    stale = [
+        row.alert_key
+        for row in db.scalars(
+            select(AlertAction).where(
+                AlertAction.alert_key.like("unassigned_transaction:%")
+            )
+        ).all()
+        if row.alert_key not in open_keys
+    ]
+    _clear_alert_actions(db, stale)
 
 
 def _include_property_status(
@@ -559,6 +732,8 @@ def list_alerts(
             property_status=property_status,
         ):
             continue
+        if _is_unassigned_alert_row(expense, prop):
+            continue
         alert_id = _incomplete_expense_key(expense.id)
         if alert_id in closed_keys:
             continue
@@ -603,6 +778,8 @@ def list_alerts(
             property_status=property_status,
         ):
             continue
+        if _is_unassigned_alert_row(deposit, prop):
+            continue
         alert_id = _incomplete_deposit_key(deposit.id)
         if alert_id in closed_keys:
             continue
@@ -633,6 +810,9 @@ def list_alerts(
             )
         )
 
+    _append_unassigned_transaction_alerts(
+        db, alerts, closed_keys, property_status=property_status
+    )
     _append_low_balance_alerts(
         db, alerts, closed_keys, property_status=property_status
     )

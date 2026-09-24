@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
 import type { AlertItem, DepositCreate, TransactionDraft } from '../types';
 import {
@@ -51,6 +51,7 @@ const ALERT_TYPE_OPTIONS: { value: AlertTypeFilter; label: string }[] = [
   { value: 'needs_review', label: 'Needs review' },
   { value: 'duplicate_deposit', label: 'Possible duplicate' },
   { value: 'upload_pending', label: 'Upload review' },
+  { value: 'unassigned_transaction', label: 'Needs assignment' },
   { value: 'bank_unmatched', label: 'Unmatched bank' },
   { value: 'app_unmatched', label: 'Unmatched app' },
   { value: 'bank_gap', label: 'Bank Gap' },
@@ -130,6 +131,7 @@ function typeLabel(alert: AlertItem): string {
   if (alert.alert_type === 'incomplete_import') {
     return incompleteReasonKeys(alert).map(reasonLabel).join(' · ');
   }
+  if (alert.alert_type === 'unassigned_transaction') return 'Needs assignment';
   if (alert.alert_type === 'missing_deposit') return 'Missing deposit';
   if (alert.alert_type === 'low_balance') return 'Low balance';
   if (alert.alert_type === 'duplicate_deposit') return 'Possible duplicate';
@@ -190,6 +192,7 @@ function buildDepositForm(alert: AlertItem): DepositCreate {
 
 export function AlertsPage() {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const detailPanelRef = useRef<HTMLElement>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [checkedIds, setCheckedIds] = useState<string[]>([]);
@@ -763,6 +766,82 @@ export function AlertsPage() {
                     </button>
                   </div>
                 </div>
+              ) : selectedAlert.alert_type === 'unassigned_transaction' ? (
+                <div className="space-y-4">
+                  <dl className="grid gap-2 text-sm sm:grid-cols-2">
+                    <div>
+                      <dt className="label-text">Owner / Property</dt>
+                      <dd>
+                        {selectedAlert.owner_name ?? 'Needs assignment'} ·{' '}
+                        {selectedAlert.property_name ?? 'UNASSIGNED'}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="label-text">Type</dt>
+                      <dd className="capitalize">{selectedAlert.transaction_type ?? '—'}</dd>
+                    </div>
+                    <div>
+                      <dt className="label-text">Date</dt>
+                      <dd>
+                        {selectedAlert.transaction_date
+                          ? formatDate(selectedAlert.transaction_date)
+                          : '—'}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="label-text">Amount</dt>
+                      <dd>
+                        {selectedAlert.amount
+                          ? formatCurrency(selectedAlert.amount)
+                          : '—'}
+                      </dd>
+                    </div>
+                  </dl>
+                  <p className="text-sm text-muted">
+                    Assign a real owner and property. If a verification period is still
+                    open, edit the row there; otherwise open Transactions.
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {selectedAlert.link_path?.startsWith('/verification') ? (
+                      <Link to={selectedAlert.link_path} className="btn-primary">
+                        Open Verification
+                      </Link>
+                    ) : null}
+                    <button
+                      type="button"
+                      className={
+                        selectedAlert.link_path?.startsWith('/verification')
+                          ? 'btn-secondary'
+                          : 'btn-primary'
+                      }
+                      onClick={() =>
+                        navigate('/transactions', {
+                          state: {
+                            highlightId:
+                              selectedAlert.expense_id || selectedAlert.deposit_id,
+                            highlightKind: selectedAlert.transaction_type,
+                            propertyIds: selectedAlert.property_id
+                              ? [selectedAlert.property_id]
+                              : undefined,
+                            propertyStatuses: ['active', 'inactive'],
+                          },
+                        })
+                      }
+                    >
+                      Open Transactions
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-secondary"
+                      disabled={dismissMutation.isPending}
+                      onClick={() =>
+                        dismissMutation.mutate({ alertId: selectedAlert.id })
+                      }
+                    >
+                      Dismiss
+                    </button>
+                  </div>
+                </div>
               ) : selectedAlert.alert_type === 'low_balance' ? (
                 <div className="space-y-4">
                   <dl className="grid gap-2 text-sm sm:grid-cols-2">
@@ -1161,7 +1240,8 @@ export function AlertsPage() {
                   </div>
                 </div>
               ) : selectedAlert.alert_type !== 'incomplete_import' &&
-                selectedAlert.alert_type !== 'missing_deposit' ? (
+                selectedAlert.alert_type !== 'missing_deposit' &&
+                selectedAlert.alert_type !== 'unassigned_transaction' ? (
                 <button
                   type="button"
                   className="btn-secondary"

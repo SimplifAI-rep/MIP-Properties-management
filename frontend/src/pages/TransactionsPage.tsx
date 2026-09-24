@@ -1942,62 +1942,65 @@ export function TransactionsPage() {
             </label>
           </>
                               ) : (
-                                <label className="text-sm flex items-end gap-2 pb-2 min-w-0">
-                                  <input
-                                    type="checkbox"
-                                    checked={editForm.is_rental_income}
-                                    onChange={(event) =>
-                                      patchEdit({
-                                        is_rental_income: event.target.checked,
-                                        is_payback: event.target.checked
-                                          ? false
-                                          : editForm.is_payback,
-                                      })
-                                    }
-                                  />
-                                  <span className="label-text mb-0">Rental income</span>
-                                </label>
-                                <label className="text-sm flex items-end gap-2 pb-2 min-w-0">
-                                  <input
-                                    type="checkbox"
-                                    checked={editForm.is_payback}
-                                    onChange={(event) =>
-                                      patchEdit({
-                                        is_payback: event.target.checked,
-                                        is_rental_income: event.target.checked
-                                          ? false
-                                          : editForm.is_rental_income,
-                                        payback_of_expense_id: event.target.checked
-                                          ? editForm.payback_of_expense_id
-                                          : null,
-                                      })
-                                    }
-                                  />
-                                  <span className="label-text mb-0">Payback</span>
-                                </label>
-                                {editForm.is_payback ? (
-                                  <label className="text-sm min-w-0">
-                                    <span className="label-text">Original expense</span>
-                                    <select
-                                      className="field"
-                                      value={editForm.payback_of_expense_id ?? ''}
+                                <>
+                                  <label className="text-sm flex items-end gap-2 pb-2 min-w-0">
+                                    <input
+                                      type="checkbox"
+                                      checked={editForm.is_rental_income}
                                       onChange={(event) =>
                                         patchEdit({
-                                          payback_of_expense_id: event.target.value || null,
+                                          is_rental_income: event.target.checked,
+                                          is_payback: event.target.checked
+                                            ? false
+                                            : editForm.is_payback,
                                         })
                                       }
-                                    >
-                                      <option value="">Not linked</option>
-                                      {paybackExpenses.map((expense) => (
-                                        <option key={expense.id} value={expense.id}>
-                                          {formatCurrency(expense.amount)} ·{' '}
-                                          {expense.transaction_date ?? '—'} ·{' '}
-                                          {expense.property_name}
-                                        </option>
-                                      ))}
-                                    </select>
+                                    />
+                                    <span className="label-text mb-0">Rental income</span>
                                   </label>
-                                ) : null}
+                                  <label className="text-sm flex items-end gap-2 pb-2 min-w-0">
+                                    <input
+                                      type="checkbox"
+                                      checked={editForm.is_payback}
+                                      onChange={(event) =>
+                                        patchEdit({
+                                          is_payback: event.target.checked,
+                                          is_rental_income: event.target.checked
+                                            ? false
+                                            : editForm.is_rental_income,
+                                          payback_of_expense_id: event.target.checked
+                                            ? editForm.payback_of_expense_id
+                                            : null,
+                                        })
+                                      }
+                                    />
+                                    <span className="label-text mb-0">Payback</span>
+                                  </label>
+                                  {editForm.is_payback ? (
+                                    <label className="text-sm min-w-0">
+                                      <span className="label-text">Original expense</span>
+                                      <select
+                                        className="field"
+                                        value={editForm.payback_of_expense_id ?? ''}
+                                        onChange={(event) =>
+                                          patchEdit({
+                                            payback_of_expense_id:
+                                              event.target.value || null,
+                                          })
+                                        }
+                                      >
+                                        <option value="">Not linked</option>
+                                        {paybackExpenses.map((expense) => (
+                                          <option key={expense.id} value={expense.id}>
+                                            {formatCurrency(expense.amount)} ·{' '}
+                                            {expense.transaction_date ?? '—'} ·{' '}
+                                            {expense.property_name}
+                                          </option>
+                                        ))}
+                                      </select>
+                                    </label>
+                                  ) : null}
+                                </>
                               )}
                               <label className="text-sm min-w-0 sm:col-span-2 lg:col-span-3 xl:col-span-4">
                                 <span className="label-text">Notes</span>

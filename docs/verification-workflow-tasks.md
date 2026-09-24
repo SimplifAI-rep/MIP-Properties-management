@@ -63,9 +63,9 @@ Payback is a separate deposit. Finish only when `|gap| ≤ 0.01`.
 
 ## Phase G — Check in the browser
 
-- [ ] G1. Create from bank → UNASSIGNED → alert
-- [ ] G2. Edit to a real property → alert clears
-- [ ] G3. Payback on a credit
-- [ ] G4. Merge a wrong-amount app row
-- [ ] G5. Attach more than one file
-- [ ] G6. Finish blocked until gap is 0, then finish succeeds
+- [x] G1. Create from bank → UNASSIGNED → alert
+- [x] G2. Edit to a real property → alert clears
+- [x] G3. Payback on a credit
+- [x] G4. Merge a wrong-amount app row
+- [x] G5. Attach more than one file
+- [x] G6. Finish blocked until gap is 0, then finish succeeds

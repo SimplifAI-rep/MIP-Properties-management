@@ -38,13 +38,13 @@ Payback is a separate deposit. Finish only when `|gap| ≤ 0.01`.
 
 ## Phase D — Multiple files
 
-- [ ] D1. `transaction_attachments` table (kind, transaction_id, upload_id, sort)
-- [ ] D2. API: list/add/remove attachments on a deposit or expense
-- [ ] D3. Keep `receipt_ref` as the first file so old rows still open
-- [ ] D4. Transactions create/edit: multi-file picker
-- [ ] D5. Transaction table: file count + preview
-- [ ] D6. Verification edit dialog: same multi-file picker
-- [ ] D7. Tests for attach / list / preview
+- [x] D1. `transaction_attachments` table (kind, transaction_id, upload_id, sort)
+- [x] D2. API: list/add/remove attachments on a deposit or expense
+- [x] D3. Keep `receipt_ref` as the first file so old rows still open
+- [x] D4. Transactions create/edit: multi-file picker
+- [x] D5. Transaction table: file count + preview
+- [x] D6. Verification edit dialog: same multi-file picker
+- [x] D7. Tests for attach / list / preview
 
 ## Phase E — Diagnostics, merge, He/She & rental
 

@@ -180,6 +180,9 @@ def list_expenses(
         )
         for expense, property_name, owner_name, client_prop_id_val in rows
     ]
+    from app.services.attachments import apply_attachments
+
+    apply_attachments(db, "expense", items, expenses)
     return items, total
 
 

@@ -14,6 +14,7 @@ import { PeriodBalanceCheck, balanceMismatchCopy } from './PeriodBalanceCheck';
 import { ConfirmButton } from './ui/ConfirmButton';
 import { FileDropzone } from './ui/FileDropzone';
 import { OwnerPropertyFields } from './ui/OwnerPropertyFields';
+import { TransactionAttachmentsField } from './ui/TransactionAttachmentsField';
 import { PaidWithSelect } from './ui/PaidWithSelect';
 import { SECTION_SUGGESTIONS } from '../constants/expenseOptions';
 import { formatCurrency, formatDate } from './ui/States';
@@ -734,11 +735,13 @@ export function BankReconcilePanel() {
                     onChange={(event) => setEditNotes(event.target.value)}
                   />
                 </label>
+                <div className="sm:col-span-2">
+                  <TransactionAttachmentsField
+                    kind={editingAdded.kind}
+                    transactionId={editingAdded.id}
+                  />
+                </div>
               </div>
-              <p className="mt-2 text-xs muted-text">
-                Attach files from Transactions for now. Multiple files come in the next
-                files step.
-              </p>
               <div className="mt-3 flex flex-wrap gap-2">
                 <button
                   type="button"

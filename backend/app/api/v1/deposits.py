@@ -2,11 +2,12 @@ from datetime import date
 from decimal import Decimal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, File, Query, UploadFile
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db
 from app.schemas import (
+    AttachmentRead,
     DepositCreate,
     DepositGap,
     DepositListResponse,
@@ -14,6 +15,7 @@ from app.schemas import (
     DepositSummary,
     DepositUpdate,
 )
+from app.services.attachments import add_attachment, list_attachments, remove_attachment
 from app.services.deposit_query import (
     create_deposit,
     delete_deposit,
@@ -133,6 +135,40 @@ def deposit_gaps(
         date_from=date_from,
         date_to=date_to,
     )
+
+
+@router.get("/{deposit_id}/attachments", response_model=list[AttachmentRead])
+def get_deposit_attachments(
+    deposit_id: UUID,
+    db: Session = Depends(get_db),
+) -> list[AttachmentRead]:
+    return list_attachments(db, "deposit", deposit_id)
+
+
+@router.post("/{deposit_id}/attachments", response_model=list[AttachmentRead])
+async def post_deposit_attachment(
+    deposit_id: UUID,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+) -> list[AttachmentRead]:
+    content = await file.read()
+    return add_attachment(
+        db,
+        "deposit",
+        deposit_id,
+        filename=file.filename or "attachment",
+        content=content,
+        content_type=file.content_type,
+    )
+
+
+@router.delete("/{deposit_id}/attachments/{attachment_id}", response_model=list[AttachmentRead])
+def delete_deposit_attachment(
+    deposit_id: UUID,
+    attachment_id: str,
+    db: Session = Depends(get_db),
+) -> list[AttachmentRead]:
+    return remove_attachment(db, "deposit", deposit_id, attachment_id)
 
 
 @router.patch("/{deposit_id}", response_model=DepositRead)

@@ -1,4 +1,4 @@
-import type { Deposit, Expense, TransactionKind, UnifiedTransaction } from '../types';
+import type { Attachment, Deposit, Expense, TransactionKind, UnifiedTransaction } from '../types';
 import { formatLabel } from './formatLabel';
 
 export type { TransactionKind, UnifiedTransaction };
@@ -43,6 +43,7 @@ function depositToUnified(deposit: Deposit): UnifiedTransaction {
     company: null,
     source: deposit.source,
     receipt_ref: deposit.receipt_ref ?? null,
+    attachments: deposit.attachments ?? [],
     source_file: deposit.source_file ?? null,
     balance_after: deposit.balance_after ?? null,
     is_rental_income: Boolean(deposit.is_rental_income),
@@ -80,6 +81,7 @@ function expenseToUnified(expense: Expense): UnifiedTransaction {
     payment_method: expense.payment_method,
     source: expense.source,
     receipt_ref: expense.receipt_ref ?? null,
+    attachments: expense.attachments ?? [],
     source_file: expense.source_file ?? null,
     balance_after: expense.balance_after ?? null,
     paid_by_resident: Boolean(expense.paid_by_resident),
@@ -104,6 +106,25 @@ function asNullableString(value: unknown): string | null {
 
 function asBool(value: unknown): boolean {
   return Boolean(value);
+}
+
+function asAttachments(value: unknown): Attachment[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    if (!item || typeof item !== 'object') return [];
+    const row = item as Record<string, unknown>;
+    const uploadId = asNullableString(row.upload_id);
+    if (!uploadId) return [];
+    return [
+      {
+        id: asString(row.id, uploadId),
+        upload_id: uploadId,
+        filename: asString(row.filename, 'File'),
+        sort: Number(row.sort ?? 0),
+        is_legacy: asBool(row.is_legacy),
+      },
+    ];
+  });
 }
 
 /** True when the row is already in the shared TransactionRead / UnifiedTransaction shape. */
@@ -147,6 +168,7 @@ export function unifiedFromRecord(row: Record<string, unknown>): UnifiedTransact
     payment_method: asNullableString(row.payment_method),
     source,
     receipt_ref: asNullableString(row.receipt_ref),
+    attachments: asAttachments(row.attachments),
     source_file: asNullableString(row.source_file),
     balance_after: asNullableString(row.balance_after),
     paid_by_resident: asBool(row.paid_by_resident),
@@ -223,6 +245,7 @@ export function recordToUnified(
     payment_method: asNullableString(row.payment_method),
     source,
     receipt_ref: asNullableString(row.receipt_ref),
+    attachments: asAttachments(row.attachments),
     source_file: asNullableString(row.source_file),
     balance_after: asNullableString(row.balance_after),
     paid_by_resident: asBool(row.paid_by_resident),

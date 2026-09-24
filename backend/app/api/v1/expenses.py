@@ -2,11 +2,19 @@ from datetime import date
 from decimal import Decimal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, File, Query, UploadFile
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db
-from app.schemas import ExpenseCreate, ExpenseListResponse, ExpenseRead, ExpenseSummary, ExpenseUpdate
+from app.schemas import (
+    AttachmentRead,
+    ExpenseCreate,
+    ExpenseListResponse,
+    ExpenseRead,
+    ExpenseSummary,
+    ExpenseUpdate,
+)
+from app.services.attachments import add_attachment, list_attachments, remove_attachment
 from app.services.expense_query import (
     create_expense,
     delete_expense,
@@ -130,6 +138,40 @@ def expense_summary(
         include_all=include_all,
     )
     return ExpenseSummary(**data)
+
+
+@router.get("/{expense_id}/attachments", response_model=list[AttachmentRead])
+def get_expense_attachments(
+    expense_id: UUID,
+    db: Session = Depends(get_db),
+) -> list[AttachmentRead]:
+    return list_attachments(db, "expense", expense_id)
+
+
+@router.post("/{expense_id}/attachments", response_model=list[AttachmentRead])
+async def post_expense_attachment(
+    expense_id: UUID,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+) -> list[AttachmentRead]:
+    content = await file.read()
+    return add_attachment(
+        db,
+        "expense",
+        expense_id,
+        filename=file.filename or "attachment",
+        content=content,
+        content_type=file.content_type,
+    )
+
+
+@router.delete("/{expense_id}/attachments/{attachment_id}", response_model=list[AttachmentRead])
+def delete_expense_attachment(
+    expense_id: UUID,
+    attachment_id: str,
+    db: Session = Depends(get_db),
+) -> list[AttachmentRead]:
+    return remove_attachment(db, "expense", expense_id, attachment_id)
 
 
 @router.patch("/{expense_id}", response_model=ExpenseRead)

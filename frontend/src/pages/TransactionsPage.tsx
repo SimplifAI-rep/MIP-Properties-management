@@ -24,6 +24,7 @@ import {
 } from '../components/ui/TransactionFilterFields';
 import { Tooltip } from '../components/ui/Tooltip';
 import { OwnerPropertyFields } from '../components/ui/OwnerPropertyFields';
+import { TransactionAttachmentsField } from '../components/ui/TransactionAttachmentsField';
 import { PaidWithSelect } from '../components/ui/PaidWithSelect';
 import { TransactionUploadPanel } from '../components/TransactionUploadPanel';
 import { useFeedback } from '../context/FeedbackContext';
@@ -213,6 +214,8 @@ export function TransactionsPage() {
   const [showUpload, setShowUpload] = useState(false);
   const [form, setForm] = useState<ExpenseCreate>(() => makeEmptyForm());
   const [depositForm, setDepositForm] = useState<DepositCreate>(() => makeEmptyDepositForm());
+  const [expenseFiles, setExpenseFiles] = useState<File[]>([]);
+  const [depositFiles, setDepositFiles] = useState<File[]>([]);
   const [formError, setFormError] = useState<unknown>(null);
   const [editForm, setEditForm] = useState<TransactionEditForm | null>(null);
   const [editError, setEditError] = useState<unknown>(null);
@@ -504,10 +507,17 @@ export function TransactionsPage() {
   });
 
   const createMutation = useMutation({
-    mutationFn: api.createExpense,
+    mutationFn: async (payload: ExpenseCreate) => {
+      const created = await api.createExpense(payload);
+      for (const file of expenseFiles) {
+        await api.addAttachment('expense', created.id, file);
+      }
+      return created;
+    },
     onSuccess: () => {
       invalidateTransactionData(queryClient);
       setForm(makeEmptyForm());
+      setExpenseFiles([]);
       setFormOwnerId('');
       setShowForm(false);
       setFormError(null);
@@ -518,10 +528,17 @@ export function TransactionsPage() {
   });
 
   const createDepositMutation = useMutation({
-    mutationFn: api.createDeposit,
+    mutationFn: async (payload: DepositCreate) => {
+      const created = await api.createDeposit(payload);
+      for (const file of depositFiles) {
+        await api.addAttachment('deposit', created.id, file);
+      }
+      return created;
+    },
     onSuccess: () => {
       invalidateTransactionData(queryClient);
       setDepositForm(makeEmptyDepositForm());
+      setDepositFiles([]);
       setDepositOwnerId('');
       setShowDepositForm(false);
       setFormError(null);
@@ -1392,6 +1409,13 @@ export function TransactionsPage() {
                 }
               />
             </label>
+            <div className="md:col-span-2 xl:col-span-3">
+              <TransactionAttachmentsField
+                kind="deposit"
+                pendingFiles={depositFiles}
+                onPendingFilesChange={setDepositFiles}
+              />
+            </div>
             {formError && showDepositForm ? (
               <div className="md:col-span-2 xl:col-span-3">
                 <InlineError error={formError} />
@@ -1582,6 +1606,13 @@ export function TransactionsPage() {
                 }
               />
             </label>
+            <div className="md:col-span-2 xl:col-span-3">
+              <TransactionAttachmentsField
+                kind="expense"
+                pendingFiles={expenseFiles}
+                onPendingFilesChange={setExpenseFiles}
+              />
+            </div>
             {formError && showForm ? (
               <div className="md:col-span-2 xl:col-span-3">
                 <InlineError error={formError} />
@@ -1977,6 +2008,12 @@ export function TransactionsPage() {
                                   onChange={(event) => patchEdit({ notes: event.target.value })}
                                 />
                               </label>
+                              <div className="sm:col-span-2 lg:col-span-3 xl:col-span-4">
+                                <TransactionAttachmentsField
+                                  kind={editForm.kind}
+                                  transactionId={editForm.id}
+                                />
+                              </div>
                               {editError ? (
                                 <div className="sm:col-span-2 lg:col-span-3 xl:col-span-4">
                                   <InlineError error={editError} />

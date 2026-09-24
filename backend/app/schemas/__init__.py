@@ -60,6 +60,14 @@ class BankAccountRead(BaseModel):
     property_id: UUID | None = None
 
 
+class AttachmentRead(BaseModel):
+    id: str
+    upload_id: UUID
+    filename: str
+    sort: int
+    is_legacy: bool = False
+
+
 class DepositRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -80,6 +88,7 @@ class DepositRead(BaseModel):
     is_payback: bool = False
     payback_of_expense_id: UUID | None = None
     receipt_ref: str | None = None
+    attachments: list[AttachmentRead] = Field(default_factory=list)
     source_file: str | None = None
     balance_after: Decimal | None = None
     needs_review: bool = False
@@ -320,6 +329,7 @@ class TransactionRead(BaseModel):
     payment_method: str | None = None
     source: str | None = None
     receipt_ref: str | None = None
+    attachments: list[AttachmentRead] = Field(default_factory=list)
     source_file: str | None = None
     balance_after: Decimal | None = None
     needs_review: bool = False
@@ -362,6 +372,7 @@ class ExpenseRead(BaseModel):
     description: str | None = None
     notes: str | None = None
     receipt_ref: str | None = None
+    attachments: list[AttachmentRead] = Field(default_factory=list)
     source_file: str | None = None
     balance_after: Decimal | None = None
     reconciled: bool = False

@@ -46,6 +46,8 @@ export interface BankAccount {
   property_id?: string | null;
 }
 
+export type { Attachment } from './transaction';
+
 export interface Deposit {
   id: string;
   property_id: string;
@@ -64,6 +66,7 @@ export interface Deposit {
   is_payback?: boolean;
   payback_of_expense_id?: string | null;
   receipt_ref?: string | null;
+  attachments?: Attachment[];
   source_file?: string | null;
   balance_after?: string | null;
   needs_review?: boolean;
@@ -224,6 +227,7 @@ export interface Expense {
   description: string | null;
   notes?: string | null;
   receipt_ref?: string | null;
+  attachments?: Attachment[];
   source_file?: string | null;
   balance_after?: string | null;
   reconciled?: boolean;

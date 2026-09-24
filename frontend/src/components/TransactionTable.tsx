@@ -171,75 +171,61 @@ function FeedbackButton({ row }: { row: UnifiedTransaction }) {
 }
 
 function ReceiptCell({ row }: { row: UnifiedTransaction }) {
-  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewIndex, setPreviewIndex] = useState<number | null>(null);
+  const files =
+    row.attachments && row.attachments.length > 0
+      ? row.attachments
+      : isUploadReceiptRef(row.receipt_ref)
+        ? [
+            {
+              id: row.receipt_ref,
+              upload_id: row.receipt_ref,
+              filename: row.source_file || 'File',
+              sort: 0,
+            },
+          ]
+        : [];
 
-  if (!isUploadReceiptRef(row.receipt_ref)) {
+  if (files.length === 0) {
     return <span className="muted-text text-xs">—</span>;
   }
 
-  const uploadId = row.receipt_ref;
-  const filename = row.source_file;
-  const canPreview = isPreviewableFile(filename);
-
-  if (canPreview) {
-    return (
-      <>
-        <button
-          type="button"
-          className="btn-icon"
-          aria-label="View file"
-          title="View"
-          onClick={(event) => {
-            event.stopPropagation();
-            setPreviewOpen(true);
-          }}
-        >
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            viewBox="0 0 20 20"
-            fill="currentColor"
-            className="h-4 w-4"
-            aria-hidden="true"
-          >
-            <path d="M10 12.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5Z" />
-            <path
-              fillRule="evenodd"
-              d="M.664 10.59a1.651 1.651 0 0 1 0-1.186A10.004 10.004 0 0 1 10 3c4.257 0 7.893 2.66 9.336 6.41.147.381.146.804 0 1.186A10.004 10.004 0 0 1 10 17c-4.257 0-7.893-2.66-9.336-6.41ZM14 10a4 4 0 1 1-8 0 4 4 0 0 1 8 0Z"
-              clipRule="evenodd"
-            />
-          </svg>
-        </button>
-        {previewOpen ? (
-          <FilePreviewModal
-            uploadId={uploadId}
-            filename={filename}
-            onClose={() => setPreviewOpen(false)}
-          />
-        ) : null}
-      </>
-    );
-  }
+  const preview = previewIndex != null ? files[previewIndex] : null;
 
   return (
-    <a
-      href={api.getUploadFileUrl(uploadId, { download: true })}
-      download={filename || undefined}
-      className="btn-icon"
-      aria-label="Download file"
-      title="Download"
-      onClick={(event) => event.stopPropagation()}
-    >
-      <svg
-        xmlns="http://www.w3.org/2000/svg"
-        viewBox="0 0 20 20"
-        fill="currentColor"
-        className="h-4 w-4"
-        aria-hidden="true"
-      >
-        <path d="M10.75 2.75a.75.75 0 0 0-1.5 0v8.614L6.295 8.235a.75.75 0 1 0-1.09 1.03l4.25 4.5a.75.75 0 0 0 1.09 0l4.25-4.5a.75.75 0 0 0-1.09-1.03l-2.955 3.129V2.75Z" />
-        <path d="M3.5 12.75a.75.75 0 0 0-1.5 0v2.5A2.75 2.75 0 0 0 4.75 18h10.5A2.75 2.75 0 0 0 18 15.25v-2.5a.75.75 0 0 0-1.5 0v2.5c0 .69-.56 1.25-1.25 1.25H4.75c-.69 0-1.25-.56-1.25-1.25v-2.5Z" />
-      </svg>
-    </a>
+    <div className="flex flex-col items-start gap-1">
+      {files.map((file, index) => {
+        const canPreview = isPreviewableFile(file.filename);
+        return (
+          <button
+            key={file.id}
+            type="button"
+            className="text-xs underline-offset-2 hover:underline"
+            title={file.filename}
+            onClick={(event) => {
+              event.stopPropagation();
+              if (canPreview) {
+                setPreviewIndex(index);
+                return;
+              }
+              window.open(api.getUploadFileUrl(file.upload_id, { download: true }));
+            }}
+          >
+            {files.length === 1 ? '1 file' : file.filename}
+          </button>
+        );
+      })}
+      {files.length > 1 ? (
+        <span className="muted-text text-[11px]">{files.length} files</span>
+      ) : null}
+      {preview ? (
+        <FilePreviewModal
+          uploadId={preview.upload_id}
+          filename={preview.filename}
+          onClose={() => setPreviewIndex(null)}
+        />
+      ) : null}
+    </div>
   );
 }
 
@@ -293,7 +279,7 @@ export function TransactionTableHeader({
           <Tooltip content="File this row was imported from.">Source file</Tooltip>
         </th>
         <th className="px-2 py-3 font-medium">
-          <Tooltip content="Linked receipt (Excel Reciept), if uploaded.">Receipt</Tooltip>
+          <Tooltip content="Linked files (receipt, invoice, photo).">Files</Tooltip>
         </th>
         {showActions ? <th className="px-2 py-3 font-medium">Actions</th> : null}
       </tr>

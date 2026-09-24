@@ -162,6 +162,9 @@ def list_deposits(
         )
         for deposit, property_name, owner_name, account_number, client_prop_id_val in rows
     ]
+    from app.services.attachments import apply_attachments
+
+    apply_attachments(db, "deposit", items, deposits)
     return items, total
 
 

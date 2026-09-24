@@ -308,6 +308,9 @@ def _rows_to_transactions(
             upload_names=upload_names,
             batch_names=batch_names,
         )
+        from app.services.attachments import apply_attachments
+
+        apply_attachments(db, "deposit", [read], [row])
         out.append(deposit_dict_to_transaction(read.model_dump(mode="json")))
     for row in expenses:
         prop = row.property
@@ -319,6 +322,9 @@ def _rows_to_transactions(
             prop.client_prop_id if prop else "",
             upload_names=upload_names,
         )
+        from app.services.attachments import apply_attachments
+
+        apply_attachments(db, "expense", [read], [row])
         out.append(expense_dict_to_transaction(read.model_dump(mode="json")))
     out.sort(
         key=lambda r: (

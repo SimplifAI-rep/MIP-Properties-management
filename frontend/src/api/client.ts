@@ -538,6 +538,21 @@ export const api = {
       body: form,
     });
   },
+  listAttachments: (kind: 'deposit' | 'expense', id: string) =>
+    request<import('../types').Attachment[]>(`/${kind === 'expense' ? 'expenses' : 'deposits'}/${id}/attachments`),
+  addAttachment: (kind: 'deposit' | 'expense', id: string, file: File) => {
+    const form = new FormData();
+    form.append('file', file);
+    return request<import('../types').Attachment[]>(
+      `/${kind === 'expense' ? 'expenses' : 'deposits'}/${id}/attachments`,
+      { method: 'POST', body: form },
+    );
+  },
+  removeAttachment: (kind: 'deposit' | 'expense', id: string, attachmentId: string) =>
+    request<import('../types').Attachment[]>(
+      `/${kind === 'expense' ? 'expenses' : 'deposits'}/${id}/attachments/${encodeURIComponent(attachmentId)}`,
+      { method: 'DELETE' },
+    ),
   getUploadFileUrl: (uploadId: string, options?: { download?: boolean }) => {
     const base = `${API_BASE}/uploads/${uploadId}/file`;
     return options?.download ? `${base}?download=1` : base;

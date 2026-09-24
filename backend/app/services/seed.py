@@ -136,6 +136,9 @@ def seed_reference_data(db: Session) -> dict[str, int]:
         )
         counts["expected_deposits"] = 3
 
+    from app.services.holding import ensure_unassigned_holding
+
+    ensure_unassigned_holding(db)
     db.commit()
     return counts
 

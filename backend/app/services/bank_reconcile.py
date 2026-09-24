@@ -22,6 +22,11 @@ from app.services.account_scope import (
     get_operating_account,
 )
 from app.services.bank_reconcile_gap import parse_bank_statement_lines, sum_bank_scoped_nets
+from app.services.holding import (
+    UNASSIGNED_REVIEW_REASON,
+    ensure_unassigned_holding,
+    session_unassigned_count,
+)
 from app.services.bank_settings import (
     effective_last_verification,
     effective_opening_as_of,
@@ -908,8 +913,11 @@ def session_summary(db: Session, session: BankReconcileSession) -> dict:
 
     unresolved_bank = sum(1 for line in lines if _line_requires_bank_action(line))
     unresolved_app = app_unmatched
-    # Lists must be handled. A money mismatch is allowed if the user confirms it.
-    can_complete = unresolved_bank == 0 and unresolved_app == 0
+    unassigned_count = session_unassigned_count(db, lines)
+    # Lists must be handled, and bank-created rows must leave UNASSIGNED.
+    can_complete = (
+        unresolved_bank == 0 and unresolved_app == 0 and unassigned_count == 0
+    )
 
     able_dep, able_exp = verified_tx_ids(lines)
 
@@ -1002,6 +1010,7 @@ def session_summary(db: Session, session: BankReconcileSession) -> dict:
             "unresolved_bank": unresolved_bank,
             "unresolved_app": unresolved_app,
             "leftover_cc": len(leftover_cc_ids),
+            "unassigned": unassigned_count,
         },
         "can_complete": can_complete,
         "has_cc_deduction": cc_deduction_count > 0,
@@ -1162,14 +1171,13 @@ def apply_actions(db: Session, session: BankReconcileSession, actions: list[dict
             line = lines.get(fp)
             if not line:
                 raise ValueError(f"Unknown bank line {fp}")
-            property_id = action.get("property_id")
-            if not property_id:
-                raise ValueError("add_from_bank requires property_id")
-            prop = db.get(Property, UUID(str(property_id)))
-            if not prop:
-                raise ValueError("Property not found")
+            prop = ensure_unassigned_holding(db)
             amount = Decimal(str(line["amount"]))
             tx_date = _parse_iso_date(line.get("transaction_date"))
+            if tx_date is None:
+                raise ValueError("Cannot create a transaction without a date")
+            if amount <= 0:
+                raise ValueError("Cannot create a transaction without an amount")
             asmachta = line.get("asmachta")
             desc = line.get("description")
             default = get_default_operating_account(db)
@@ -1207,6 +1215,8 @@ def apply_actions(db: Session, session: BankReconcileSession, actions: list[dict
                     source="bank_statement",
                     bank_verified_at=now,
                     bank_asmachta=asmachta,
+                    needs_review=True,
+                    review_reasons=UNASSIGNED_REVIEW_REASON,
                 )
                 db.add(row)
                 db.flush()
@@ -1227,6 +1237,8 @@ def apply_actions(db: Session, session: BankReconcileSession, actions: list[dict
                     description=desc or "Bank statement debit",
                     bank_verified_at=now,
                     bank_asmachta=asmachta,
+                    needs_review=True,
+                    review_reasons=UNASSIGNED_REVIEW_REASON,
                 )
                 db.add(row)
                 db.flush()

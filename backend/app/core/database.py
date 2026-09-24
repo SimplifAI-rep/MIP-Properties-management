@@ -390,8 +390,12 @@ def _backfill_transaction_refs_and_settings() -> None:
     register_transaction_ref_listeners()
     db = SessionLocal()
     try:
+        from app.services.holding import ensure_unassigned_holding
+
         backfill_missing_transaction_refs(db)
         ensure_company_bank_settings_row(db)
+        ensure_unassigned_holding(db)
+        db.commit()
     finally:
         db.close()
 

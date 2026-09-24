@@ -23,6 +23,7 @@ import {
   type TransactionEntityFilters,
 } from '../components/ui/TransactionFilterFields';
 import { Tooltip } from '../components/ui/Tooltip';
+import { OwnerPropertyFields } from '../components/ui/OwnerPropertyFields';
 import { TransactionUploadPanel } from '../components/TransactionUploadPanel';
 import { useFeedback } from '../context/FeedbackContext';
 import {
@@ -73,6 +74,7 @@ function label(value: string) {
 interface TransactionEditForm {
   kind: TransactionKind;
   id: string;
+  owner_id: string;
   property_id: string;
   transaction_date?: string;
   amount: string;
@@ -215,10 +217,11 @@ function makeEmptyDepositForm(): DepositCreate {
   };
 }
 
-function rowToEditForm(row: UnifiedTransaction): TransactionEditForm {
+function rowToEditForm(row: UnifiedTransaction, ownerId = ''): TransactionEditForm {
   return {
     kind: row.kind,
     id: row.id,
+    owner_id: ownerId,
     property_id: row.property_id,
     transaction_date: row.transaction_date ?? undefined,
     amount: Number(row.amount) > 0 ? row.amount : '',
@@ -281,7 +284,9 @@ export function TransactionsPage() {
   const [sourceFiles, setSourceFiles] = useState<string[]>([]);
   const [alertFilters, setAlertFilters] = useState<AlertFilterKind[]>([]);
   const [showForm, setShowForm] = useState(false);
+  const [formOwnerId, setFormOwnerId] = useState('');
   const [showDepositForm, setShowDepositForm] = useState(false);
+  const [depositOwnerId, setDepositOwnerId] = useState('');
   const [showUpload, setShowUpload] = useState(false);
   const [form, setForm] = useState<ExpenseCreate>(() => makeEmptyForm());
   const [depositForm, setDepositForm] = useState<DepositCreate>(() => makeEmptyDepositForm());
@@ -442,6 +447,7 @@ export function TransactionsPage() {
   });
 
   const {
+    owners,
     properties,
     ownerOptions,
     propertyOptions,
@@ -567,6 +573,7 @@ export function TransactionsPage() {
     onSuccess: () => {
       invalidateTransactionData(queryClient);
       setForm(makeEmptyForm());
+      setFormOwnerId('');
       setShowForm(false);
       setFormError(null);
     },
@@ -580,6 +587,7 @@ export function TransactionsPage() {
     onSuccess: () => {
       invalidateTransactionData(queryClient);
       setDepositForm(makeEmptyDepositForm());
+      setDepositOwnerId('');
       setShowDepositForm(false);
       setFormError(null);
     },
@@ -994,7 +1002,9 @@ export function TransactionsPage() {
   }
 
   function openEdit(row: UnifiedTransaction) {
-    setEditForm(rowToEditForm(row));
+    const ownerId =
+      properties.find((property) => property.id === row.property_id)?.owner_id ?? '';
+    setEditForm(rowToEditForm(row, ownerId));
     setEditError(null);
     setShowForm(false);
     setShowDepositForm(false);
@@ -1008,8 +1018,8 @@ export function TransactionsPage() {
 
   function saveEdit() {
     if (!editForm) return;
-    if (!editForm.property_id) {
-      setEditError(validationError('Please choose a property (Prop ID).'));
+    if (!editForm.owner_id || !editForm.property_id) {
+      setEditError(validationError('Please choose an owner and a property.'));
       return;
     }
     if (!editForm.transaction_date || !editForm.amount || Number(editForm.amount) <= 0) {
@@ -1101,6 +1111,7 @@ export function TransactionsPage() {
                 const next = !current;
                 if (next) {
                   setDepositForm(makeEmptyDepositForm());
+                  setDepositOwnerId('');
                   setFormError(null);
                   setShowForm(false);
                   setShowUpload(false);
@@ -1119,6 +1130,7 @@ export function TransactionsPage() {
                 const next = !current;
                 if (next) {
                   setForm(makeEmptyForm());
+                  setFormOwnerId('');
                   setFormError(null);
                   setShowDepositForm(false);
                   setShowUpload(false);
@@ -1212,12 +1224,13 @@ export function TransactionsPage() {
             onSubmit={(event) => {
               event.preventDefault();
               if (
+                !depositOwnerId ||
                 !depositForm.property_id ||
                 !depositForm.transaction_date ||
                 !depositForm.amount
               ) {
                 setFormError(
-                  validationError('Please choose a property, date, and amount.'),
+                  validationError('Please choose an owner, property, date, and amount.'),
                 );
                 return;
               }
@@ -1231,31 +1244,19 @@ export function TransactionsPage() {
               });
             }}
           >
-            <label className="text-sm">
-              <span className="label-text">
-                <Tooltip content="Same as Prop ID in Excel — pick the property sheet.">
-                  Prop ID / Property
-                </Tooltip>
-              </span>
-              <select
-                required
-                className="field"
-                value={depositForm.property_id}
-                onChange={(event) =>
-                  setDepositForm((current) => ({
-                    ...current,
-                    property_id: event.target.value,
-                  }))
-                }
-              >
-                <option value="">Select property</option>
-                {(propertiesQuery.data ?? []).map((property) => (
-                  <option key={property.id} value={property.id}>
-                    {property.client_prop_id} — {property.name}
-                  </option>
-                ))}
-              </select>
-            </label>
+            <OwnerPropertyFields
+              owners={owners}
+              properties={properties}
+              ownerId={depositOwnerId}
+              propertyId={depositForm.property_id}
+              onChange={(next) => {
+                setDepositOwnerId(next.ownerId);
+                setDepositForm((current) => ({
+                  ...current,
+                  property_id: next.propertyId,
+                }));
+              }}
+            />
             <DateInputDMY
               label="Date"
               required
@@ -1433,9 +1434,9 @@ export function TransactionsPage() {
             className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3"
             onSubmit={(event) => {
               event.preventDefault();
-              if (!form.property_id || !form.transaction_date || !form.amount) {
+              if (!formOwnerId || !form.property_id || !form.transaction_date || !form.amount) {
                 setFormError(
-                  validationError('Please choose a property, date, and amount.'),
+                  validationError('Please choose an owner, property, date, and amount.'),
                 );
                 return;
               }
@@ -1461,28 +1462,16 @@ export function TransactionsPage() {
               });
             }}
       >
-        <label className="text-sm">
-              <span className="label-text">
-                <Tooltip content="Same as Prop ID in Excel — pick the property sheet.">
-                  Prop ID / Property
-                </Tooltip>
-              </span>
-          <select
-                required
-            className="field"
-                value={form.property_id}
-                onChange={(event) =>
-                  setForm((current) => ({ ...current, property_id: event.target.value }))
-                }
-              >
-                <option value="">Select property</option>
-            {(propertiesQuery.data ?? []).map((property) => (
-                  <option key={property.id} value={property.id}>
-                    {property.client_prop_id} — {property.name}
-              </option>
-            ))}
-          </select>
-        </label>
+            <OwnerPropertyFields
+              owners={owners}
+              properties={properties}
+              ownerId={formOwnerId}
+              propertyId={form.property_id}
+              onChange={(next) => {
+                setFormOwnerId(next.ownerId);
+                setForm((current) => ({ ...current, property_id: next.propertyId }));
+              }}
+            />
             <DateInputDMY
               label="Date"
               required
@@ -1839,22 +1828,19 @@ export function TransactionsPage() {
                         <td colSpan={13} className="p-0">
                           <div className="box-border max-w-full px-4 py-4">
                             <div className="grid max-w-full gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                              <label className="text-sm min-w-0">
-                                <span className="label-text">Prop ID / Property</span>
-                                <select
-                                  className="field"
-                                  value={editForm.property_id}
-                                  onChange={(event) =>
-                                    patchEdit({ property_id: event.target.value })
-                                  }
-                                >
-                                  {(propertiesQuery.data ?? []).map((property) => (
-                                    <option key={property.id} value={property.id}>
-                                      {property.client_prop_id} — {property.name}
-                                    </option>
-                                  ))}
-                                </select>
-        </label>
+                              <OwnerPropertyFields
+                                owners={owners}
+                                properties={properties}
+                                ownerId={editForm.owner_id}
+                                propertyId={editForm.property_id}
+                                excludeUnassigned={false}
+                                onChange={(next) =>
+                                  patchEdit({
+                                    owner_id: next.ownerId,
+                                    property_id: next.propertyId,
+                                  })
+                                }
+                              />
                               <DateInputDMY
                                 label="Date"
                                 value={editForm.transaction_date}

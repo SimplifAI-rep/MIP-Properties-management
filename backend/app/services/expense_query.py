@@ -12,6 +12,10 @@ from app.models.property import Property
 from app.schemas import ExpenseCategoryTotal, ExpenseCreate, ExpenseRead, ExpenseUpdate
 from app.services.running_balance import compute_running_balances
 from app.services.source_file import load_upload_filenames, resolve_source_file
+from app.services.holding import (
+    clear_unassigned_review,
+    reject_unassigned_for_manual_create,
+)
 from app.services.transaction_filters import (
     apply_expense_list_filters,
     collect_expense_summary_filters,
@@ -189,6 +193,12 @@ def create_expense(db: Session, payload: ExpenseCreate) -> ExpenseRead:
     property_row = db.get(Property, payload.property_id)
     if not property_row:
         raise HTTPException(status_code=404, detail="Property not found")
+    reject_unassigned_for_manual_create(property_row)
+
+    if payload.transaction_date is None:
+        raise HTTPException(status_code=400, detail="Date is required.")
+    if payload.amount is None or payload.amount <= 0:
+        raise HTTPException(status_code=400, detail="Amount must be greater than 0.")
 
     owner = db.get(Owner, property_row.owner_id)
     if not owner:
@@ -219,12 +229,17 @@ def create_expense(db: Session, payload: ExpenseCreate) -> ExpenseRead:
     return expense_to_read(expense, property_row.name, owner.name, property_row.client_prop_id)
 
 
-def _clear_review_if_complete(expense: Expense) -> None:
+def _clear_review_if_complete(expense: Expense, prop: Property | None = None) -> None:
+    if prop is not None:
+        clear_unassigned_review(expense, prop)
+        if getattr(expense, "needs_review", False) and expense.review_reasons:
+            return
     if (
         getattr(expense, "needs_review", False)
         and expense.transaction_date is not None
         and expense.amount is not None
         and expense.amount > 0
+        and (prop is None or prop.client_prop_id != "UNASSIGNED")
     ):
         expense.needs_review = False
         expense.review_reasons = None
@@ -278,7 +293,7 @@ def update_expense(db: Session, expense_id: UUID, payload: ExpenseUpdate) -> Exp
             f"{expense.category} | {notes}" if notes else expense.category
         )
 
-    _clear_review_if_complete(expense)
+    _clear_review_if_complete(expense, property_row)
     db.commit()
     db.refresh(expense)
     return expense_to_read(expense, property_row.name, owner.name, property_row.client_prop_id)

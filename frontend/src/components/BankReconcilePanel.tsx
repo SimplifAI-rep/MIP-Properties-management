@@ -13,6 +13,7 @@ import {
 import { PeriodBalanceCheck, balanceMismatchCopy } from './PeriodBalanceCheck';
 import { ConfirmButton } from './ui/ConfirmButton';
 import { FileDropzone } from './ui/FileDropzone';
+import { OwnerPropertyFields } from './ui/OwnerPropertyFields';
 import { formatCurrency, formatDate } from './ui/States';
 import { getUserErrorMessage } from '../utils/errors';
 import {
@@ -49,6 +50,9 @@ export function BankReconcilePanel() {
   const [bankAccountId, setBankAccountId] = useState<string>('');
   const [pendingRowId, setPendingRowId] = useState<string | null>(null);
   const [pendingBulk, setPendingBulk] = useState<string | null>(null);
+  const [editingAdded, setEditingAdded] = useState<UnifiedTransaction | null>(null);
+  const [editOwnerId, setEditOwnerId] = useState('');
+  const [editPropertyId, setEditPropertyId] = useState('');
 
   // Follow the URL when it names a session. Do not clear state when the nav
   // link drops ?session= — an in-progress period still lives on the workspace.
@@ -225,6 +229,10 @@ export function BankReconcilePanel() {
     queryKey: ['properties'],
     queryFn: api.getProperties,
   });
+  const ownersQuery = useQuery({
+    queryKey: ['owners'],
+    queryFn: api.getOwners,
+  });
 
   const session: BankReconcileSession | undefined =
     sessionId && sessionQuery.data?.id === sessionId ? sessionQuery.data : undefined;
@@ -291,6 +299,32 @@ export function BankReconcilePanel() {
   const proposedTxIds = new Set(
     proposed.map((l) => l.proposed_tx_id).filter(Boolean) as string[],
   );
+  const addedTxIds = new Set(
+    (activeSession?.lines ?? [])
+      .filter((line) => line.status === 'added' && line.proposed_tx_id)
+      .map((line) => line.proposed_tx_id as string),
+  );
+
+  const assignMutation = useMutation({
+    mutationFn: async () => {
+      if (!editingAdded || !editPropertyId) {
+        throw new Error('Choose an owner and a property.');
+      }
+      if (editingAdded.kind === 'deposit') {
+        return api.updateDeposit(editingAdded.id, { property_id: editPropertyId });
+      }
+      return api.updateExpense(editingAdded.id, { property_id: editPropertyId });
+    },
+    onSuccess: () => {
+      setEditingAdded(null);
+      setMessage('Owner and property saved.');
+      setError(null);
+      void queryClient.invalidateQueries({ queryKey: ['bank-reconcile-session', sessionId] });
+      invalidateVerificationWorkspace(queryClient);
+      invalidateAlertData(queryClient);
+    },
+    onError: (err) => setError(getUserErrorMessage(err)),
+  });
 
   const ableTxs: UnifiedTransaction[] = txsFromApi(
     activeSession?.able_txs as Record<string, unknown>[] | undefined,
@@ -347,16 +381,6 @@ export function BankReconcilePanel() {
     );
   }
 
-  function bufferPropertyId(): string | null {
-    const props = propertiesQuery.data ?? [];
-    if (props.length === 0) {
-      setError('No properties available to attach a new transaction.');
-      return null;
-    }
-    const buffer = props.find((p) => p.client_prop_id === 'BUFFER');
-    return (buffer ?? props[0]).id;
-  }
-
   function ignoreBank(fingerprint: string) {
     runActions(null, fingerprint, [{ action: 'ignore_bank', fingerprint }]);
   }
@@ -384,23 +408,16 @@ export function BankReconcilePanel() {
   }
 
   function addFromBank(fingerprint: string) {
-    const propertyId = bufferPropertyId();
-    if (!propertyId) return;
-    runActions(null, fingerprint, [
-      { action: 'add_from_bank', fingerprint, property_id: propertyId },
-    ]);
+    runActions(null, fingerprint, [{ action: 'add_from_bank', fingerprint }]);
   }
 
   function createAllFromBank() {
-    const propertyId = bufferPropertyId();
-    if (!propertyId) return;
     runActions(
       'create-bank',
       null,
       notInBankLines.map((line) => ({
         action: 'add_from_bank' as const,
         fingerprint: line.fingerprint,
-        property_id: propertyId,
       })),
     );
   }
@@ -452,6 +469,12 @@ export function BankReconcilePanel() {
   if (activeSession && !activeSession.can_complete) {
     if (remainingItems > 0) {
       completeBlockers.push(`Still ${remainingItems} to handle`);
+    }
+    const unassigned = activeSession.counts?.unassigned ?? 0;
+    if (unassigned > 0) {
+      completeBlockers.push(
+        `${unassigned} still on Needs assignment — pick a real owner and property`,
+      );
     }
     if (completeBlockers.length === 0) {
       completeBlockers.push('Not ready to finish yet');
@@ -556,6 +579,50 @@ export function BankReconcilePanel() {
 
           <VerifyProgress handled={handledItems} total={totalItems} />
 
+          {editingAdded ? (
+            <div className="rounded-lg border border-slate-200 p-3 dark:border-slate-700">
+              <p className="text-sm font-medium">
+                Assign {editingAdded.kind === 'deposit' ? 'deposit' : 'expense'}{' '}
+                {formatCurrency(editingAdded.amount)}
+              </p>
+              <p className="mt-1 text-xs muted-text">
+                Bank-created rows start on Needs assignment. Pick the real owner and
+                property before finishing.
+              </p>
+              <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                <OwnerPropertyFields
+                  owners={ownersQuery.data ?? []}
+                  properties={propertiesQuery.data ?? []}
+                  ownerId={editOwnerId}
+                  propertyId={editPropertyId}
+                  excludeUnassigned={false}
+                  onChange={(next) => {
+                    setEditOwnerId(next.ownerId);
+                    setEditPropertyId(next.propertyId);
+                  }}
+                />
+              </div>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  className="btn-primary text-xs"
+                  disabled={assignMutation.isPending || !editOwnerId || !editPropertyId}
+                  onClick={() => assignMutation.mutate()}
+                >
+                  {assignMutation.isPending ? 'Saving…' : 'Save assignment'}
+                </button>
+                <button
+                  type="button"
+                  className="btn-secondary text-xs"
+                  disabled={assignMutation.isPending}
+                  onClick={() => setEditingAdded(null)}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : null}
+
           <VerifyGroupSection
             title="Found on statement"
             subtitle="Confirm these"
@@ -593,6 +660,23 @@ export function BankReconcilePanel() {
                   >
                     Confirm
                   </button>
+                ) : addedTxIds.has(row.id) ? (
+                  <button
+                    type="button"
+                    className="btn-secondary text-xs"
+                    disabled={busy}
+                    onClick={() => {
+                      const ownerId =
+                        (propertiesQuery.data ?? []).find(
+                          (property) => property.id === row.property_id,
+                        )?.owner_id ?? '';
+                      setEditingAdded(row);
+                      setEditOwnerId(ownerId);
+                      setEditPropertyId(row.property_id);
+                    }}
+                  >
+                    Edit
+                  </button>
                 ) : (
                   <span className="text-xs muted-text">Checked</span>
                 )
@@ -613,7 +697,7 @@ export function BankReconcilePanel() {
                   <ConfirmButton
                     label={`Create all (${notInBankLines.length})`}
                     confirmLabel={`Create ${notInBankLines.length}`}
-                    disabled={busy || propertiesQuery.isLoading}
+                    disabled={busy}
                     pending={pendingBulk === 'create-bank'}
                     onConfirm={createAllFromBank}
                   />
@@ -639,7 +723,7 @@ export function BankReconcilePanel() {
                     <button
                       type="button"
                       className="btn-primary text-xs"
-                      disabled={busy || propertiesQuery.isLoading}
+                      disabled={busy}
                       onClick={() => addFromBank(line.fingerprint)}
                     >
                       Create

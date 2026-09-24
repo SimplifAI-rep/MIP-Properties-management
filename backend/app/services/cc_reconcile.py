@@ -388,7 +388,10 @@ def session_summary(db: Session, session: CcReconcileSession) -> dict:
         1 for line in lines if line.get("status") in ("unmatched", "proposed_match")
     )
     unresolved_app = app_unmatched
-    can_complete = unresolved_cc == 0 and unresolved_app == 0
+    from app.services.holding import session_unassigned_count
+
+    unassigned_count = session_unassigned_count(db, lines)
+    can_complete = unresolved_cc == 0 and unresolved_app == 0 and unassigned_count == 0
 
     able_ids: set[UUID] = set()
     for line in lines:
@@ -432,6 +435,7 @@ def session_summary(db: Session, session: CcReconcileSession) -> dict:
             "app_ignored": app_ignored,
             "unresolved_cc": unresolved_cc,
             "unresolved_app": unresolved_app,
+            "unassigned": unassigned_count,
         },
         "can_complete": can_complete,
         "lines": lines,
@@ -517,12 +521,9 @@ def apply_actions(db: Session, session: CcReconcileSession, actions: list[dict])
             line = lines.get(fp)
             if not line:
                 raise ValueError(f"Unknown CC line {fp}")
-            property_id = action.get("property_id")
-            if not property_id:
-                raise ValueError("add_from_cc requires property_id")
-            prop = db.get(Property, UUID(str(property_id)))
-            if not prop:
-                raise ValueError("Property not found")
+            from app.services.holding import UNASSIGNED_REVIEW_REASON, ensure_unassigned_holding
+
+            prop = ensure_unassigned_holding(db)
             amount = Decimal(str(line["amount"]))
             tx_date = (
                 date.fromisoformat(line["transaction_date"])
@@ -530,6 +531,8 @@ def apply_actions(db: Session, session: CcReconcileSession, actions: list[dict])
                 else None
             )
             merchant = line.get("merchant")
+            if tx_date is None:
+                raise ValueError("Cannot create a transaction without a date")
             row = Expense(
                 property_id=prop.id,
                 transaction_date=tx_date,
@@ -544,6 +547,8 @@ def apply_actions(db: Session, session: CcReconcileSession, actions: list[dict])
                 card_last4=session.card_last4
                 if session.card_last4 and session.card_last4 != "unknown"
                 else None,
+                needs_review=True,
+                review_reasons=UNASSIGNED_REVIEW_REASON,
             )
             db.add(row)
             db.flush()

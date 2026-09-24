@@ -211,11 +211,6 @@ export function CcReconcilePanel() {
     onError: (err) => setError(getUserErrorMessage(err)),
   });
 
-  const propertiesQuery = useQuery({
-    queryKey: ['properties'],
-    queryFn: () => api.getProperties(),
-  });
-
   const session: CcReconcileSession | undefined =
     sessionId && sessionQuery.data?.id === sessionId ? sessionQuery.data : undefined;
   const busy =
@@ -297,16 +292,6 @@ export function CcReconcilePanel() {
     );
   }
 
-  function bufferPropertyId(): string | null {
-    const props = propertiesQuery.data ?? [];
-    if (props.length === 0) {
-      setError('No properties available to attach a new transaction.');
-      return null;
-    }
-    const buffer = props.find((p) => p.client_prop_id === 'BUFFER');
-    return (buffer ?? props[0]).id;
-  }
-
   function ignoreCc(fingerprint: string) {
     runActions(null, fingerprint, [{ action: 'ignore_cc', fingerprint }]);
   }
@@ -323,23 +308,16 @@ export function CcReconcilePanel() {
   }
 
   function addFromCc(fingerprint: string) {
-    const propertyId = bufferPropertyId();
-    if (!propertyId) return;
-    runActions(null, fingerprint, [
-      { action: 'add_from_cc', fingerprint, property_id: propertyId },
-    ]);
+    runActions(null, fingerprint, [{ action: 'add_from_cc', fingerprint }]);
   }
 
   function createAllFromCc() {
-    const propertyId = bufferPropertyId();
-    if (!propertyId) return;
     runActions(
       'create-cc',
       null,
       notInBankLines.map((line) => ({
         action: 'add_from_cc' as const,
         fingerprint: line.fingerprint,
-        property_id: propertyId,
       })),
     );
   }
@@ -539,7 +517,7 @@ export function CcReconcilePanel() {
                   <ConfirmButton
                     label={`Create all (${notInBankLines.length})`}
                     confirmLabel={`Create ${notInBankLines.length}`}
-                    disabled={busy || propertiesQuery.isLoading}
+                    disabled={busy}
                     pending={pendingBulk === 'create-cc'}
                     onConfirm={createAllFromCc}
                   />
@@ -565,7 +543,7 @@ export function CcReconcilePanel() {
                     <button
                       type="button"
                       className="btn-primary text-xs"
-                      disabled={busy || propertiesQuery.isLoading}
+                      disabled={busy}
                       onClick={() => addFromCc(line.fingerprint)}
                     >
                       Create

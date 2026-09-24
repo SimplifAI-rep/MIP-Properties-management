@@ -352,6 +352,9 @@ class ClientDataImportService:
     ) -> ImportStats:
         self._load_existing_keys()
         self._ensure_company_owner_and_buffer()
+        from app.services.holding import ensure_unassigned_holding
+
+        ensure_unassigned_holding(self.db)
         self._report("Importing client list…")
         self._import_client_list()
         self._checkpoint()

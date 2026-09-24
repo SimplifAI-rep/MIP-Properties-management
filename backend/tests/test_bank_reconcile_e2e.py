@@ -366,6 +366,16 @@ def test_step4_add_from_bank_creates_verified(client, db):
     assert expense.bank_verified_at is not None
     assert expense.bank_asmachta == unmatched.get("asmachta")
     assert expense.transaction_ref
+    from app.models.property import Property
+    from app.services.holding import UNASSIGNED_PROP_ID, UNASSIGNED_REVIEW_REASON
+
+    holding = db.get(Property, expense.property_id)
+    assert holding is not None
+    assert holding.client_prop_id == UNASSIGNED_PROP_ID
+    assert expense.needs_review is True
+    assert expense.review_reasons == UNASSIGNED_REVIEW_REASON
+    assert added.json()["counts"]["unassigned"] >= 1
+    assert added.json()["can_complete"] is False
 
 
 def test_step5_bank_alerts_require_reason_and_clear(client, db):
@@ -619,6 +629,13 @@ def test_frontend_verification_surface_exists():
     tx_page = (frontend / "pages" / "TransactionsPage.tsx").read_text(encoding="utf-8")
     assert "Credit card" in tx_page
     assert "Select a card" in tx_page
+    assert "OwnerPropertyFields" in tx_page
+    assert "Please choose an owner, property, date, and amount." in tx_page
+    bank_panel_text = (frontend / "components" / "BankReconcilePanel.tsx").read_text(
+        encoding="utf-8"
+    )
+    assert "Needs assignment" in bank_panel_text
+    assert "Save assignment" in bank_panel_text
     table = (frontend / "components" / "TransactionTable.tsx").read_text(encoding="utf-8")
     assert "Card pending" in table
     assert "Credit card verified" in table

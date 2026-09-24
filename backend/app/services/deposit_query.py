@@ -328,9 +328,17 @@ def find_deposit_gaps(
 
 
 def create_deposit(db: Session, payload: DepositCreate) -> DepositRead:
+    from app.services.holding import reject_unassigned_for_manual_create
+
     property_row = db.get(Property, payload.property_id)
     if not property_row:
         raise HTTPException(status_code=404, detail="Property not found")
+    reject_unassigned_for_manual_create(property_row)
+
+    if payload.transaction_date is None:
+        raise HTTPException(status_code=400, detail="Date is required.")
+    if payload.amount is None or payload.amount <= 0:
+        raise HTTPException(status_code=400, detail="Amount must be greater than 0.")
 
     owner = db.get(Owner, property_row.owner_id)
     if not owner:
@@ -417,11 +425,16 @@ def update_deposit(db: Session, deposit_id: UUID, payload: DepositUpdate) -> Dep
     for key, value in data.items():
         setattr(deposit, key, value)
 
+    from app.services.holding import UNASSIGNED_PROP_ID, clear_unassigned_review
+
+    clear_unassigned_review(deposit, property_row)
     if (
         getattr(deposit, "needs_review", False)
         and deposit.transaction_date is not None
         and deposit.amount is not None
         and deposit.amount > 0
+        and property_row.client_prop_id != UNASSIGNED_PROP_ID
+        and not (deposit.review_reasons or "")
     ):
         deposit.needs_review = False
         deposit.review_reasons = None

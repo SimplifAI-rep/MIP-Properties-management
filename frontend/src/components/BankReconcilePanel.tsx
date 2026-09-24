@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { api } from '../api/client';
-import type { BankReconcileSession } from '../types';
+import type { BankReconcileNearMiss, BankReconcileSession } from '../types';
 import { VerifyTransactionTable } from './VerifyTransactionTable';
 import {
   VerifyGroupSection,
@@ -39,6 +39,70 @@ const LINE_STATUS_KEYS = [
 /** Upload rejected because the period is already verified — a success, not a failure. */
 function isCaughtUpMessage(message: string): boolean {
   return /no new bank transactions/i.test(message);
+}
+
+function mergeCandidateLabel(candidate: BankReconcileNearMiss): string {
+  const when = formatDate(candidate.transaction_date);
+  const amount = formatCurrency(candidate.amount);
+  return candidate.reasons.length ? `${when} ${amount} · close` : `${when} ${amount}`;
+}
+
+function leftoverHint(row: {
+  leftover_reason?: string | null;
+  near_misses?: BankReconcileNearMiss[];
+}): string | null {
+  const miss = row.near_misses?.[0];
+  if (miss) {
+    return `Close to bank ${formatCurrency(miss.amount)} on ${formatDate(miss.transaction_date)}: ${miss.reasons.join('; ')}`;
+  }
+  return row.leftover_reason ?? null;
+}
+
+function MergeControl({
+  candidates,
+  disabled,
+  pending,
+  onMerge,
+}: {
+  candidates: Array<{ id: string; label: string }>;
+  disabled: boolean;
+  pending: boolean;
+  onMerge: (id: string) => void;
+}) {
+  const [chosen, setChosen] = useState(candidates[0]?.id ?? '');
+  useEffect(() => {
+    if (!candidates.some((candidate) => candidate.id === chosen)) {
+      setChosen(candidates[0]?.id ?? '');
+    }
+  }, [candidates, chosen]);
+  if (candidates.length === 0) return null;
+  return (
+    <span className="inline-flex flex-wrap items-center gap-1">
+      {candidates.length > 1 ? (
+        <select
+          className="max-w-[12rem] rounded border border-slate-300 bg-white px-1 py-0.5 text-xs dark:border-slate-600 dark:bg-slate-800"
+          value={chosen}
+          disabled={disabled}
+          onChange={(event) => setChosen(event.target.value)}
+        >
+          {candidates.map((candidate) => (
+            <option key={candidate.id} value={candidate.id}>
+              {candidate.label}
+            </option>
+          ))}
+        </select>
+      ) : null}
+      <ConfirmButton
+        label={
+          candidates.length === 1 ? `Merge · ${candidates[0].label}` : 'Merge'
+        }
+        confirmLabel="Use bank values"
+        disabled={disabled || !chosen}
+        pending={pending}
+        onConfirm={() => onMerge(chosen)}
+      />
+    </span>
+  );
 }
 
 export function BankReconcilePanel() {
@@ -527,6 +591,31 @@ export function BankReconcilePanel() {
     ]);
   }
 
+  function mergeFromBank(
+    fingerprint: string,
+    txId: string,
+    kind: 'deposit' | 'expense',
+  ) {
+    runActions(null, fingerprint, [
+      { action: 'merge', fingerprint, kind, tx_id: txId },
+    ]);
+  }
+
+  function mergeFromApp(row: UnifiedTransaction, fingerprint: string) {
+    runActions(null, row.id, [
+      {
+        action: 'merge',
+        fingerprint,
+        kind: row.kind,
+        tx_id: row.id,
+      },
+    ]);
+  }
+
+  const unmatchedAppById = new Map(
+    (activeSession?.unmatched_app ?? []).map((row) => [row.id, row]),
+  );
+
   const pendingMissingCount = notInExcelTxs.filter(
     (tx) => !ignoredAppIds.has(tx.id),
   ).length;
@@ -818,7 +907,7 @@ export function BankReconcilePanel() {
 
           <VerifyGroupSection
             title="On the statement, not in the app"
-            subtitle="Create or Ignore"
+            subtitle="Create, Merge, or Ignore"
             count={draftTxs.length}
             tone="warn"
             defaultOpen
@@ -850,6 +939,20 @@ export function BankReconcilePanel() {
               renderActions={(row) => {
                 const line = notInBankLines.find((l) => l.fingerprint === row.id);
                 if (!line) return null;
+                const mergeCandidates = (line.merge_candidates ?? []).flatMap(
+                  (candidate) =>
+                    candidate.id &&
+                    (candidate.kind === 'deposit' || candidate.kind === 'expense')
+                      ? [
+                          {
+                            id: `${candidate.kind}:${candidate.id}`,
+                            label: mergeCandidateLabel(candidate),
+                            txId: candidate.id,
+                            kind: candidate.kind,
+                          },
+                        ]
+                      : [],
+                );
                 return (
                   <>
                     <button
@@ -870,6 +973,19 @@ export function BankReconcilePanel() {
                         Create payback
                       </button>
                     ) : null}
+                    <MergeControl
+                      candidates={mergeCandidates.map(({ id, label }) => ({
+                        id,
+                        label,
+                      }))}
+                      disabled={busy}
+                      pending={pendingRowId === line.fingerprint}
+                      onMerge={(picked) => {
+                        const match = mergeCandidates.find((item) => item.id === picked);
+                        if (!match) return;
+                        mergeFromBank(line.fingerprint, match.txId, match.kind);
+                      }}
+                    />
                     <button
                       type="button"
                       className="btn-secondary text-xs"
@@ -886,7 +1002,7 @@ export function BankReconcilePanel() {
 
           <VerifyGroupSection
             title="In the app, not on the statement"
-            subtitle="Ignore if OK"
+            subtitle="Ignore if it should stay out, or Merge if the bank line is the same transaction"
             count={notInExcelTxs.length}
             tone="warn"
             defaultOpen
@@ -906,20 +1022,47 @@ export function BankReconcilePanel() {
             <VerifyTransactionTable
               rows={notInExcelTxs}
               pendingRowId={pendingRowId}
-              renderActions={(row) =>
-                ignoredAppIds.has(row.id) ? (
-                  <span className="text-xs muted-text">Ignored</span>
-                ) : (
-                  <button
-                    type="button"
-                    className="btn-secondary text-xs"
-                    disabled={busy}
-                    onClick={() => ignoreApp(row.kind, row.id)}
-                  >
-                    Ignore
-                  </button>
-                )
-              }
+              renderActions={(row) => {
+                if (ignoredAppIds.has(row.id)) {
+                  return <span className="text-xs muted-text">Ignored</span>;
+                }
+                const app = unmatchedAppById.get(row.id);
+                const hint = app ? leftoverHint(app) : null;
+                const mergeCandidates = (app?.merge_candidates ?? []).flatMap(
+                  (candidate) =>
+                    candidate.fingerprint
+                      ? [
+                          {
+                            id: candidate.fingerprint,
+                            label: mergeCandidateLabel(candidate),
+                          },
+                        ]
+                      : [],
+                );
+                return (
+                  <>
+                    <MergeControl
+                      candidates={mergeCandidates}
+                      disabled={busy}
+                      pending={pendingRowId === row.id}
+                      onMerge={(fingerprint) => mergeFromApp(row, fingerprint)}
+                    />
+                    <button
+                      type="button"
+                      className="btn-secondary text-xs"
+                      disabled={busy}
+                      onClick={() => ignoreApp(row.kind, row.id)}
+                    >
+                      Ignore
+                    </button>
+                    {hint ? (
+                      <span className="block max-w-[16rem] text-[11px] leading-snug muted-text">
+                        {hint}
+                      </span>
+                    ) : null}
+                  </>
+                );
+              }}
             />
           </VerifyGroupSection>
 

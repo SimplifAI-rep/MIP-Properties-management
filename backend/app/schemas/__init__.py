@@ -685,6 +685,8 @@ class BankReconcileAction(BaseModel):
         "ignore_app",
         "add_from_bank",
         "defer_cc_to_next",
+        "merge",
+        "link_to_app",
     ]
     fingerprint: str | None = None
     kind: Literal["deposit", "expense"] | None = None

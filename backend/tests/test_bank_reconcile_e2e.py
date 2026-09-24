@@ -641,6 +641,9 @@ def test_frontend_verification_surface_exists():
     assert "Needs assignment" in bank_panel_text
     assert "Create payback" in bank_panel_text
     assert "Save" in bank_panel_text
+    assert "Merge" in bank_panel_text
+    assert "Use bank values" in bank_panel_text
+    assert "leftoverHint" in bank_panel_text
     table = (frontend / "components" / "TransactionTable.tsx").read_text(encoding="utf-8")
     assert "Card pending" in table
     assert "Credit card verified" in table

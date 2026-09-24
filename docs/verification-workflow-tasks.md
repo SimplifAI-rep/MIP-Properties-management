@@ -48,11 +48,11 @@ Payback is a separate deposit. Finish only when `|gap| ≤ 0.01`.
 
 ## Phase E — Diagnostics, merge, He/She & rental
 
-- [ ] E1. Audit bank candidate filters (rental, He/She, owner-paid, `owner_personal`, card)
-- [ ] E2. Near-miss hints on “In the app, not on the statement” (amount/date/text)
-- [ ] E3. `merge` / `link_to_app` action: bank line wins date, amount, asmachta
-- [ ] E4. UI: Merge from bank-only or app-only row
-- [ ] E5. Tests: He/She and rental stay out of lists; merge updates the app row
+- [x] E1. Audit bank candidate filters (rental, He/She, owner-paid, `owner_personal`, card)
+- [x] E2. Near-miss hints on “In the app, not on the statement” (amount/date/text)
+- [x] E3. `merge` / `link_to_app` action: bank line wins date, amount, asmachta
+- [x] E4. UI: Merge from bank-only or app-only row
+- [x] E5. Tests: He/She and rental stay out of lists; merge updates the app row
 
 ## Phase F — Finish only when balanced
 

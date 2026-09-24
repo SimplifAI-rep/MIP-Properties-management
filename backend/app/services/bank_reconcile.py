@@ -126,6 +126,11 @@ def _parse_iso_date(value: str | None) -> date | None:
     return date.fromisoformat(value[:10])
 
 
+NEAR_MISS_AMOUNT = Decimal("2.00")
+NEAR_MISS_DAYS = 5
+_BANK_SKIP_PAYMENT_METHODS = ("credit_card", "owner_personal")
+
+
 def _app_candidate_filters(
     *,
     date_from: date | None,
@@ -133,7 +138,14 @@ def _app_candidate_filters(
     bank_account_id: UUID | None = None,
     is_default_account: bool = True,
 ):
-    """Unverified bank-scoped app txs inside the uploaded statement date window."""
+    """Unverified bank-scoped app txs inside the uploaded statement date window.
+
+    Stays out of bank lists (and therefore App in/out):
+    - rental deposits
+    - He/She (paid_by_resident) and owner-paid expenses
+    - owner_personal even when the He/She / owner-paid flag was not set
+    - credit-card merchant charges (those belong on the card statement)
+    """
     dep = [
         deposit_company_float_clause(),
         Deposit.bank_reconcile_exclude.is_(False),
@@ -153,7 +165,10 @@ def _app_candidate_filters(
         Expense.bank_verified_at.is_(None),
         Expense.transaction_date.is_not(None),
         Expense.amount > 0,
-        or_(Expense.payment_method.is_(None), Expense.payment_method != "credit_card"),
+        or_(
+            Expense.payment_method.is_(None),
+            Expense.payment_method.notin_(_BANK_SKIP_PAYMENT_METHODS),
+        ),
     ]
     if date_from is not None:
         dep.append(Deposit.transaction_date >= date_from)
@@ -649,6 +664,178 @@ def _unmatched_app_rows(
     return out
 
 
+def _is_actionable_bank_line(line: dict) -> bool:
+    """Unmatched bank-only row that still needs Create / Ignore / Merge."""
+    if (line.get("status") or "unmatched") != "unmatched":
+        return False
+    if line.get("proposed_kind") == "cc_settlement":
+        return False
+    if _is_cc_settlement_line(line.get("description")):
+        return False
+    return True
+
+
+def _same_bank_side(line: dict, kind: str | None) -> bool:
+    if kind == "deposit":
+        return line.get("side") == "credit"
+    if kind == "expense":
+        return line.get("side") == "debit"
+    return False
+
+
+def _text_overlap(left: str | None, right: str | None) -> bool:
+    first = (left or "").strip().lower()
+    second = (right or "").strip().lower()
+    if not first or not second:
+        return False
+    if first in second or second in first:
+        return True
+    tokens_a = {
+        part
+        for part in first.replace("/", " ").replace("|", " ").split()
+        if len(part) >= 3
+    }
+    tokens_b = {
+        part
+        for part in second.replace("/", " ").replace("|", " ").split()
+        if len(part) >= 3
+    }
+    return bool(tokens_a & tokens_b)
+
+
+def _near_miss_reasons(line: dict, app: dict) -> list[str]:
+    reasons: list[str] = []
+    try:
+        line_amt = Decimal(str(line.get("amount") or 0))
+        app_amt = Decimal(str(app.get("amount") or 0))
+    except (InvalidOperation, ValueError, TypeError):
+        line_amt = None
+        app_amt = None
+    if line_amt is not None and app_amt is not None:
+        diff = abs(line_amt - app_amt)
+        if diff == 0:
+            reasons.append(f"same amount {app_amt}")
+        elif diff <= NEAR_MISS_AMOUNT:
+            reasons.append(f"amount {app_amt} vs bank {line_amt}")
+
+    line_date = _parse_iso_date(line.get("transaction_date"))
+    app_date = _parse_iso_date(app.get("transaction_date"))
+    if line_date and app_date:
+        days = abs((line_date - app_date).days)
+        if days == 0:
+            reasons.append(f"same date {app_date.isoformat()}")
+        elif days <= NEAR_MISS_DAYS:
+            reasons.append(
+                f"date {app_date.isoformat()} vs bank {line_date.isoformat()}"
+            )
+
+    if _text_overlap(line.get("description"), app.get("description")):
+        reasons.append("similar description")
+    return reasons
+
+
+def _merge_candidate_from_line(line: dict, reasons: list[str]) -> dict:
+    return {
+        "fingerprint": line.get("fingerprint"),
+        "transaction_date": line.get("transaction_date"),
+        "amount": str(line.get("amount") or "0"),
+        "description": line.get("description"),
+        "asmachta": line.get("asmachta"),
+        "reasons": reasons,
+    }
+
+
+def _merge_candidate_from_app(app: dict, reasons: list[str]) -> dict:
+    return {
+        "kind": app.get("kind"),
+        "id": app.get("id"),
+        "transaction_date": app.get("transaction_date"),
+        "amount": str(app.get("amount") or "0"),
+        "description": app.get("description"),
+        "reasons": reasons,
+    }
+
+
+def _attach_diagnostics(lines: list[dict], apps: list[dict]) -> None:
+    """Near-miss hints and merge pick-lists for leftover bank/app rows."""
+    pending_lines = [line for line in lines if _is_actionable_bank_line(line)]
+    pending_apps = [app for app in apps if app.get("status") == "unmatched"]
+
+    for app in pending_apps:
+        ranked: list[tuple[int, str, dict]] = []
+        for line in pending_lines:
+            if not _same_bank_side(line, str(app.get("kind") or "")):
+                continue
+            reasons = _near_miss_reasons(line, app)
+            ranked.append(
+                (
+                    len(reasons),
+                    str(line.get("transaction_date") or ""),
+                    _merge_candidate_from_line(line, reasons),
+                )
+            )
+        ranked.sort(key=lambda item: (-item[0], item[1], item[2].get("fingerprint") or ""))
+        candidates = [item[2] for item in ranked]
+        app["merge_candidates"] = candidates
+        app["near_misses"] = [row for row in candidates if row["reasons"]]
+        app["leftover_reason"] = (
+            None
+            if app["near_misses"]
+            else "No close bank line (amount ±₪2, date ±5 days, or similar text)"
+        )
+
+    for line in pending_lines:
+        ranked_apps: list[tuple[int, str, str, dict]] = []
+        for app in pending_apps:
+            if not _same_bank_side(line, str(app.get("kind") or "")):
+                continue
+            reasons = _near_miss_reasons(line, app)
+            ranked_apps.append(
+                (
+                    len(reasons),
+                    str(app.get("transaction_date") or ""),
+                    str(app.get("id") or ""),
+                    _merge_candidate_from_app(app, reasons),
+                )
+            )
+        ranked_apps.sort(key=lambda item: (-item[0], item[1], item[2]))
+        candidates = [item[3] for item in ranked_apps]
+        line["merge_candidates"] = candidates
+        line["near_misses"] = [row for row in candidates if row["reasons"]]
+
+
+def _reject_if_excluded_from_bank(row: Deposit | Expense) -> None:
+    if isinstance(row, Deposit):
+        if row.is_rental_income:
+            raise ValueError("Rental income stays out of bank verification.")
+        return
+    if row.paid_by_resident:
+        raise ValueError("He/She paid expenses stay out of bank verification.")
+    if row.paid_by_owner:
+        raise ValueError("Owner-paid expenses stay out of bank verification.")
+    method = row.payment_method
+    if method == "credit_card":
+        raise ValueError("Card charges are verified on the card statement.")
+    if method == "owner_personal":
+        raise ValueError("Owner-personal expenses stay out of bank verification.")
+
+
+def _clear_stale_proposals(lines: dict[str, dict], *, tx_id: str, keep_fp: str) -> None:
+    for other in lines.values():
+        if other.get("fingerprint") == keep_fp:
+            continue
+        if (
+            str(other.get("proposed_tx_id") or "") == tx_id
+            and other.get("status") == "proposed_match"
+        ):
+            other["status"] = "unmatched"
+            other["proposed_tx_id"] = None
+            other["proposed_tx_ref"] = None
+            other["proposed_kind"] = None
+            other["proposed_summary"] = None
+            other["match_confidence"] = None
+
+
 def _normalized_asmachta(value: str | None) -> str | None:
     if value is None:
         return None
@@ -980,6 +1167,10 @@ def session_summary(db: Session, session: BankReconcileSession) -> dict:
         gap_verified = flow_gap
         within = abs(flow_gap) <= tolerance
 
+    response_lines = copy.deepcopy(lines)
+    response_apps = copy.deepcopy(apps)
+    _attach_diagnostics(response_lines, response_apps)
+
     return {
         "id": str(session.id),
         "status": session.status,
@@ -1015,8 +1206,8 @@ def session_summary(db: Session, session: BankReconcileSession) -> dict:
         "can_complete": can_complete,
         "has_cc_deduction": cc_deduction_count > 0,
         "cc_deduction_count": cc_deduction_count,
-        "lines": lines,
-        "unmatched_app": apps,
+        "lines": response_lines,
+        "unmatched_app": response_apps,
         "able_txs": able_txs,
         "not_in_excel_txs": not_in_excel_txs,
         "leftover_cc_txs": leftover_cc_txs,
@@ -1056,6 +1247,53 @@ def apply_actions(db: Session, session: BankReconcileSession, actions: list[dict
             line["proposed_kind"] = tx_kind
             line["proposed_tx_id"] = str(tx_id)
             line["proposed_tx_ref"] = row.transaction_ref
+            apps.pop(f"{tx_kind}:{tx_id}", None)
+
+        elif kind in ("merge", "link_to_app"):
+            fp = action.get("fingerprint")
+            if not fp:
+                raise ValueError("merge requires a bank line fingerprint")
+            line = lines.get(fp)
+            if not line:
+                raise ValueError(f"Unknown bank line {fp}")
+            if line.get("proposed_kind") == "cc_settlement" or _is_cc_settlement_line(
+                line.get("description")
+            ):
+                raise ValueError("Card payment lines are not merged into app rows")
+            if not _is_actionable_bank_line(line) and line.get("status") != "proposed_match":
+                raise ValueError("That bank line cannot be merged")
+            tx_kind = action.get("kind")
+            tx_id = action.get("tx_id")
+            if not tx_kind or not tx_id:
+                raise ValueError("merge requires kind and tx_id")
+            if not _same_bank_side(line, str(tx_kind)):
+                raise ValueError("Bank line side does not match that transaction")
+            uid = UUID(str(tx_id))
+            row = db.get(Deposit, uid) if tx_kind == "deposit" else db.get(Expense, uid)
+            if not row:
+                raise ValueError(f"Transaction {tx_id} not found")
+            if getattr(row, "bank_verified_at", None):
+                raise ValueError("That transaction is already bank-verified")
+            _reject_if_excluded_from_bank(row)
+            tx_date = _parse_iso_date(line.get("transaction_date"))
+            if tx_date is None:
+                raise ValueError("Cannot merge a bank line without a date")
+            amount = Decimal(str(line["amount"]))
+            if amount <= 0:
+                raise ValueError("Cannot merge a bank line without an amount")
+            asmachta = line.get("asmachta")
+            row.transaction_date = tx_date
+            row.amount = amount
+            row.bank_asmachta = asmachta
+            if asmachta:
+                row.reference = asmachta
+            row.bank_verified_at = now
+            _clear_stale_proposals(lines, tx_id=str(tx_id), keep_fp=fp)
+            line["status"] = "matched"
+            line["proposed_kind"] = tx_kind
+            line["proposed_tx_id"] = str(tx_id)
+            line["proposed_tx_ref"] = row.transaction_ref
+            line["proposed_summary"] = "Merged — bank date, amount, and asmachta used"
             apps.pop(f"{tx_kind}:{tx_id}", None)
 
         elif kind == "confirm_settlement":

@@ -650,6 +650,17 @@ export interface BankGapResponse {
   within_tolerance_verified: boolean | null;
 }
 
+export interface BankReconcileNearMiss {
+  fingerprint?: string;
+  kind?: 'deposit' | 'expense';
+  id?: string;
+  transaction_date: string | null;
+  amount: string;
+  description?: string | null;
+  asmachta?: string | null;
+  reasons: string[];
+}
+
 export interface BankReconcileAction {
   action:
     | 'confirm_match'
@@ -657,7 +668,9 @@ export interface BankReconcileAction {
     | 'ignore_bank'
     | 'ignore_app'
     | 'add_from_bank'
-    | 'defer_cc_to_next';
+    | 'defer_cc_to_next'
+    | 'merge'
+    | 'link_to_app';
   fingerprint?: string;
   kind?: 'deposit' | 'expense';
   tx_id?: string;
@@ -677,6 +690,8 @@ export interface BankReconcileLine {
   asmachta: string | null;
   description: string | null;
   status: string;
+  near_misses?: BankReconcileNearMiss[];
+  merge_candidates?: BankReconcileNearMiss[];
   proposed_kind?: string | null;
   proposed_tx_id?: string | null;
   proposed_tx_ref?: string | null;
@@ -699,6 +714,9 @@ export interface BankReconcileAppRow {
   description?: string | null;
   status: string;
   ignore_reason?: string | null;
+  leftover_reason?: string | null;
+  near_misses?: BankReconcileNearMiss[];
+  merge_candidates?: BankReconcileNearMiss[];
 }
 
 export interface BankReconcileSession {

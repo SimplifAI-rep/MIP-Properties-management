@@ -582,6 +582,7 @@ def test_frontend_verification_surface_exists():
     assert "not in this payment" in bank_panel
     assert "PeriodBalanceCheck" in bank_panel
     assert "Finish anyway" in bank_panel
+    assert "Restore the in-progress period" in bank_panel
     assert "balanceMismatchCopy" in bank_panel
     history = (frontend / "components" / "HistorySessionGroups.tsx").read_text(
         encoding="utf-8"
@@ -611,6 +612,7 @@ def test_frontend_verification_surface_exists():
     assert "no transactions for that period" in cc_panel
     assert "On the statement, not in the app" in cc_panel
     assert "Finish period" in cc_panel
+    assert "Restore the in-progress card period" in cc_panel
     dash = (frontend / "pages" / "DashboardPage.tsx").read_text(encoding="utf-8")
     assert "BankVerificationSummaryCard" in dash
     assert "BankVerificationPanel" not in dash

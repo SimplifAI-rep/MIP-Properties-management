@@ -37,12 +37,11 @@ export function CcReconcilePanel() {
   const [pendingRowId, setPendingRowId] = useState<string | null>(null);
   const [pendingBulk, setPendingBulk] = useState<string | null>(null);
 
-  // Follow URL only when the URL itself changes. Do not depend on sessionId —
-  // otherwise a card switch optimistically updates state while the URL is still
-  // stale and this effect snaps back to the previous session.
+  // Follow the URL when it names a session. Do not clear state when the nav
+  // link drops ?cc_session= — an in-progress card period still lives on the workspace.
   const urlSessionId = searchParams.get('cc_session');
   useEffect(() => {
-    setSessionId(urlSessionId);
+    if (urlSessionId) setSessionId(urlSessionId);
   }, [urlSessionId]);
 
   useEffect(() => {
@@ -76,6 +75,29 @@ export function CcReconcilePanel() {
     const withOpen = creditCards.find((c) => c.open_session_id);
     setSelectedCardLast4((withOpen ?? creditCards[0]).card_last4);
   }, [creditCards, selectedCardLast4]);
+
+  // Restore the in-progress card period after leaving Verification.
+  useEffect(() => {
+    if (sessionId || urlSessionId) return;
+    if (!workspaceQuery.isSuccess || workspaceQuery.isFetching) return;
+    const selected = selectedCardLast4
+      ? creditCards.find((card) => card.card_last4 === selectedCardLast4)
+      : undefined;
+    const openId =
+      selected?.open_session_id ??
+      (selectedCardLast4
+        ? null
+        : creditCards.find((card) => card.open_session_id)?.open_session_id ?? null);
+    if (!openId) return;
+    setSessionId(openId);
+  }, [
+    sessionId,
+    urlSessionId,
+    selectedCardLast4,
+    creditCards,
+    workspaceQuery.isSuccess,
+    workspaceQuery.isFetching,
+  ]);
 
   // Sync dropdown from the loaded session only when that session matches selection.
   useEffect(() => {

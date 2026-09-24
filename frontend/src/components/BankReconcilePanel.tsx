@@ -50,12 +50,11 @@ export function BankReconcilePanel() {
   const [pendingRowId, setPendingRowId] = useState<string | null>(null);
   const [pendingBulk, setPendingBulk] = useState<string | null>(null);
 
-  // Follow URL only when the URL itself changes. Do not depend on sessionId —
-  // otherwise an account switch optimistically updates state while the URL is
-  // still stale and this effect snaps back to the previous session.
+  // Follow the URL when it names a session. Do not clear state when the nav
+  // link drops ?session= — an in-progress period still lives on the workspace.
   const urlSessionId = searchParams.get('session');
   useEffect(() => {
-    setSessionId(urlSessionId);
+    if (urlSessionId) setSessionId(urlSessionId);
   }, [urlSessionId]);
 
   useEffect(() => {
@@ -88,6 +87,30 @@ export function BankReconcilePanel() {
     const withOpen = operatingAccounts.find((a) => a.open_session_id);
     setBankAccountId((withOpen ?? operatingAccounts[0]).id);
   }, [operatingAccounts, bankAccountId]);
+
+  // Restore the in-progress period after leaving Verification (nav drops ?session=).
+  useEffect(() => {
+    if (sessionId || urlSessionId) return;
+    if (!workspaceQuery.isSuccess || workspaceQuery.isFetching) return;
+    const selected = bankAccountId
+      ? operatingAccounts.find((account) => account.id === bankAccountId)
+      : undefined;
+    const openId =
+      selected?.open_session_id ??
+      (bankAccountId
+        ? null
+        : operatingAccounts.find((account) => account.open_session_id)
+            ?.open_session_id ?? null);
+    if (!openId) return;
+    setSessionId(openId);
+  }, [
+    sessionId,
+    urlSessionId,
+    bankAccountId,
+    operatingAccounts,
+    workspaceQuery.isSuccess,
+    workspaceQuery.isFetching,
+  ]);
 
   // Keep selected account in sync with the loaded session only when IDs match.
   useEffect(() => {

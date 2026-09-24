@@ -61,6 +61,11 @@ export function TransactionTypeBadges({
           <span className="badge-rental-income">Rental income</span>
         </Tooltip>
       ) : null}
+      {row.is_payback ? (
+        <Tooltip content="Bank payback — a refund or partial return, kept as its own deposit.">
+          <span className="badge-payback">Payback</span>
+        </Tooltip>
+      ) : null}
       {row.bank_verified_at ? (
         <Tooltip
           content={

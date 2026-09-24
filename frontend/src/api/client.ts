@@ -484,7 +484,9 @@ export const api = {
       reference: payload.vendor_name?.trim() || payload.reference || null,
       description: notes ? `${section} | ${notes}` : section,
       source: payload.source || 'manual_entry',
-      is_rental_income: Boolean(payload.is_rental_income),
+      is_rental_income: Boolean(payload.is_rental_income) && !payload.is_payback,
+      is_payback: Boolean(payload.is_payback),
+      payback_of_expense_id: payload.payback_of_expense_id || null,
     };
     return request<import('../types').Deposit>('/deposits', {
       method: 'POST',

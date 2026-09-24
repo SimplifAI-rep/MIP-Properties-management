@@ -2,7 +2,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
-import type { CreditCard, DepositCreate, ExpenseCreate } from '../types';
+import type { DepositCreate, ExpenseCreate } from '../types';
 import {
   TransactionDisplayCells,
   TransactionTableColgroup,
@@ -24,6 +24,7 @@ import {
 } from '../components/ui/TransactionFilterFields';
 import { Tooltip } from '../components/ui/Tooltip';
 import { OwnerPropertyFields } from '../components/ui/OwnerPropertyFields';
+import { PaidWithSelect } from '../components/ui/PaidWithSelect';
 import { TransactionUploadPanel } from '../components/TransactionUploadPanel';
 import { useFeedback } from '../context/FeedbackContext';
 import {
@@ -42,7 +43,6 @@ import {
 } from '../utils/unifiedTransaction';
 import {
   EXPENSE_SOURCES as SOURCES,
-  PAYMENT_METHODS as METHODS,
   SECTION_SUGGESTIONS,
 } from '../constants/expenseOptions';
 import { todayISO } from '../utils/dateFormat';
@@ -85,90 +85,9 @@ interface TransactionEditForm {
   card_last4: string | null;
   source: string;
   is_rental_income: boolean;
+  is_payback: boolean;
+  payback_of_expense_id: string | null;
 }
-
-function PaidWithSelect({
-  cards,
-  paymentMethod,
-  cardLast4,
-  onChange,
-  showCardOption = true,
-}: {
-  cards: CreditCard[];
-  paymentMethod: string;
-  cardLast4?: string | null;
-  onChange: (next: { payment_method: string; card_last4: string | null }) => void;
-  showCardOption?: boolean;
-}) {
-  const activeCards = cards.filter((card) => card.is_active);
-  const methodValue =
-    paymentMethod === 'credit_card' && showCardOption
-      ? 'credit_card'
-      : paymentMethod || 'company_account';
-  const extraMethods = METHODS.filter(
-    (method) => method !== 'cash' && method !== 'credit_card' && method !== 'company_account',
-  );
-  const knownCard =
-    Boolean(cardLast4) &&
-    (activeCards.some((card) => card.card_last4 === cardLast4) ||
-      Boolean(cardLast4 && !activeCards.some((card) => card.card_last4 === cardLast4)));
-
-  return (
-    <div className="space-y-2">
-      <select
-        className="field"
-        value={methodValue}
-        onChange={(event) => {
-          const next = event.target.value;
-          if (next === 'credit_card') {
-            const keep = knownCard ? cardLast4 ?? null : null;
-            onChange({
-              payment_method: 'credit_card',
-              card_last4:
-                keep ?? (activeCards.length === 1 ? activeCards[0].card_last4 : null),
-            });
-            return;
-          }
-          onChange({ payment_method: next, card_last4: null });
-        }}
-      >
-        <option value="company_account">{label('company_account')}</option>
-        <option value="cash">Cash</option>
-        {showCardOption ? <option value="credit_card">Credit card</option> : null}
-        {extraMethods.map((method) => (
-          <option key={method} value={method}>
-            {label(method)}
-          </option>
-        ))}
-      </select>
-      {showCardOption && paymentMethod === 'credit_card' ? (
-        <select
-          className="field"
-          required
-          aria-label="Select a card"
-          value={cardLast4 ?? ''}
-          onChange={(event) =>
-            onChange({
-              payment_method: 'credit_card',
-              card_last4: event.target.value || null,
-            })
-          }
-        >
-          <option value="">Select a card</option>
-          {activeCards.map((card) => (
-            <option key={card.id} value={card.card_last4}>
-              {card.label}
-            </option>
-          ))}
-          {cardLast4 && !activeCards.some((card) => card.card_last4 === cardLast4) ? (
-            <option value={cardLast4}>Card ••{cardLast4}</option>
-          ) : null}
-        </select>
-      ) : null}
-    </div>
-  );
-}
-
 
 function rowTypeTags(row: UnifiedTransaction): TypeFilterKind[] {
   const tags: TypeFilterKind[] = [];
@@ -214,6 +133,8 @@ function makeEmptyDepositForm(): DepositCreate {
     vendor_name: '',
     description: '',
     is_rental_income: false,
+    is_payback: false,
+    payback_of_expense_id: null,
   };
 }
 
@@ -232,6 +153,8 @@ function rowToEditForm(row: UnifiedTransaction, ownerId = ''): TransactionEditFo
     card_last4: row.card_last4 ?? null,
     source: row.source || (row.kind === 'deposit' ? 'management_ledger' : 'manual_company'),
     is_rental_income: Boolean(row.is_rental_income),
+    is_payback: Boolean(row.is_payback),
+    payback_of_expense_id: row.payback_of_expense_id ?? null,
   };
 }
 
@@ -296,6 +219,18 @@ export function TransactionsPage() {
   const [highlightId, setHighlightId] = useState<string | undefined>();
   const [highlightKind, setHighlightKind] = useState<string | undefined>();
   const highlightClearRef = useRef<number | null>(null);
+  const paybackLinkQuery = useQuery({
+    queryKey: ['expenses', 'payback-link-options'],
+    queryFn: () =>
+      api.getExpenses({
+        page_size: 100,
+        include_running_balance: false,
+        property_status: 'active',
+      }),
+    enabled:
+      showDepositForm || (Boolean(editForm) && editForm?.kind === 'deposit'),
+  });
+  const paybackExpenses = paybackLinkQuery.data?.items ?? [];
 
   useEffect(() => {
     const state = parseTransactionsLocationState(location.state);
@@ -620,7 +555,11 @@ export function TransactionsPage() {
         transaction_date: payload.transaction_date || null,
         amount: payload.amount || '0',
         description: payload.notes.trim() || null,
-        is_rental_income: payload.is_rental_income,
+        is_rental_income: payload.is_payback ? false : payload.is_rental_income,
+        is_payback: payload.is_payback,
+        payback_of_expense_id: payload.is_payback
+          ? payload.payback_of_expense_id
+          : null,
       });
     },
     onSuccess: () => {
@@ -1380,6 +1319,7 @@ export function TransactionsPage() {
                   setDepositForm((current) => ({
                     ...current,
                     is_rental_income: event.target.checked,
+                    is_payback: event.target.checked ? false : current.is_payback,
                   }))
                 }
               />
@@ -1389,6 +1329,52 @@ export function TransactionsPage() {
                 </Tooltip>
               </span>
             </label>
+            <label className="text-sm flex items-end gap-2 pb-2">
+              <input
+                type="checkbox"
+                checked={Boolean(depositForm.is_payback)}
+                onChange={(event) =>
+                  setDepositForm((current) => ({
+                    ...current,
+                    is_payback: event.target.checked,
+                    is_rental_income: event.target.checked
+                      ? false
+                      : current.is_rental_income,
+                    payback_of_expense_id: event.target.checked
+                      ? current.payback_of_expense_id
+                      : null,
+                  }))
+                }
+              />
+              <span className="label-text mb-0">
+                <Tooltip content="Bank refund or partial return. Kept as its own deposit.">
+                  Payback
+                </Tooltip>
+              </span>
+            </label>
+            {depositForm.is_payback ? (
+              <label className="text-sm">
+                <span className="label-text">Original expense (optional)</span>
+                <select
+                  className="field"
+                  value={depositForm.payback_of_expense_id ?? ''}
+                  onChange={(event) =>
+                    setDepositForm((current) => ({
+                      ...current,
+                      payback_of_expense_id: event.target.value || null,
+                    }))
+                  }
+                >
+                  <option value="">Not linked</option>
+                  {paybackExpenses.map((expense) => (
+                    <option key={expense.id} value={expense.id}>
+                      {formatCurrency(expense.amount)} · {expense.transaction_date ?? '—'} ·{' '}
+                      {expense.property_name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
             <label className="text-sm md:col-span-2 xl:col-span-3">
               <span className="label-text">
                 <Tooltip content="Excel Notes — free text about the row.">Notes</Tooltip>
@@ -1930,11 +1916,57 @@ export function TransactionsPage() {
                                     type="checkbox"
                                     checked={editForm.is_rental_income}
                                     onChange={(event) =>
-                                      patchEdit({ is_rental_income: event.target.checked })
+                                      patchEdit({
+                                        is_rental_income: event.target.checked,
+                                        is_payback: event.target.checked
+                                          ? false
+                                          : editForm.is_payback,
+                                      })
                                     }
                                   />
                                   <span className="label-text mb-0">Rental income</span>
                                 </label>
+                                <label className="text-sm flex items-end gap-2 pb-2 min-w-0">
+                                  <input
+                                    type="checkbox"
+                                    checked={editForm.is_payback}
+                                    onChange={(event) =>
+                                      patchEdit({
+                                        is_payback: event.target.checked,
+                                        is_rental_income: event.target.checked
+                                          ? false
+                                          : editForm.is_rental_income,
+                                        payback_of_expense_id: event.target.checked
+                                          ? editForm.payback_of_expense_id
+                                          : null,
+                                      })
+                                    }
+                                  />
+                                  <span className="label-text mb-0">Payback</span>
+                                </label>
+                                {editForm.is_payback ? (
+                                  <label className="text-sm min-w-0">
+                                    <span className="label-text">Original expense</span>
+                                    <select
+                                      className="field"
+                                      value={editForm.payback_of_expense_id ?? ''}
+                                      onChange={(event) =>
+                                        patchEdit({
+                                          payback_of_expense_id: event.target.value || null,
+                                        })
+                                      }
+                                    >
+                                      <option value="">Not linked</option>
+                                      {paybackExpenses.map((expense) => (
+                                        <option key={expense.id} value={expense.id}>
+                                          {formatCurrency(expense.amount)} ·{' '}
+                                          {expense.transaction_date ?? '—'} ·{' '}
+                                          {expense.property_name}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </label>
+                                ) : null}
                               )}
                               <label className="text-sm min-w-0 sm:col-span-2 lg:col-span-3 xl:col-span-4">
                                 <span className="label-text">Notes</span>

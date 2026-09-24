@@ -1178,6 +1178,8 @@ def apply_actions(db: Session, session: BankReconcileSession, actions: list[dict
                 raise ValueError("Cannot create a transaction without a date")
             if amount <= 0:
                 raise ValueError("Cannot create a transaction without an amount")
+            if action.get("is_payback") and line["side"] != "credit":
+                raise ValueError("Payback can only be created from a bank credit.")
             asmachta = line.get("asmachta")
             desc = line.get("description")
             default = get_default_operating_account(db)
@@ -1204,6 +1206,9 @@ def apply_actions(db: Session, session: BankReconcileSession, actions: list[dict
                 line["proposed_summary"] = "Already bank-verified (duplicate asmachta)"
                 continue
             if line["side"] == "credit":
+                from app.services.payback import apply_payback_fields
+
+                is_payback = bool(action.get("is_payback"))
                 row = Deposit(
                     property_id=prop.id,
                     bank_account_id=session.bank_account_id,
@@ -1211,12 +1216,21 @@ def apply_actions(db: Session, session: BankReconcileSession, actions: list[dict
                     amount=amount,
                     currency="ILS",
                     reference=asmachta,
-                    description=desc or "Bank statement credit",
+                    description=(
+                        desc or ("Bank statement payback" if is_payback else "Bank statement credit")
+                    ),
                     source="bank_statement",
                     bank_verified_at=now,
                     bank_asmachta=asmachta,
                     needs_review=True,
                     review_reasons=UNASSIGNED_REVIEW_REASON,
+                )
+                apply_payback_fields(
+                    db,
+                    row,
+                    is_payback=is_payback,
+                    payback_of_expense_id=action.get("payback_of_expense_id"),
+                    as_http=False,
                 )
                 db.add(row)
                 db.flush()

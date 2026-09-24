@@ -14,6 +14,8 @@ import { PeriodBalanceCheck, balanceMismatchCopy } from './PeriodBalanceCheck';
 import { ConfirmButton } from './ui/ConfirmButton';
 import { FileDropzone } from './ui/FileDropzone';
 import { OwnerPropertyFields } from './ui/OwnerPropertyFields';
+import { PaidWithSelect } from './ui/PaidWithSelect';
+import { SECTION_SUGGESTIONS } from '../constants/expenseOptions';
 import { formatCurrency, formatDate } from './ui/States';
 import { getUserErrorMessage } from '../utils/errors';
 import {
@@ -53,6 +55,12 @@ export function BankReconcilePanel() {
   const [editingAdded, setEditingAdded] = useState<UnifiedTransaction | null>(null);
   const [editOwnerId, setEditOwnerId] = useState('');
   const [editPropertyId, setEditPropertyId] = useState('');
+  const [editSection, setEditSection] = useState('');
+  const [editNotes, setEditNotes] = useState('');
+  const [editPaymentMethod, setEditPaymentMethod] = useState('bank_transfer');
+  const [editCardLast4, setEditCardLast4] = useState<string | null>(null);
+  const [editIsPayback, setEditIsPayback] = useState(false);
+  const [editPaybackExpenseId, setEditPaybackExpenseId] = useState('');
 
   // Follow the URL when it names a session. Do not clear state when the nav
   // link drops ?session= — an in-progress period still lives on the workspace.
@@ -233,6 +241,21 @@ export function BankReconcilePanel() {
     queryKey: ['owners'],
     queryFn: api.getOwners,
   });
+  const cardsQuery = useQuery({
+    queryKey: ['credit-cards'],
+    queryFn: api.getCreditCards,
+    enabled: editingAdded?.kind === 'expense',
+  });
+  const paybackExpensesQuery = useQuery({
+    queryKey: ['expenses', 'payback-link-options'],
+    queryFn: () =>
+      api.getExpenses({
+        page_size: 100,
+        include_running_balance: false,
+        property_status: 'active',
+      }),
+    enabled: editingAdded?.kind === 'deposit',
+  });
 
   const session: BankReconcileSession | undefined =
     sessionId && sessionQuery.data?.id === sessionId ? sessionQuery.data : undefined;
@@ -311,15 +334,36 @@ export function BankReconcilePanel() {
         throw new Error('Choose an owner and a property.');
       }
       if (editingAdded.kind === 'deposit') {
-        return api.updateDeposit(editingAdded.id, { property_id: editPropertyId });
+        return api.updateDeposit(editingAdded.id, {
+          property_id: editPropertyId,
+          description: editNotes.trim() || null,
+          is_payback: editIsPayback,
+          payback_of_expense_id: editIsPayback ? editPaybackExpenseId || null : null,
+        });
       }
-      return api.updateExpense(editingAdded.id, { property_id: editPropertyId });
+      if (editPaymentMethod === 'credit_card' && !editCardLast4) {
+        throw new Error('Please select a credit card.');
+      }
+      const section = editSection.trim() || 'bank_transfer';
+      const notes = editNotes.trim();
+      return api.updateExpense(editingAdded.id, {
+        property_id: editPropertyId,
+        category: section,
+        notes: notes || null,
+        description: notes ? `${section} | ${notes}` : section,
+        payment_method: editPaymentMethod || 'bank_transfer',
+        card_last4: editPaymentMethod === 'credit_card' ? editCardLast4 : null,
+        source:
+          editPaymentMethod === 'credit_card' ? 'credit_card' : 'bank_statement',
+      });
     },
     onSuccess: () => {
       setEditingAdded(null);
-      setMessage('Owner and property saved.');
+      setMessage('Transaction saved.');
       setError(null);
       void queryClient.invalidateQueries({ queryKey: ['bank-reconcile-session', sessionId] });
+      void queryClient.invalidateQueries({ queryKey: ['deposits'] });
+      void queryClient.invalidateQueries({ queryKey: ['expenses'] });
       invalidateVerificationWorkspace(queryClient);
       invalidateAlertData(queryClient);
     },
@@ -407,8 +451,29 @@ export function BankReconcilePanel() {
     );
   }
 
-  function addFromBank(fingerprint: string) {
-    runActions(null, fingerprint, [{ action: 'add_from_bank', fingerprint }]);
+  function addFromBank(fingerprint: string, isPayback = false) {
+    runActions(null, fingerprint, [
+      {
+        action: 'add_from_bank',
+        fingerprint,
+        ...(isPayback ? { is_payback: true } : {}),
+      },
+    ]);
+  }
+
+  function openAddedEdit(row: UnifiedTransaction) {
+    const ownerId =
+      (propertiesQuery.data ?? []).find((property) => property.id === row.property_id)
+        ?.owner_id ?? '';
+    setEditingAdded(row);
+    setEditOwnerId(ownerId);
+    setEditPropertyId(row.property_id);
+    setEditSection(row.kind === 'expense' ? row.section : '');
+    setEditNotes(row.notes ?? '');
+    setEditPaymentMethod(row.payment_method || 'bank_transfer');
+    setEditCardLast4(row.card_last4 ?? null);
+    setEditIsPayback(Boolean(row.is_payback));
+    setEditPaybackExpenseId(row.payback_of_expense_id ?? '');
   }
 
   function createAllFromBank() {
@@ -582,12 +647,12 @@ export function BankReconcilePanel() {
           {editingAdded ? (
             <div className="rounded-lg border border-slate-200 p-3 dark:border-slate-700">
               <p className="text-sm font-medium">
-                Assign {editingAdded.kind === 'deposit' ? 'deposit' : 'expense'}{' '}
+                Edit {editingAdded.kind === 'deposit' ? 'deposit' : 'expense'}{' '}
                 {formatCurrency(editingAdded.amount)}
               </p>
               <p className="mt-1 text-xs muted-text">
                 Bank-created rows start on Needs assignment. Pick the real owner and
-                property before finishing.
+                property, then fill the rest before finishing.
               </p>
               <div className="mt-3 grid gap-3 sm:grid-cols-2">
                 <OwnerPropertyFields
@@ -601,7 +666,79 @@ export function BankReconcilePanel() {
                     setEditPropertyId(next.propertyId);
                   }}
                 />
+                {editingAdded.kind === 'expense' ? (
+                  <>
+                    <label className="text-sm">
+                      <span className="label-text">Section</span>
+                      <input
+                        className="field"
+                        list="verify-section-suggestions"
+                        value={editSection}
+                        onChange={(event) => setEditSection(event.target.value)}
+                      />
+                      <datalist id="verify-section-suggestions">
+                        {SECTION_SUGGESTIONS.map((item) => (
+                          <option key={item} value={item} />
+                        ))}
+                      </datalist>
+                    </label>
+                    <label className="text-sm">
+                      <span className="label-text">Paid with</span>
+                      <PaidWithSelect
+                        cards={cardsQuery.data ?? []}
+                        paymentMethod={editPaymentMethod}
+                        cardLast4={editCardLast4}
+                        onChange={(next) => {
+                          setEditPaymentMethod(next.payment_method);
+                          setEditCardLast4(next.card_last4);
+                        }}
+                      />
+                    </label>
+                  </>
+                ) : (
+                  <>
+                    <label className="text-sm flex items-end gap-2 pb-2">
+                      <input
+                        type="checkbox"
+                        checked={editIsPayback}
+                        onChange={(event) => setEditIsPayback(event.target.checked)}
+                      />
+                      <span className="label-text mb-0">Payback</span>
+                    </label>
+                    {editIsPayback ? (
+                      <label className="text-sm">
+                        <span className="label-text">Original expense (optional)</span>
+                        <select
+                          className="field"
+                          value={editPaybackExpenseId}
+                          onChange={(event) => setEditPaybackExpenseId(event.target.value)}
+                        >
+                          <option value="">Not linked</option>
+                          {(paybackExpensesQuery.data?.items ?? []).map((expense) => (
+                            <option key={expense.id} value={expense.id}>
+                              {formatCurrency(expense.amount)} ·{' '}
+                              {expense.transaction_date ?? '—'} · {expense.property_name}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    ) : null}
+                  </>
+                )}
+                <label className="text-sm sm:col-span-2">
+                  <span className="label-text">Notes</span>
+                  <input
+                    type="text"
+                    className="field"
+                    value={editNotes}
+                    onChange={(event) => setEditNotes(event.target.value)}
+                  />
+                </label>
               </div>
+              <p className="mt-2 text-xs muted-text">
+                Attach files from Transactions for now. Multiple files come in the next
+                files step.
+              </p>
               <div className="mt-3 flex flex-wrap gap-2">
                 <button
                   type="button"
@@ -609,7 +746,7 @@ export function BankReconcilePanel() {
                   disabled={assignMutation.isPending || !editOwnerId || !editPropertyId}
                   onClick={() => assignMutation.mutate()}
                 >
-                  {assignMutation.isPending ? 'Saving…' : 'Save assignment'}
+                  {assignMutation.isPending ? 'Saving…' : 'Save'}
                 </button>
                 <button
                   type="button"
@@ -665,15 +802,7 @@ export function BankReconcilePanel() {
                     type="button"
                     className="btn-secondary text-xs"
                     disabled={busy}
-                    onClick={() => {
-                      const ownerId =
-                        (propertiesQuery.data ?? []).find(
-                          (property) => property.id === row.property_id,
-                        )?.owner_id ?? '';
-                      setEditingAdded(row);
-                      setEditOwnerId(ownerId);
-                      setEditPropertyId(row.property_id);
-                    }}
+                    onClick={() => openAddedEdit(row)}
                   >
                     Edit
                   </button>
@@ -728,6 +857,16 @@ export function BankReconcilePanel() {
                     >
                       Create
                     </button>
+                    {line.side === 'credit' ? (
+                      <button
+                        type="button"
+                        className="btn-secondary text-xs"
+                        disabled={busy}
+                        onClick={() => addFromBank(line.fingerprint, true)}
+                      >
+                        Create payback
+                      </button>
+                    ) : null}
                     <button
                       type="button"
                       className="btn-secondary text-xs"

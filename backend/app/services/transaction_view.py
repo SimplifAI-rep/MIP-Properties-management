@@ -48,6 +48,8 @@ def deposit_dict_to_transaction(item: dict[str, Any]) -> dict[str, Any]:
         needs_review=bool(item.get("needs_review")),
         review_reasons=item.get("review_reasons"),
         is_rental_income=bool(item.get("is_rental_income")),
+        is_payback=bool(item.get("is_payback")),
+        payback_of_expense_id=item.get("payback_of_expense_id"),
         paid_by_resident=None,
         paid_by_owner=None,
         paid_by_company=None,

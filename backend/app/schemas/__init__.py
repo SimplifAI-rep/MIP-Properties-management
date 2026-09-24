@@ -77,6 +77,8 @@ class DepositRead(BaseModel):
     description: str | None = None
     source: str
     is_rental_income: bool = False
+    is_payback: bool = False
+    payback_of_expense_id: UUID | None = None
     receipt_ref: str | None = None
     source_file: str | None = None
     balance_after: Decimal | None = None
@@ -153,6 +155,8 @@ class DepositCreate(BaseModel):
     description: str | None = None
     source: str = "manual_entry"
     is_rental_income: bool = False
+    is_payback: bool = False
+    payback_of_expense_id: UUID | None = None
 
 
 class DepositUpdate(BaseModel):
@@ -165,6 +169,8 @@ class DepositUpdate(BaseModel):
     description: str | None = None
     source: str | None = None
     is_rental_income: bool | None = None
+    is_payback: bool | None = None
+    payback_of_expense_id: UUID | None = None
 
 
 class ClientDataImportCounts(BaseModel):
@@ -319,6 +325,8 @@ class TransactionRead(BaseModel):
     needs_review: bool = False
     review_reasons: str | None = None
     is_rental_income: bool | None = None
+    is_payback: bool | None = None
+    payback_of_expense_id: UUID | None = None
     paid_by_resident: bool | None = None
     paid_by_owner: bool | None = None
     paid_by_company: bool | None = None
@@ -672,6 +680,8 @@ class BankReconcileAction(BaseModel):
     reason: str | None = None
     property_id: UUID | None = None
     member_ids: list[UUID] | None = None
+    is_payback: bool | None = None
+    payback_of_expense_id: UUID | None = None
 
 
 class BankReconcileActionsRequest(BaseModel):

@@ -41,6 +41,8 @@ export interface UnifiedTransaction {
   paid_by_owner?: boolean;
   ledger_column?: string | null;
   is_rental_income?: boolean;
+  is_payback?: boolean;
+  payback_of_expense_id?: string | null;
   from_bank_statement?: boolean;
   needs_review?: boolean;
   review_reasons?: string | null;

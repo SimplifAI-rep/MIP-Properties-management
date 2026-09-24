@@ -55,6 +55,8 @@ def deposit_to_read(
         description=deposit.description,
         source=deposit.source,
         is_rental_income=bool(deposit.is_rental_income),
+        is_payback=bool(getattr(deposit, "is_payback", False)),
+        payback_of_expense_id=getattr(deposit, "payback_of_expense_id", None),
         receipt_ref=deposit.receipt_ref,
         source_file=resolve_source_file(
             source_file=deposit.source_file,
@@ -339,6 +341,10 @@ def create_deposit(db: Session, payload: DepositCreate) -> DepositRead:
         raise HTTPException(status_code=400, detail="Date is required.")
     if payload.amount is None or payload.amount <= 0:
         raise HTTPException(status_code=400, detail="Amount must be greater than 0.")
+    if payload.is_payback and payload.is_rental_income:
+        raise HTTPException(
+            status_code=400, detail="A payback cannot also be rental income."
+        )
 
     owner = db.get(Owner, property_row.owner_id)
     if not owner:
@@ -369,7 +375,15 @@ def create_deposit(db: Session, payload: DepositCreate) -> DepositRead:
         reference=payload.reference,
         description=payload.description,
         source=payload.source or "manual_entry",
-        is_rental_income=bool(payload.is_rental_income),
+        is_rental_income=bool(payload.is_rental_income) and not payload.is_payback,
+    )
+    from app.services.payback import apply_payback_fields
+
+    apply_payback_fields(
+        db,
+        deposit,
+        is_payback=bool(payload.is_payback),
+        payback_of_expense_id=payload.payback_of_expense_id,
     )
     db.add(deposit)
     db.commit()
@@ -422,8 +436,31 @@ def update_deposit(db: Session, deposit_id: UUID, payload: DepositUpdate) -> Dep
         bank_account = db.get(BankAccount, deposit.bank_account_id)
         account_number = bank_account.account_number if bank_account else None
 
+    is_payback = data.pop("is_payback", None)
+    payback_of_expense_id = data.pop("payback_of_expense_id", None)
+
     for key, value in data.items():
         setattr(deposit, key, value)
+
+    if is_payback is not None or payback_of_expense_id is not None:
+        from app.services.payback import apply_payback_fields
+
+        next_is_payback = (
+            bool(is_payback) if is_payback is not None else bool(deposit.is_payback)
+        )
+        next_link = (
+            payback_of_expense_id
+            if payback_of_expense_id is not None
+            else deposit.payback_of_expense_id
+        )
+        if deposit.is_rental_income and next_is_payback:
+            deposit.is_rental_income = False
+        apply_payback_fields(
+            db,
+            deposit,
+            is_payback=next_is_payback,
+            payback_of_expense_id=next_link,
+        )
 
     from app.services.holding import UNASSIGNED_PROP_ID, clear_unassigned_review
 

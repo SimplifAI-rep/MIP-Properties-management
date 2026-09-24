@@ -21,12 +21,12 @@ Payback is a separate deposit. Finish only when `|gap| ≤ 0.01`.
 
 ## Phase B — Edit + payback on Verification
 
-- [ ] B1. Add payback fields on deposit (`is_payback`, optional link to original expense)
-- [ ] B2. Payback tag on Transactions and verification rows
+- [x] B1. Add payback fields on deposit (`is_payback`, optional link to original expense)
+- [x] B2. Payback tag on Transactions and verification rows
 - [x] B3. After Create, bank-added rows show **Edit**
-- [ ] B4. Edit dialog: owner, property, section/notes, paid-with, files, payback (credits)
-- [ ] B5. Unmatched bank credit: **Create** and **Create payback**
-- [ ] B6. Tests for create + edit + payback
+- [x] B4. Edit dialog: owner, property, section/notes, paid-with, payback (credits). Files stay on Transactions until Phase D.
+- [x] B5. Unmatched bank credit: **Create** and **Create payback**
+- [x] B6. Tests for create + edit + payback
 
 ## Phase C — Alerts
 

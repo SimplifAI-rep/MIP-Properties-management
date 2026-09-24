@@ -59,6 +59,11 @@ class Deposit(Base, TimestampMixin):
     )
     # True when Excel "Rental income" — tracked rent, not company float inflow
     is_rental_income: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Bank refund / partial return — a separate deposit, not a rewrite of the original
+    is_payback: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    payback_of_expense_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("expenses.id"), nullable=True
+    )
     # Stable idempotency key from client Excel row (e.g. mgmt:05ex:r12:inflow)
     import_key: Mapped[str | None] = mapped_column(String(255))
     # UploadedDocument.id when created from a receipt/PDF/image upload

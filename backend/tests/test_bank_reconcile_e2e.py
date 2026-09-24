@@ -628,19 +628,25 @@ def test_frontend_verification_surface_exists():
     assert "BankVerificationPanel" not in dash
     tx_page = (frontend / "pages" / "TransactionsPage.tsx").read_text(encoding="utf-8")
     assert "Credit card" in tx_page
-    assert "Select a card" in tx_page
     assert "OwnerPropertyFields" in tx_page
     assert "Please choose an owner, property, date, and amount." in tx_page
+    assert "Payback" in tx_page
+    paid_with = (frontend / "components" / "ui" / "PaidWithSelect.tsx").read_text(
+        encoding="utf-8"
+    )
+    assert "Select a card" in paid_with
     bank_panel_text = (frontend / "components" / "BankReconcilePanel.tsx").read_text(
         encoding="utf-8"
     )
     assert "Needs assignment" in bank_panel_text
-    assert "Save assignment" in bank_panel_text
+    assert "Create payback" in bank_panel_text
+    assert "Save" in bank_panel_text
     table = (frontend / "components" / "TransactionTable.tsx").read_text(encoding="utf-8")
     assert "Card pending" in table
     assert "Credit card verified" in table
     assert "Credit card postponed" in table
     assert "Bank settled" in table
+    assert "Payback" in table
     cards_page = (frontend / "pages" / "CreditCardsPage.tsx").read_text(encoding="utf-8")
     assert "View transactions" in cards_page
     alerts = (frontend / "pages" / "AlertsPage.tsx").read_text(encoding="utf-8")

@@ -46,6 +46,8 @@ function depositToUnified(deposit: Deposit): UnifiedTransaction {
     source_file: deposit.source_file ?? null,
     balance_after: deposit.balance_after ?? null,
     is_rental_income: Boolean(deposit.is_rental_income),
+    is_payback: Boolean(deposit.is_payback),
+    payback_of_expense_id: deposit.payback_of_expense_id ?? null,
     from_bank_statement: deposit.source === 'bank_statement',
     needs_review: Boolean(deposit.needs_review),
     review_reasons: deposit.review_reasons ?? null,
@@ -152,6 +154,8 @@ export function unifiedFromRecord(row: Record<string, unknown>): UnifiedTransact
     paid_by_owner: asBool(row.paid_by_owner),
     ledger_column: asNullableString(row.ledger_column),
     is_rental_income: asBool(row.is_rental_income),
+    is_payback: asBool(row.is_payback),
+    payback_of_expense_id: asNullableString(row.payback_of_expense_id),
     from_bank_statement:
       asBool(row.from_bank_statement) || source === 'bank_statement',
     needs_review: asBool(row.needs_review),
@@ -226,6 +230,8 @@ export function recordToUnified(
     paid_by_owner: asBool(row.paid_by_owner),
     ledger_column: asNullableString(row.ledger_column),
     is_rental_income: asBool(row.is_rental_income),
+    is_payback: asBool(row.is_payback),
+    payback_of_expense_id: asNullableString(row.payback_of_expense_id),
     from_bank_statement:
       asBool(row.from_bank_statement) || source === 'bank_statement',
     needs_review: asBool(row.needs_review),

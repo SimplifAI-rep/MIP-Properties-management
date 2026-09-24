@@ -61,6 +61,8 @@ export interface Deposit {
   description: string | null;
   source: string;
   is_rental_income?: boolean;
+  is_payback?: boolean;
+  payback_of_expense_id?: string | null;
   receipt_ref?: string | null;
   source_file?: string | null;
   balance_after?: string | null;
@@ -326,6 +328,8 @@ export interface DepositUpdate {
   reference?: string | null;
   description?: string | null;
   is_rental_income?: boolean;
+  is_payback?: boolean;
+  payback_of_expense_id?: string | null;
 }
 
 export interface FieldWarning {
@@ -465,6 +469,8 @@ export interface DepositCreate {
   description?: string;
   source?: string;
   is_rental_income?: boolean;
+  is_payback?: boolean;
+  payback_of_expense_id?: string | null;
   /** UI-only helpers mapped into description/reference on save */
   category?: string;
   payment_method?: string;
@@ -653,6 +659,8 @@ export interface BankReconcileAction {
   reason?: string;
   property_id?: string;
   member_ids?: string[];
+  is_payback?: boolean;
+  payback_of_expense_id?: string;
 }
 
 export interface BankReconcileLine {

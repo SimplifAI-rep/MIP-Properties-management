@@ -1370,7 +1370,7 @@ export function TransactionsPage() {
               </span>
             </label>
             {depositForm.is_payback ? (
-              <label className="text-sm">
+            <label className="text-sm">
                 <span className="label-text">Original expense (optional)</span>
                 <select
                   className="field"
@@ -1558,14 +1558,14 @@ export function TransactionsPage() {
                 </p>
               ) : null}
             </div>
-        <label className="text-sm">
+            <label className="text-sm">
               <span className="label-text">
                 <Tooltip content="How this expense was recorded (e.g. standing order).">
                   Source
                 </Tooltip>
               </span>
-          <select
-            className="field"
+              <select
+                className="field"
                 value={form.source}
                 onChange={(event) =>
                   setForm((current) => ({ ...current, source: event.target.value }))
@@ -1574,31 +1574,31 @@ export function TransactionsPage() {
                 {SOURCES.map((item) => (
                   <option key={item} value={item}>
                     {label(item)}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="text-sm">
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="text-sm">
               <span className="label-text">
                 <Tooltip content="Excel Company — vendor or payee name.">Company</Tooltip>
               </span>
           <input
                 type="text"
-            className="field"
+                className="field"
                 placeholder="Vendor / company name"
                 value={form.vendor_name ?? ''}
                 onChange={(event) =>
                   setForm((current) => ({ ...current, vendor_name: event.target.value }))
                 }
           />
-        </label>
+            </label>
             <label className="text-sm md:col-span-2 xl:col-span-3">
               <span className="label-text">
                 <Tooltip content="Excel Notes — free text about the row.">Notes</Tooltip>
               </span>
-          <input
+              <input
                 type="text"
-            className="field"
+                className="field"
                 placeholder="Optional notes"
                 value={form.description ?? ''}
                 onChange={(event) =>
@@ -1712,8 +1712,8 @@ export function TransactionsPage() {
                 selected={sections}
                 onChange={(next) => {
                   setSections(next);
-                  resetPage();
-                }}
+              resetPage();
+            }}
                 placeholder="All sections"
                 searchPlaceholder="Search section…"
               />
@@ -1724,8 +1724,8 @@ export function TransactionsPage() {
                 selected={sources}
                 onChange={(next) => {
                   setSources(next);
-                  resetPage();
-                }}
+              resetPage();
+            }}
                 placeholder="All sources"
                 searchPlaceholder="Search source…"
               />
@@ -1874,21 +1874,21 @@ export function TransactionsPage() {
                                   value={editForm.amount}
                                   onChange={(event) => patchEdit({ amount: event.target.value })}
                                 />
-                              </label>
+        </label>
                               {row.kind === 'expense' ? (
                                 <>
                                   <label className="text-sm min-w-0">
                                     <span className="label-text">Section</span>
-                                    <input
+          <input
                                       list="inline-section-suggestions"
                                       type="text"
-                                      className="field"
+            className="field"
                                       value={editForm.section}
                                       onChange={(event) =>
                                         patchEdit({ section: event.target.value })
                                       }
-                                    />
-                                  </label>
+          />
+        </label>
                                   <div className="text-sm min-w-0">
                                     <span className="label-text">Paid with</span>
                                     <PaidWithSelect
@@ -1909,15 +1909,15 @@ export function TransactionsPage() {
                                   </div>
                                   <label className="text-sm min-w-0">
                                     <span className="label-text">Company</span>
-                                    <input
+          <input
                                       type="text"
-                                      className="field"
+            className="field"
                                       value={editForm.company}
                                       onChange={(event) =>
                                         patchEdit({ company: event.target.value })
                                       }
-                                    />
-                                  </label>
+          />
+        </label>
                                   <label className="text-sm min-w-0">
               <span className="label-text">Source</span>
               <select
@@ -1979,8 +1979,8 @@ export function TransactionsPage() {
                                   {editForm.is_payback ? (
                                     <label className="text-sm min-w-0">
                                       <span className="label-text">Original expense</span>
-                                      <select
-                                        className="field"
+              <select
+                className="field"
                                         value={editForm.payback_of_expense_id ?? ''}
                                         onChange={(event) =>
                                           patchEdit({
@@ -1995,10 +1995,10 @@ export function TransactionsPage() {
                                             {formatCurrency(expense.amount)} ·{' '}
                                             {expense.transaction_date ?? '—'} ·{' '}
                                             {expense.property_name}
-                                          </option>
-                                        ))}
-                                      </select>
-                                    </label>
+                  </option>
+                ))}
+              </select>
+            </label>
                                   ) : null}
                                 </>
                               )}

@@ -144,7 +144,7 @@ export function CcReconcilePanel() {
         next.set('cc_session', created.id);
         return next;
       });
-      setMessage('Statement opened. Check the lists below.');
+      setMessage('Statement opened. Charges not for this period are listed first.');
       setNotice(null);
       setError(null);
       void queryClient.invalidateQueries({ queryKey: ['cc-reconcile-session'] });
@@ -334,6 +334,18 @@ export function CcReconcilePanel() {
     ]);
   }
 
+  function includeApp(txId?: string) {
+    const pending = notInExcelTxs.filter((tx) => !ignoredAppIds.has(tx.id));
+    runActions(txId ? null : 'include-cc', txId ?? null, [
+      {
+        action: 'include_cc_in_period' as const,
+        ...(txId
+          ? { tx_id: txId }
+          : { member_ids: pending.map((tx) => tx.id) }),
+      },
+    ]);
+  }
+
   function confirmOne(tx: UnifiedTransaction) {
     const fingerprint = fingerprintByTxId.get(tx.id);
     if (!fingerprint) return;
@@ -461,6 +473,64 @@ export function CcReconcilePanel() {
           <VerifyProgress handled={handledItems} total={totalItems} />
 
           <VerifyGroupSection
+            title="Not for this period"
+            subtitle="In the app, but not on this card statement. Keep in this period if it should count now. Push if the money has not left the bank yet — you can match it to a bank statement next cycle."
+            count={notInExcelTxs.length}
+            tone="warn"
+            defaultOpen
+            hideWhenEmpty
+            actions={
+              pendingMissingCount > 0 ? (
+                <>
+                  <ConfirmButton
+                    label={`Keep in this period (${pendingMissingCount})`}
+                    confirmLabel={`Keep ${pendingMissingCount}`}
+                    disabled={busy}
+                    pending={pendingBulk === 'include-cc'}
+                    onConfirm={() => includeApp()}
+                  />
+                  <ConfirmButton
+                    label={`Push to next cycle (${pendingMissingCount})`}
+                    confirmLabel={`Push ${pendingMissingCount}`}
+                    disabled={busy}
+                    pending={pendingBulk === 'defer-cc'}
+                    onConfirm={() => deferApp()}
+                  />
+                </>
+              ) : null
+            }
+          >
+            <VerifyTransactionTable
+              rows={notInExcelTxs}
+              pendingRowId={pendingRowId}
+              renderActions={(row) =>
+                ignoredAppIds.has(row.id) ? (
+                  <span className="text-xs muted-text">Ignored</span>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      className="btn-primary text-xs"
+                      disabled={busy}
+                      onClick={() => includeApp(row.id)}
+                    >
+                      Keep in this period
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-secondary text-xs"
+                      disabled={busy}
+                      onClick={() => deferApp(row.id)}
+                    >
+                      Push to next cycle
+                    </button>
+                  </>
+                )
+              }
+            />
+          </VerifyGroupSection>
+
+          <VerifyGroupSection
             title="Found on statement"
             subtitle="Confirm these"
             count={ableTxs.length}
@@ -559,45 +629,6 @@ export function CcReconcilePanel() {
                   </>
                 );
               }}
-            />
-          </VerifyGroupSection>
-
-          <VerifyGroupSection
-            title="In the app, not on the statement"
-            subtitle="Push to the next cycle — not in this card payment, and not counted in this period's totals"
-            count={notInExcelTxs.length}
-            tone="warn"
-            defaultOpen
-            hideWhenEmpty
-            actions={
-              pendingMissingCount > 0 ? (
-                <ConfirmButton
-                  label={`Push to next cycle (${pendingMissingCount})`}
-                  confirmLabel={`Push ${pendingMissingCount}`}
-                  disabled={busy}
-                  pending={pendingBulk === 'defer-cc'}
-                  onConfirm={() => deferApp()}
-                />
-              ) : null
-            }
-          >
-            <VerifyTransactionTable
-              rows={notInExcelTxs}
-              pendingRowId={pendingRowId}
-              renderActions={(row) =>
-                ignoredAppIds.has(row.id) ? (
-                  <span className="text-xs muted-text">Ignored</span>
-                ) : (
-                  <button
-                    type="button"
-                    className="btn-secondary text-xs"
-                    disabled={busy}
-                    onClick={() => deferApp(row.id)}
-                  >
-                    Push to next cycle
-                  </button>
-                )
-              }
             />
           </VerifyGroupSection>
 

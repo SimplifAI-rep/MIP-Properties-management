@@ -119,6 +119,7 @@ def list_expenses(
     paid_by_owner: bool | None = None,
     paid_by_company: bool | None = None,
     ledger_column: str | None = None,
+    deferred_only: bool = False,
     page: int = 1,
     page_size: int = 50,
     include_running_balance: bool = True,
@@ -130,8 +131,13 @@ def list_expenses(
         select(Expense, Property.name, Owner.name, Property.client_prop_id)
         .join(Property, Expense.property_id == Property.id)
         .join(Owner, Property.owner_id == Owner.id)
-        .order_by(Expense.transaction_date.desc())
     )
+    if deferred_only:
+        stmt = stmt.order_by(
+            Expense.cc_deferred_until.asc(), Expense.transaction_date.desc()
+        )
+    else:
+        stmt = stmt.order_by(Expense.transaction_date.desc())
     stmt = apply_expense_list_filters(
         stmt,
         property_id=property_id,
@@ -156,6 +162,7 @@ def list_expenses(
         paid_by_owner=paid_by_owner,
         paid_by_company=paid_by_company,
         ledger_column=ledger_column,
+        deferred_only=deferred_only,
     )
 
     count_stmt = select(func.count()).select_from(stmt.subquery())

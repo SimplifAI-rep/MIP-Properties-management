@@ -136,3 +136,88 @@ def test_leftover_card_charges_group_defer_and_stay_out_of_totals(client, db):
     period_start = date.fromisoformat(session["statement_start_date"])
     assert cc_deferral_blocks(leftover, period_start) is True
     assert cc_deferral_blocks(leftover, until + timedelta(days=1)) is False
+
+
+@pytest.mark.skipif(not SAMPLE_BANK.exists(), reason="sample bank Excel not present")
+def test_include_leftover_in_period_clears_it_without_changing_totals(client, db):
+    now = datetime.now(timezone.utc)
+    leftover = Expense(
+        property_id=PROPERTY_ROTHSCHILD_ID,
+        transaction_date=date(2026, 7, 25),
+        amount=Decimal("99991.13"),
+        category="utilities",
+        source="credit_card",
+        payment_method="credit_card",
+        vendor_name="Keep this period",
+        description="Keep this period",
+        cc_verified_at=now,
+    )
+    db.add(leftover)
+    db.commit()
+    leftover_id = str(leftover.id)
+
+    with SAMPLE_BANK.open("rb") as handle:
+        created = client.post(
+            "/api/v1/bank-settings/reconcile/sessions",
+            files={
+                "file": (
+                    "Bank Account example.xlsx",
+                    handle,
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                )
+            },
+        )
+    assert created.status_code == 200, created.text
+    session = created.json()
+    leftover_ids = {str(row["id"]) for row in session.get("leftover_cc_txs") or []}
+    assert leftover_id in leftover_ids
+    before_app_out = Decimal(session["app_out"])
+
+    kept = client.post(
+        f"/api/v1/bank-settings/reconcile/sessions/{session['id']}/actions",
+        json={"actions": [{"action": "include_cc_in_period", "tx_id": leftover_id}]},
+    )
+    assert kept.status_code == 200, kept.text
+    body = kept.json()
+    leftover_after = {str(row["id"]) for row in body.get("leftover_cc_txs") or []}
+    assert leftover_id not in leftover_after
+    assert Decimal(body["app_out"]) == before_app_out
+    db.refresh(leftover)
+    assert leftover.cc_deferred_until is None
+    assert leftover.cc_bank_confirmed_at is not None
+
+
+@pytest.mark.skipif(not SAMPLE_BANK.exists(), reason="sample bank Excel not present")
+def test_previously_deferred_unverified_shows_immediately_on_bank_upload(client, db):
+    pushed = Expense(
+        property_id=PROPERTY_ROTHSCHILD_ID,
+        transaction_date=date(2026, 6, 20),
+        amount=Decimal("41.50"),
+        category="utilities",
+        source="credit_card",
+        payment_method="credit_card",
+        vendor_name="TEST last cycle",
+        description="TEST last cycle",
+        cc_deferred_until=date(2020, 1, 1),
+    )
+    db.add(pushed)
+    db.commit()
+    pushed_id = str(pushed.id)
+
+    with SAMPLE_BANK.open("rb") as handle:
+        created = client.post(
+            "/api/v1/bank-settings/reconcile/sessions",
+            files={
+                "file": (
+                    "Bank Account example.xlsx",
+                    handle,
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                )
+            },
+        )
+    assert created.status_code == 200, created.text
+    session = created.json()
+    leftover_ids = [str(row["id"]) for row in session.get("leftover_cc_txs") or []]
+    unmatched_ids = [str(row["id"]) for row in session.get("not_in_excel_txs") or []]
+    assert pushed_id not in leftover_ids
+    assert pushed_id in unmatched_ids

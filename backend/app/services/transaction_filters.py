@@ -325,6 +325,7 @@ def apply_expense_list_filters(
     ledger_column: str | None = None,
     source_file_match: SourceFileMatch = "exact",
     apply_company_float_default: bool = False,
+    deferred_only: bool = False,
 ) -> Select[Any]:
     stmt = apply_property_scope(
         stmt,
@@ -380,6 +381,8 @@ def apply_expense_list_filters(
         )
     if ledger_column:
         stmt = stmt.where(Expense.ledger_column == ledger_column)
+    if deferred_only:
+        stmt = stmt.where(Expense.cc_deferred_until.is_not(None))
     return stmt
 
 

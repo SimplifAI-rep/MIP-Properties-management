@@ -160,23 +160,37 @@ def _app_candidate_filters(
                 bank_account_id, is_default=is_default_account
             )
         )
+    # Card charges wait for the card statement, except ones pushed last cycle
+    # now that the money may have left the bank.
+    bank_method = or_(
+        Expense.payment_method.is_(None),
+        Expense.payment_method.notin_(_BANK_SKIP_PAYMENT_METHODS),
+    )
+    released_cc = None
+    if date_from is not None:
+        released_cc = and_(
+            Expense.payment_method == "credit_card",
+            Expense.cc_deferred_until.is_not(None),
+            Expense.cc_deferred_until < date_from,
+            Expense.cc_settlement_group_id.is_(None),
+        )
+        bank_method = or_(bank_method, released_cc)
     exp = [
         *expense_company_float_clauses(),
         Expense.bank_reconcile_exclude.is_(False),
         Expense.bank_verified_at.is_(None),
         Expense.transaction_date.is_not(None),
         Expense.amount > 0,
-        or_(
-            Expense.payment_method.is_(None),
-            Expense.payment_method.notin_(_BANK_SKIP_PAYMENT_METHODS),
-        ),
+        bank_method,
     ]
     if date_from is not None:
         dep.append(Deposit.transaction_date >= date_from)
-        exp.append(Expense.transaction_date >= date_from)
+        in_from = Expense.transaction_date >= date_from
+        exp.append(or_(in_from, released_cc) if released_cc is not None else in_from)
     if date_to is not None:
         dep.append(Deposit.transaction_date <= date_to)
-        exp.append(Expense.transaction_date <= date_to)
+        in_to = Expense.transaction_date <= date_to
+        exp.append(or_(in_to, released_cc) if released_cc is not None else in_to)
     # Non-default operating accounts only reconcile deposits on that account
     if not is_default_account:
         exp = None
@@ -293,35 +307,41 @@ def _leftover_cc_expense_ids(
     period_start: date | None,
     period_end: date | None,
 ) -> list[UUID]:
-    """Card charges in the app that are not part of this statement's card payment(s)."""
+    """Card charges that are not for this bank payment — show as soon as the statement opens.
+
+    Card-verified charges in this window that are not in this statement's card
+    payment. Charges pushed from last cycle go through bank matching instead,
+    so they can be merged with a bank debit when the money leaves.
+    """
     taken = _settlement_member_ids(lines)
     clauses = [
         Expense.payment_method == "credit_card",
         Expense.bank_reconcile_exclude.is_(False),
         Expense.cc_settlement_group_id.is_(None),
-        Expense.cc_verified_at.is_not(None),
+        Expense.cc_bank_confirmed_at.is_(None),
         Expense.transaction_date.is_not(None),
         Expense.amount > 0,
     ]
-    allow = cc_deferral_allows_clause(period_start)
-    if allow is not None:
-        clauses.append(allow)
     rows = list(db.scalars(select(Expense).where(and_(*clauses))))
     leftover: list[Expense] = []
     for row in rows:
         if str(row.id) in taken:
+            continue
+        if cc_deferral_blocks(row, period_start):
+            continue
+        released = (
+            row.cc_deferred_until is not None
+            and period_start is not None
+            and row.cc_deferred_until < period_start
+        )
+        if released:
             continue
         in_window = True
         if period_start is not None and row.transaction_date is not None:
             in_window = row.transaction_date >= period_start
         if period_end is not None and row.transaction_date is not None:
             in_window = in_window and row.transaction_date <= period_end
-        released = (
-            row.cc_deferred_until is not None
-            and period_start is not None
-            and row.cc_deferred_until < period_start
-        )
-        if in_window or released:
+        if in_window and row.cc_verified_at is not None:
             leftover.append(row)
     leftover.sort(key=lambda row: (row.transaction_date or date.min, str(row.id)))
     return [row.id for row in leftover]
@@ -659,9 +679,20 @@ def _unmatched_app_rows(
                     "description": row.vendor_name or row.description or row.category,
                     "status": "unmatched",
                     "ignore_reason": None,
+                    "payment_method": row.payment_method,
+                    "cc_deferred_until": row.cc_deferred_until.isoformat()
+                    if row.cc_deferred_until
+                    else None,
                 }
             )
-    out.sort(key=lambda r: (r.get("transaction_date") or "", r["kind"], r["id"]))
+    out.sort(
+        key=lambda r: (
+            0 if r.get("cc_deferred_until") else 1,
+            r.get("transaction_date") or "",
+            r["kind"],
+            r["id"],
+        )
+    )
     return out
 
 
@@ -816,7 +847,9 @@ def _reject_if_excluded_from_bank(row: Deposit | Expense) -> None:
         raise ValueError("Owner-paid expenses stay out of bank verification.")
     method = row.payment_method
     if method == "credit_card":
-        raise ValueError("Card charges are verified on the card statement.")
+        if getattr(row, "cc_deferred_until", None) is None:
+            raise ValueError("Card charges are verified on the card statement.")
+        return
     if method == "owner_personal":
         raise ValueError("Owner-personal expenses stay out of bank verification.")
 
@@ -1249,6 +1282,8 @@ def apply_actions(db: Session, session: BankReconcileSession, actions: list[dict
                 raise ValueError(f"Transaction {tx_id} not found")
             row.bank_verified_at = now
             row.bank_asmachta = line.get("asmachta")
+            if isinstance(row, Expense):
+                row.cc_deferred_until = None
             line["status"] = "matched"
             line["proposed_kind"] = tx_kind
             line["proposed_tx_id"] = str(tx_id)
@@ -1294,6 +1329,8 @@ def apply_actions(db: Session, session: BankReconcileSession, actions: list[dict
             if asmachta:
                 row.reference = asmachta
             row.bank_verified_at = now
+            if isinstance(row, Expense):
+                row.cc_deferred_until = None
             _clear_stale_proposals(lines, tx_id=str(tx_id), keep_fp=fp)
             line["status"] = "matched"
             line["proposed_kind"] = tx_kind
@@ -1409,6 +1446,27 @@ def apply_actions(db: Session, session: BankReconcileSession, actions: list[dict
                 apps.pop(f"expense:{row.id}", None)
             _strip_ids_from_settlements(db, lines, deferred)
             _drop_deferred_from_open_cc_sessions(db, deferred)
+
+        elif kind == "include_cc_in_period":
+            leftover_ids = _leftover_cc_expense_ids(
+                db,
+                lines=list(lines.values()),
+                period_start=session.statement_start_date,
+                period_end=session.statement_end_date,
+            )
+            requested: list[str] = []
+            if action.get("tx_id"):
+                requested.append(str(action["tx_id"]))
+            for mid in action.get("member_ids") or []:
+                requested.append(str(mid))
+            target_ids = requested or [str(uid) for uid in leftover_ids]
+            for raw in target_ids:
+                row = db.get(Expense, UUID(str(raw)))
+                if row is None or row.payment_method != "credit_card":
+                    continue
+                row.cc_deferred_until = None
+                row.cc_bank_confirmed_at = now
+                apps.pop(f"expense:{row.id}", None)
 
         elif kind == "add_from_bank":
             fp = action["fingerprint"]

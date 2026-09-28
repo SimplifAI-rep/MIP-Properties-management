@@ -585,7 +585,9 @@ def test_frontend_verification_surface_exists():
     assert "Upload bank statement" in bank_panel
     assert "Card payments" in bank_panel
     assert "Push to next cycle" in bank_panel
-    assert "not in this payment" in bank_panel
+    assert "Keep in this period" in bank_panel
+    assert "Not for this period" in bank_panel
+    assert bank_panel.find("Not for this period") < bank_panel.find("Found on statement")
     assert "PeriodBalanceCheck" in bank_panel
     assert "Finish anyway" not in bank_panel
     assert "finishGapCopy" in bank_panel
@@ -616,8 +618,10 @@ def test_frontend_verification_surface_exists():
         encoding="utf-8"
     )
     assert "Found on statement" in cc_panel
-    assert "In the app, not on the statement" in cc_panel
+    assert "Not for this period" in cc_panel
+    assert "Keep in this period" in cc_panel
     assert "Push to next cycle" in cc_panel
+    assert cc_panel.find("Not for this period") < cc_panel.find("Found on statement")
     assert "no transactions for that period" in cc_panel
     assert "On the statement, not in the app" in cc_panel
     assert "Finish period" in cc_panel
@@ -651,6 +655,11 @@ def test_frontend_verification_surface_exists():
     assert "Payback" in table
     cards_page = (frontend / "pages" / "CreditCardsPage.tsx").read_text(encoding="utf-8")
     assert "View transactions" in cards_page
+    next_cycle = (frontend / "pages" / "NextCyclePage.tsx").read_text(encoding="utf-8")
+    assert "Next cycle" in next_cycle
+    assert "deferred_only" in next_cycle
+    shell = (frontend / "components" / "layout" / "AppShell.tsx").read_text(encoding="utf-8")
+    assert "/next-cycle" in shell
     alerts = (frontend / "pages" / "AlertsPage.tsx").read_text(encoding="utf-8")
     assert "cc_unmatched" in alerts
     assert "Open Verification" in alerts

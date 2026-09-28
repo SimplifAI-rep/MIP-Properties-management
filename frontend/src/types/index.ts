@@ -290,6 +290,7 @@ export interface ExpenseFilters {
   paid_by_owner?: boolean;
   paid_by_company?: boolean;
   include_running_balance?: boolean;
+  deferred_only?: boolean;
   page?: number;
   page_size?: number;
 }
@@ -669,6 +670,7 @@ export interface BankReconcileAction {
     | 'ignore_app'
     | 'add_from_bank'
     | 'defer_cc_to_next'
+    | 'include_cc_in_period'
     | 'merge'
     | 'link_to_app';
   fingerprint?: string;
@@ -755,7 +757,8 @@ export interface CcReconcileAction {
     | 'ignore_cc'
     | 'ignore_app'
     | 'add_from_cc'
-    | 'defer_cc_to_next';
+    | 'defer_cc_to_next'
+    | 'include_cc_in_period';
   fingerprint?: string;
   tx_id?: string;
   reason?: string;

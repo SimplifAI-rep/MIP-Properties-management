@@ -409,6 +409,7 @@ export const api = {
         paid_by_company: filters.paid_by_company,
         include_running_balance:
           filters.include_running_balance === false ? false : undefined,
+        deferred_only: filters.deferred_only ? true : undefined,
         page: filters.page,
         page_size: filters.page_size,
       })}`,

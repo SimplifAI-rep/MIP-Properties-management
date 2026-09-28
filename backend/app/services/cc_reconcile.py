@@ -304,7 +304,6 @@ def _unmatched_cc_app(
 def create_session_from_upload(
     db: Session, *, content: bytes, filename: str | None
 ) -> CcReconcileSession:
-    parsed = parse_cc_statement_lines(content)
     lines = parsed["lines"]
     date_from = parsed["statement_start_date"]
     date_to = parsed["statement_end_date"]
@@ -468,6 +467,7 @@ def apply_actions(db: Session, session: CcReconcileSession, actions: list[dict])
             if row.payment_method != "credit_card":
                 raise ValueError("Only paid-by-card expenses can be CC-verified")
             row.cc_verified_at = now
+            row.cc_deferred_until = None
             if session.card_last4 and session.card_last4 != "unknown":
                 row.card_last4 = session.card_last4
             line["status"] = "matched"
@@ -522,6 +522,26 @@ def apply_actions(db: Session, session: CcReconcileSession, actions: list[dict])
             if not line:
                 raise ValueError(f"Unknown CC line {fp}")
             from app.services.holding import UNASSIGNED_REVIEW_REASON, ensure_unassigned_holding
+
+        elif kind == "include_cc_in_period":
+            requested: list[str] = []
+            if action.get("tx_id"):
+                requested.append(str(action["tx_id"]))
+            for mid in action.get("member_ids") or []:
+                requested.append(str(mid))
+            if not requested:
+                requested = [
+                    str(row["id"])
+                    for row in apps.values()
+                    if row.get("status") == "unmatched"
+                ]
+            for raw in requested:
+                row = db.get(Expense, UUID(str(raw)))
+                if row is None or row.payment_method != "credit_card":
+                    continue
+                row.cc_deferred_until = None
+                row.cc_verified_at = now
+                apps.pop(f"expense:{row.id}", None)
 
             prop = ensure_unassigned_holding(db)
             amount = Decimal(str(line["amount"]))

@@ -12,6 +12,7 @@ import { DashboardPage } from './pages/DashboardPage';
 import { DataImportPage } from './pages/DataImportPage';
 import { TransactionsPage } from './pages/TransactionsPage';
 import { CreditCardsPage } from './pages/CreditCardsPage';
+import { NextCyclePage } from './pages/NextCyclePage';
 import { VerificationPage } from './pages/VerificationPage';
 import { OwnersPage } from './pages/OwnersPage';
 import { PropertiesPage } from './pages/PropertiesPage';

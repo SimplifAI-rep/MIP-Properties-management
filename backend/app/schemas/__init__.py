@@ -685,6 +685,7 @@ class BankReconcileAction(BaseModel):
         "ignore_app",
         "add_from_bank",
         "defer_cc_to_next",
+        "include_cc_in_period",
         "merge",
         "link_to_app",
     ]

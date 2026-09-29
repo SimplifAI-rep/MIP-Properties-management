@@ -31,6 +31,7 @@ export function TransactionAttachmentsField({
       void queryClient.invalidateQueries({ queryKey: ['attachments', kind, transactionId] });
       void queryClient.invalidateQueries({ queryKey: ['deposits'] });
       void queryClient.invalidateQueries({ queryKey: ['expenses'] });
+      void queryClient.invalidateQueries({ queryKey: ['unassigned'] });
       void queryClient.invalidateQueries({ queryKey: ['bank-reconcile-session'] });
     },
   });
@@ -41,6 +42,7 @@ export function TransactionAttachmentsField({
       void queryClient.invalidateQueries({ queryKey: ['attachments', kind, transactionId] });
       void queryClient.invalidateQueries({ queryKey: ['deposits'] });
       void queryClient.invalidateQueries({ queryKey: ['expenses'] });
+      void queryClient.invalidateQueries({ queryKey: ['unassigned'] });
       void queryClient.invalidateQueries({ queryKey: ['bank-reconcile-session'] });
     },
   });

@@ -660,8 +660,17 @@ def test_frontend_verification_surface_exists():
     assert "deferred_only" in next_cycle
     shell = (frontend / "components" / "layout" / "AppShell.tsx").read_text(encoding="utf-8")
     assert "/next-cycle" in shell
+    app_routes = (frontend / "App.tsx").read_text(encoding="utf-8")
+    assert 'path="next-cycle"' in app_routes
+    assert "NextCyclePage" in app_routes
     alerts = (frontend / "pages" / "AlertsPage.tsx").read_text(encoding="utf-8")
     assert "cc_unmatched" in alerts
     assert "Open Verification" in alerts
     assert "unassigned_transaction" in alerts
-    assert "Open Transactions" in alerts
+    assert "Open Unassigned" in alerts
+    unassigned_page = (frontend / "pages" / "UnassignedPage.tsx").read_text(encoding="utf-8")
+    assert "Unassigned" in unassigned_page
+    assert "UNASSIGNED" in unassigned_page
+    assert "/unassigned" in shell
+    assert 'path="unassigned"' in app_routes
+    assert "UnassignedPage" in app_routes

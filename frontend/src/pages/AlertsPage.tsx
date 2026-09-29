@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { api } from '../api/client';
 import type { AlertItem, DepositCreate, TransactionDraft } from '../types';
 import {
@@ -192,7 +192,6 @@ function buildDepositForm(alert: AlertItem): DepositCreate {
 
 export function AlertsPage() {
   const queryClient = useQueryClient();
-  const navigate = useNavigate();
   const detailPanelRef = useRef<HTMLElement>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [checkedIds, setCheckedIds] = useState<string[]>([]);
@@ -798,38 +797,18 @@ export function AlertsPage() {
                     </div>
                   </dl>
                   <p className="text-sm text-muted">
-                    Assign a real owner and property. If a verification period is still
-                    open, edit the row there; otherwise open Transactions.
+                    Assign a real owner and property on Unassigned, or edit the row
+                    in an open verification period.
                   </p>
                   <div className="flex flex-wrap gap-2">
+                    <Link to="/unassigned" className="btn-primary">
+                      Open Unassigned
+                    </Link>
                     {selectedAlert.link_path?.startsWith('/verification') ? (
-                      <Link to={selectedAlert.link_path} className="btn-primary">
+                      <Link to={selectedAlert.link_path} className="btn-secondary">
                         Open Verification
                       </Link>
                     ) : null}
-                    <button
-                      type="button"
-                      className={
-                        selectedAlert.link_path?.startsWith('/verification')
-                          ? 'btn-secondary'
-                          : 'btn-primary'
-                      }
-                      onClick={() =>
-                        navigate('/transactions', {
-                          state: {
-                            highlightId:
-                              selectedAlert.expense_id || selectedAlert.deposit_id,
-                            highlightKind: selectedAlert.transaction_type,
-                            propertyIds: selectedAlert.property_id
-                              ? [selectedAlert.property_id]
-                              : undefined,
-                            propertyStatuses: ['active', 'inactive'],
-                          },
-                        })
-                      }
-                    >
-                      Open Transactions
-                    </button>
                     <button
                       type="button"
                       className="btn-secondary"

@@ -749,60 +749,6 @@ export function BankReconcilePanel() {
 
           {editingAdded ? (
             <div className="rounded-lg border border-slate-200 p-3 dark:border-slate-700">
-            subtitle="In the app, but the money has not left the bank as a card payment this period. Keep in this period if it should count now. Push to wait and match it to a bank statement next time."
-            count={leftoverCcTxs.length}
-            tone="warn"
-            defaultOpen
-            hideWhenEmpty
-            actions={
-              leftoverCcTxs.length > 0 ? (
-                <>
-                  <ConfirmButton
-                    label={`Keep in this period (${leftoverCcTxs.length})`}
-                    confirmLabel={`Keep ${leftoverCcTxs.length}`}
-                    disabled={busy}
-                    pending={pendingBulk === 'include-cc'}
-                    onConfirm={() => includeLeftoverCc()}
-                  />
-                  <ConfirmButton
-                    label={`Push to next cycle (${leftoverCcTxs.length})`}
-                    confirmLabel={`Push ${leftoverCcTxs.length}`}
-                    disabled={busy}
-                    pending={pendingBulk === 'defer-cc'}
-                    onConfirm={() => deferLeftoverCc()}
-                  />
-                </>
-              ) : null
-            }
-          >
-            <VerifyTransactionTable
-              rows={leftoverCcTxs}
-              pendingRowId={pendingRowId}
-              renderActions={(row) => (
-                <>
-                  <button
-                    type="button"
-                    className="btn-primary text-xs"
-                    disabled={busy}
-                    onClick={() => includeLeftoverCc(row.id)}
-                  >
-                    Keep in this period
-                  </button>
-                  <button
-                    type="button"
-                    className="btn-secondary text-xs"
-                    disabled={busy}
-                    onClick={() => deferLeftoverCc(row.id)}
-                  >
-                    Push to next cycle
-                  </button>
-                </>
-              )}
-            />
-          </VerifyGroupSection>
-
-          {editingAdded ? (
-            <div className="rounded-lg border border-slate-200 p-3 dark:border-slate-700">
               <p className="text-sm font-medium">
                 Edit {editingAdded.kind === 'deposit' ? 'deposit' : 'expense'}{' '}
                 {formatCurrency(editingAdded.amount)}
@@ -1070,9 +1016,64 @@ export function BankReconcilePanel() {
           <VerifyGroupSection
             title="In the app, not on the statement"
             subtitle="Ignore if it should stay out. Merge if the bank line is the same money leaving. Card charges waiting for the bank can be kept in this period or pushed to the next cycle."
+            count={notInExcelTxs.length}
+            tone="warn"
+            defaultOpen
+            hideWhenEmpty
+            actions={
+              pendingMissingCount > 0 ? (
+                <ConfirmButton
+                  label={`Ignore all (${pendingMissingCount})`}
+                  confirmLabel={`Ignore ${pendingMissingCount}`}
+                  disabled={busy}
+                  pending={pendingBulk === 'ignore-app'}
+                  onConfirm={ignoreAllApp}
+                />
+              ) : null
+            }
+          >
+            <VerifyTransactionTable
+              rows={notInExcelTxs}
+              pendingRowId={pendingRowId}
+              renderActions={(row) => {
+                if (ignoredAppIds.has(row.id)) {
+                  return <span className="text-xs muted-text">Ignored</span>;
+                }
+                const app = unmatchedAppById.get(row.id);
+                const hint = app ? leftoverHint(app) : null;
+                const mergeCandidates = (app?.merge_candidates ?? []).flatMap(
+                  (candidate) =>
+                    candidate.fingerprint
+                      ? [
+                          {
+                            id: candidate.fingerprint,
+                            label: mergeCandidateLabel(candidate),
+                          },
+                        ]
+                      : [],
                 );
                 return (
                   <>
+                    {row.payment_method === 'credit_card' || row.cc_deferred_until ? (
+                      <>
+                        <button
+                          type="button"
+                          className="btn-primary text-xs"
+                          disabled={busy}
+                          onClick={() => includeLeftoverCc(row.id)}
+                        >
+                          Keep in this period
+                        </button>
+                        <button
+                          type="button"
+                          className="btn-secondary text-xs"
+                          disabled={busy}
+                          onClick={() => deferLeftoverCc(row.id)}
+                        >
+                          Push to next cycle
+                        </button>
+                      </>
+                    ) : null}
                     <MergeControl
                       candidates={mergeCandidates}
                       disabled={busy}
@@ -1101,39 +1102,28 @@ export function BankReconcilePanel() {
           {leftoverCcTxs.length > 0 ? (
             <VerifyGroupSection
               title="Card charges not in this payment"
-              subtitle="Already in the app — push to the next cycle. Not counted in this period's totals."
+              subtitle="In the app, but the money has not left the bank as a card payment this period. Keep in this period if it should count now. Push to wait and match it to a bank statement next time."
               count={leftoverCcTxs.length}
               tone="warn"
               defaultOpen
               actions={
                 leftoverCcTxs.length > 0 ? (
-                  <ConfirmButton
-                    label={`Push to next cycle (${leftoverCcTxs.length})`}
-                    confirmLabel={`Push ${leftoverCcTxs.length}`}
-                    disabled={busy}
-                    pending={pendingBulk === 'defer-cc'}
-                    onConfirm={() => deferLeftoverCc()}
-                  />
-                    {row.payment_method === 'credit_card' || row.cc_deferred_until ? (
-                      <>
-                        <button
-                          type="button"
-                          className="btn-primary text-xs"
-                          disabled={busy}
-                          onClick={() => includeLeftoverCc(row.id)}
-                        >
-                          Keep in this period
-                        </button>
-                        <button
-                          type="button"
-                          className="btn-secondary text-xs"
-                          disabled={busy}
-                          onClick={() => deferLeftoverCc(row.id)}
-                        >
-                          Push to next cycle
-                        </button>
-                      </>
-                    ) : null}
+                  <>
+                    <ConfirmButton
+                      label={`Keep in this period (${leftoverCcTxs.length})`}
+                      confirmLabel={`Keep ${leftoverCcTxs.length}`}
+                      disabled={busy}
+                      pending={pendingBulk === 'include-cc'}
+                      onConfirm={() => includeLeftoverCc()}
+                    />
+                    <ConfirmButton
+                      label={`Push to next cycle (${leftoverCcTxs.length})`}
+                      confirmLabel={`Push ${leftoverCcTxs.length}`}
+                      disabled={busy}
+                      pending={pendingBulk === 'defer-cc'}
+                      onConfirm={() => deferLeftoverCc()}
+                    />
+                  </>
                 ) : null
               }
             >
@@ -1141,14 +1131,24 @@ export function BankReconcilePanel() {
                 rows={leftoverCcTxs}
                 pendingRowId={pendingRowId}
                 renderActions={(row) => (
-                  <button
-                    type="button"
-                    className="btn-secondary text-xs"
-                    disabled={busy}
-                    onClick={() => deferLeftoverCc(row.id)}
-                  >
-                    Push to next cycle
-                  </button>
+                  <>
+                    <button
+                      type="button"
+                      className="btn-primary text-xs"
+                      disabled={busy}
+                      onClick={() => includeLeftoverCc(row.id)}
+                    >
+                      Keep in this period
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-secondary text-xs"
+                      disabled={busy}
+                      onClick={() => deferLeftoverCc(row.id)}
+                    >
+                      Push to next cycle
+                    </button>
+                  </>
                 )}
               />
             </VerifyGroupSection>

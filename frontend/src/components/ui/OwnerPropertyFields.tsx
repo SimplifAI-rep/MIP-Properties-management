@@ -1,6 +1,6 @@
 import type { OwnerSummary, Property } from '../../types';
 
-const UNASSIGNED_PROP_ID = 'UNASSIGNED';
+export const UNASSIGNED_CLIENT_PROP_ID = 'UNASSIGNED';
 
 export function OwnerPropertyFields({
   owners,
@@ -20,7 +20,7 @@ export function OwnerPropertyFields({
   required?: boolean;
 }) {
   const visibleProperties = properties.filter((property) => {
-    if (excludeUnassigned && property.client_prop_id === UNASSIGNED_PROP_ID) {
+    if (excludeUnassigned && property.client_prop_id === UNASSIGNED_CLIENT_PROP_ID) {
       return property.id === propertyId;
     }
     return true;

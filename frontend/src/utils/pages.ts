@@ -4,8 +4,13 @@ const PAGE_LABELS: Array<{ path: string; label: string; end?: boolean }> = [
   { path: '/owners', label: 'Owners' },
   { path: '/transactions', label: 'Transactions' },
   { path: '/verification', label: 'Verification' },
+  { path: '/next-cycle', label: 'Next cycle' },
+  { path: '/unassigned', label: 'Unassigned' },
+  { path: '/credit-cards', label: 'Credit cards' },
   { path: '/alerts', label: 'Alerts' },
+  { path: '/reports', label: 'Reports' },
   { path: '/data-import', label: 'Data import' },
+  { path: '/admin/bank-settings', label: 'Bank settings' },
   { path: '/admin/alert-rules', label: 'Alert rules' },
   { path: '/ai', label: 'AI Query' },
 ];

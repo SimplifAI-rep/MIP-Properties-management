@@ -11,6 +11,8 @@ export function invalidateTransactionData(queryClient: QueryClient): void {
   queryClient.invalidateQueries({ queryKey: ['expense-summary-owner'] });
   queryClient.invalidateQueries({ queryKey: ['alerts'] });
   queryClient.invalidateQueries({ queryKey: ['alert-summary'] });
+  queryClient.invalidateQueries({ queryKey: ['unassigned'] });
+  queryClient.invalidateQueries({ queryKey: ['unassigned-count'] });
   invalidateVerificationWorkspace(queryClient);
 }
 
@@ -25,6 +27,8 @@ export function invalidateVerificationWorkspace(queryClient: QueryClient): void 
 export function invalidateAlertData(queryClient: QueryClient): void {
   queryClient.invalidateQueries({ queryKey: ['alerts'] });
   queryClient.invalidateQueries({ queryKey: ['alert-summary'] });
+  queryClient.invalidateQueries({ queryKey: ['unassigned'] });
+  queryClient.invalidateQueries({ queryKey: ['unassigned-count'] });
 }
 
 /**

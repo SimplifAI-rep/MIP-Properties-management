@@ -423,7 +423,7 @@ def _append_unassigned_transaction_alerts(
                 notes=expense.notes,
                 review_reasons=expense.review_reasons,
                 created_at=expense.created_at,
-                link_path=link or "/transactions",
+                link_path=link or "/unassigned",
             )
         )
 
@@ -462,7 +462,7 @@ def _append_unassigned_transaction_alerts(
                 notes=None,
                 review_reasons=deposit.review_reasons,
                 created_at=deposit.created_at,
-                link_path=link or "/transactions",
+                link_path=link or "/unassigned",
             )
         )
 

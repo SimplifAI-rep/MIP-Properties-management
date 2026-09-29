@@ -138,6 +138,35 @@ def test_legacy_receipt_ref_is_first_file(client, db):
     assert files[1]["filename"] == "new.png"
 
 
+def test_attaching_image_keeps_bank_source_file(client):
+    expense = client.post(
+        "/api/v1/expenses",
+        json={
+            "property_id": str(PROPERTY_ROTHSCHILD_ID),
+            "transaction_date": "2026-07-10",
+            "amount": "566.40",
+            "category": "bank_transfer",
+            "source": "bank_statement",
+            "payment_method": "bank_transfer",
+        },
+    )
+    assert expense.status_code == 201, expense.text
+    before = expense.json()
+    assert before["source_file"] == "Bank Account example.xlsx"
+
+    attached = client.post(
+        f"/api/v1/expenses/{before['id']}/attachments",
+        files={"file": ("image.png", PNG, "image/png")},
+    )
+    assert attached.status_code == 200, attached.text
+    assert attached.json()[0]["filename"] == "image.png"
+
+    listed = client.get("/api/v1/expenses", params={"page_size": 200}).json()["items"]
+    row = next(item for item in listed if item["id"] == before["id"])
+    assert row["source_file"] == "Bank Account example.xlsx"
+    assert [file["filename"] for file in row["attachments"]] == ["image.png"]
+
+
 def test_frontend_files_surface_exists():
     from pathlib import Path
 

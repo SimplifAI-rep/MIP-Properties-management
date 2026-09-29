@@ -560,6 +560,7 @@ def apply_actions(db: Session, session: CcReconcileSession, actions: list[dict])
                 currency="ILS",
                 category=(merchant[:255] if merchant else "credit_card"),
                 source="credit_card",
+                source_file=session.filename,
                 payment_method="credit_card",
                 vendor_name=merchant,
                 description=line.get("details") or merchant,

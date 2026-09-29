@@ -1522,6 +1522,7 @@ def apply_actions(db: Session, session: BankReconcileSession, actions: list[dict
                         desc or ("Bank statement payback" if is_payback else "Bank statement credit")
                     ),
                     source="bank_statement",
+                    source_file=session.filename,
                     bank_verified_at=now,
                     bank_asmachta=asmachta,
                     needs_review=True,
@@ -1548,6 +1549,7 @@ def apply_actions(db: Session, session: BankReconcileSession, actions: list[dict
                     currency="ILS",
                     category="bank_transfer",
                     source="bank_statement",
+                    source_file=session.filename,
                     payment_method="bank_transfer",
                     reference=asmachta,
                     description=desc or "Bank statement debit",

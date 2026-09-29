@@ -370,6 +370,13 @@ def test_step4_add_from_bank_creates_verified(client, db):
     assert holding.client_prop_id == UNASSIGNED_PROP_ID
     assert expense.needs_review is True
     assert expense.review_reasons == UNASSIGNED_REVIEW_REASON
+    assert expense.source_file == session["filename"]
+    listed_row = next(
+        item
+        for item in client.get("/api/v1/expenses", params={"page_size": 200}).json()["items"]
+        if item["id"] == str(expense.id)
+    )
+    assert listed_row["source_file"] == session["filename"]
     assert added.json()["counts"]["unassigned"] >= 1
     assert added.json()["can_complete"] is False
 

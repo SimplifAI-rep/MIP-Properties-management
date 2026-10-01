@@ -304,6 +304,7 @@ def _unmatched_cc_app(
 def create_session_from_upload(
     db: Session, *, content: bytes, filename: str | None
 ) -> CcReconcileSession:
+    parsed = parse_cc_statement_lines(content)
     lines = parsed["lines"]
     date_from = parsed["statement_start_date"]
     date_to = parsed["statement_end_date"]
@@ -383,6 +384,7 @@ def session_summary(db: Session, session: CcReconcileSession) -> dict:
         counts[st] = counts.get(st, 0) + 1
     app_unmatched = sum(1 for a in apps if a.get("status") == "unmatched")
     app_ignored = sum(1 for a in apps if a.get("status") == "ignored")
+    app_included = sum(1 for a in apps if a.get("status") == "included")
     unresolved_cc = sum(
         1 for line in lines if line.get("status") in ("unmatched", "proposed_match")
     )
@@ -432,6 +434,7 @@ def session_summary(db: Session, session: CcReconcileSession) -> dict:
             **counts,
             "app_unmatched": app_unmatched,
             "app_ignored": app_ignored,
+            "app_included": app_included,
             "unresolved_cc": unresolved_cc,
             "unresolved_app": unresolved_app,
             "unassigned": unassigned_count,
@@ -523,26 +526,6 @@ def apply_actions(db: Session, session: CcReconcileSession, actions: list[dict])
                 raise ValueError(f"Unknown CC line {fp}")
             from app.services.holding import UNASSIGNED_REVIEW_REASON, ensure_unassigned_holding
 
-        elif kind == "include_cc_in_period":
-            requested: list[str] = []
-            if action.get("tx_id"):
-                requested.append(str(action["tx_id"]))
-            for mid in action.get("member_ids") or []:
-                requested.append(str(mid))
-            if not requested:
-                requested = [
-                    str(row["id"])
-                    for row in apps.values()
-                    if row.get("status") == "unmatched"
-                ]
-            for raw in requested:
-                row = db.get(Expense, UUID(str(raw)))
-                if row is None or row.payment_method != "credit_card":
-                    continue
-                row.cc_deferred_until = None
-                row.cc_verified_at = now
-                apps.pop(f"expense:{row.id}", None)
-
             prop = ensure_unassigned_holding(db)
             amount = Decimal(str(line["amount"]))
             tx_date = (
@@ -576,6 +559,37 @@ def apply_actions(db: Session, session: CcReconcileSession, actions: list[dict])
             line["status"] = "added"
             line["proposed_tx_id"] = str(row.id)
             line["proposed_tx_ref"] = row.transaction_ref
+
+        elif kind == "include_cc_in_period":
+            requested: list[str] = []
+            if action.get("tx_id"):
+                requested.append(str(action["tx_id"]))
+            for mid in action.get("member_ids") or []:
+                requested.append(str(mid))
+            if not requested:
+                requested = [
+                    str(row["id"])
+                    for row in apps.values()
+                    if row.get("status") == "unmatched"
+                ]
+            for raw in requested:
+                row = db.get(Expense, UUID(str(raw)))
+                if row is None or row.payment_method != "credit_card":
+                    continue
+                row.cc_deferred_until = None
+                row.cc_verified_at = now
+                if session.card_last4 and session.card_last4 != "unknown":
+                    row.card_last4 = session.card_last4
+                key = f"expense:{row.id}"
+                app = apps.get(key)
+                if app is None:
+                    apps[key] = {
+                        "kind": "expense",
+                        "id": str(row.id),
+                        "status": "included",
+                    }
+                else:
+                    app["status"] = "included"
         else:
             raise ValueError(f"Unknown action {kind}")
 

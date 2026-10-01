@@ -257,7 +257,8 @@ export function BankReconcilePanel() {
       id: string;
       actions: Parameters<typeof api.applyBankReconcileActions>[1];
     }) => api.applyBankReconcileActions(id, actions),
-    onSuccess: () => {
+    onSuccess: (updated) => {
+      queryClient.setQueryData(['bank-reconcile-session', sessionId], updated);
       void queryClient.invalidateQueries({ queryKey: ['bank-reconcile-session', sessionId] });
       void queryClient.invalidateQueries({ queryKey: ['bank-settings'] });
       void queryClient.invalidateQueries({ queryKey: ['bank-gap'] });
@@ -354,6 +355,13 @@ export function BankReconcilePanel() {
         l.status === 'proposed_settlement' &&
         (l.proposed_member_ids?.length ?? 0) > 0,
     ) ?? [];
+  const settlementLines =
+    activeSession?.lines.filter(
+      (l) =>
+        (l.status === 'proposed_settlement' &&
+          (l.proposed_member_ids?.length ?? 0) > 0) ||
+        l.status === 'settled',
+    ) ?? [];
   // Unmatched statement lines that need Create/Ignore — card payment rows wait for Card.
   const notInBankLines =
     activeSession?.lines.filter((l) => {
@@ -448,6 +456,7 @@ export function BankReconcilePanel() {
   const leftoverCcTxs: UnifiedTransaction[] = txsFromApi(
     activeSession?.leftover_cc_txs as Record<string, unknown>[] | undefined,
   );
+  const pendingLeftoverCcTxs = leftoverCcTxs.filter((tx) => !tx.cc_bank_confirmed_at);
   const draftTxs: UnifiedTransaction[] = notInBankLines.map(bankDraftToUnified);
 
   const counts = activeSession?.counts ?? {};
@@ -583,10 +592,11 @@ export function BankReconcilePanel() {
   }
 
   function includeLeftoverCc(txId?: string) {
+    const pending = leftoverCcTxs.filter((tx) => !tx.cc_bank_confirmed_at);
     runActions(txId ? null : 'include-cc', txId ?? null, [
       {
         action: 'include_cc_in_period' as const,
-        ...(txId ? { tx_id: txId } : {}),
+        ...(txId ? { tx_id: txId } : { member_ids: pending.map((tx) => tx.id) }),
       },
     ]);
   }
@@ -1107,18 +1117,18 @@ export function BankReconcilePanel() {
               tone="warn"
               defaultOpen
               actions={
-                leftoverCcTxs.length > 0 ? (
+                pendingLeftoverCcTxs.length > 0 ? (
                   <>
                     <ConfirmButton
-                      label={`Keep in this period (${leftoverCcTxs.length})`}
-                      confirmLabel={`Keep ${leftoverCcTxs.length}`}
+                      label={`Keep in this period (${pendingLeftoverCcTxs.length})`}
+                      confirmLabel={`Keep ${pendingLeftoverCcTxs.length}`}
                       disabled={busy}
                       pending={pendingBulk === 'include-cc'}
                       onConfirm={() => includeLeftoverCc()}
                     />
                     <ConfirmButton
-                      label={`Push to next cycle (${leftoverCcTxs.length})`}
-                      confirmLabel={`Push ${leftoverCcTxs.length}`}
+                      label={`Push to next cycle (${pendingLeftoverCcTxs.length})`}
+                      confirmLabel={`Push ${pendingLeftoverCcTxs.length}`}
                       disabled={busy}
                       pending={pendingBulk === 'defer-cc'}
                       onConfirm={() => deferLeftoverCc()}
@@ -1130,61 +1140,67 @@ export function BankReconcilePanel() {
               <VerifyTransactionTable
                 rows={leftoverCcTxs}
                 pendingRowId={pendingRowId}
-                renderActions={(row) => (
-                  <>
-                    <button
-                      type="button"
-                      className="btn-primary text-xs"
-                      disabled={busy}
-                      onClick={() => includeLeftoverCc(row.id)}
-                    >
-                      Keep in this period
-                    </button>
-                    <button
-                      type="button"
-                      className="btn-secondary text-xs"
-                      disabled={busy}
-                      onClick={() => deferLeftoverCc(row.id)}
-                    >
-                      Push to next cycle
-                    </button>
-                  </>
-                )}
+                renderActions={(row) =>
+                  row.cc_bank_confirmed_at ? (
+                    <span className="text-xs muted-text">Checked</span>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        className="btn-primary text-xs"
+                        disabled={busy}
+                        onClick={() => includeLeftoverCc(row.id)}
+                      >
+                        Keep in this period
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-secondary text-xs"
+                        disabled={busy}
+                        onClick={() => deferLeftoverCc(row.id)}
+                      >
+                        Push to next cycle
+                      </button>
+                    </>
+                  )
+                }
               />
             </VerifyGroupSection>
           ) : null}
 
-          {proposedSettlements.length > 0 ? (
+          {settlementLines.length > 0 ? (
             <VerifyGroupSection
               title="Card payments on the bank statement"
               subtitle="Covered by the card statement — no action needed to finish"
-              count={proposedSettlements.length}
+              count={settlementLines.length}
               actions={
-                <>
-                  {pendingBulk === 'settle-confirm' ? (
-                    <VerifySpinner />
-                  ) : (
-                    <button
-                      type="button"
-                      className="btn-secondary text-xs"
+                proposedSettlements.length > 0 ? (
+                  <>
+                    {pendingBulk === 'settle-confirm' ? (
+                      <VerifySpinner />
+                    ) : (
+                      <button
+                        type="button"
+                        className="btn-secondary text-xs"
+                        disabled={busy}
+                        onClick={confirmAllSettlements}
+                      >
+                        Confirm all
+                      </button>
+                    )}
+                    <ConfirmButton
+                      label="Ignore all"
+                      confirmLabel={`Ignore ${proposedSettlements.length}`}
                       disabled={busy}
-                      onClick={confirmAllSettlements}
-                    >
-                      Confirm all
-                    </button>
-                  )}
-                  <ConfirmButton
-                    label="Ignore all"
-                    confirmLabel={`Ignore ${proposedSettlements.length}`}
-                    disabled={busy}
-                    pending={pendingBulk === 'settle-ignore'}
-                    onConfirm={ignoreAllSettlements}
-                  />
-                </>
+                      pending={pendingBulk === 'settle-ignore'}
+                      onConfirm={ignoreAllSettlements}
+                    />
+                  </>
+                ) : null
               }
             >
               <VerifyRowTable headers={['Card payment', 'Details', 'Action']}>
-                {proposedSettlements.map((line) => (
+                {settlementLines.map((line) => (
                   <tr
                     key={line.fingerprint}
                     className="border-t border-slate-100 dark:border-slate-800"
@@ -1198,6 +1214,8 @@ export function BankReconcilePanel() {
                     <td className="px-3 py-2">
                       {pendingRowId === line.fingerprint ? (
                         <VerifySpinner />
+                      ) : line.status === 'settled' ? (
+                        <span className="text-xs muted-text">Checked</span>
                       ) : (
                         <button
                           type="button"

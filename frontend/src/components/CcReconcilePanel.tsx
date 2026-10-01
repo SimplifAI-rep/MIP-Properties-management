@@ -13,7 +13,7 @@ import {
   invalidateAlertData,
   invalidateVerificationWorkspace,
 } from '../utils/invalidateQueries';
-import { ccDraftToUnified, txsFromApi } from '../utils/verifyTxDisplay';
+import { ccDraftToUnified, ccFoundTxs, txsFromApi } from '../utils/verifyTxDisplay';
 import type { UnifiedTransaction } from '../utils/unifiedTransaction';
 
 const LINE_STATUS_KEYS = ['proposed_match', 'matched', 'ignored', 'unmatched', 'added'];
@@ -63,11 +63,23 @@ export function CcReconcilePanel() {
   const creditCards = (workspaceQuery.data?.credit_cards ?? []).filter(
     (card) => card.is_active !== false || Boolean(card.open_session_id),
   );
+  const lastCompletedId =
+    (workspaceQuery.data?.cc_history ?? []).find(
+      (group) =>
+        group.card_last4 === selectedCardLast4 &&
+        Boolean(group.session_id) &&
+        group.session_id !== sessionId,
+    )?.session_id ?? null;
 
   const sessionQuery = useQuery({
     queryKey: ['cc-reconcile-session', sessionId],
     queryFn: () => api.getCcReconcileSession(sessionId!),
     enabled: Boolean(sessionId),
+  });
+  const completedQuery = useQuery({
+    queryKey: ['cc-reconcile-session', lastCompletedId],
+    queryFn: () => api.getCcReconcileSession(lastCompletedId!),
+    enabled: Boolean(lastCompletedId) && !sessionId,
   });
 
   useEffect(() => {
@@ -172,7 +184,8 @@ export function CcReconcilePanel() {
       id: string;
       actions: Parameters<typeof api.applyCcReconcileActions>[1];
     }) => api.applyCcReconcileActions(id, actions),
-    onSuccess: () => {
+    onSuccess: (updated) => {
+      queryClient.setQueryData(['cc-reconcile-session', sessionId], updated);
       void queryClient.invalidateQueries({ queryKey: ['cc-reconcile-session', sessionId] });
       void queryClient.invalidateQueries({ queryKey: ['expenses'] });
       invalidateAlertData(queryClient);
@@ -189,16 +202,11 @@ export function CcReconcilePanel() {
   const completeMutation = useMutation({
     mutationFn: (id: string) => api.completeCcReconcileSession(id),
     onSuccess: (completed) => {
-      void queryClient.invalidateQueries({ queryKey: ['cc-reconcile-session', sessionId] });
+      queryClient.setQueryData(['cc-reconcile-session', completed.id], completed);
+      void queryClient.invalidateQueries({ queryKey: ['cc-reconcile-session'] });
       void queryClient.invalidateQueries({ queryKey: ['expenses'] });
       invalidateAlertData(queryClient);
       invalidateVerificationWorkspace(queryClient);
-      setSessionId(null);
-      setSearchParams((prev) => {
-        const next = new URLSearchParams(prev);
-        next.delete('cc_session');
-        return next;
-      });
       setMessage(
         `Period finished${
           completed.statement_end_date
@@ -216,19 +224,16 @@ export function CcReconcilePanel() {
   const busy =
     createMutation.isPending || actionsMutation.isPending || completeMutation.isPending;
   const activeSession = session?.status === 'in_progress' ? session : undefined;
+  const completedSession =
+    session?.status === 'completed'
+      ? session
+      : !sessionId
+        ? completedQuery.data
+        : undefined;
+  const reviewSession = activeSession ?? completedSession;
   const selectedHasOpenSession = Boolean(
     creditCards.find((c) => c.card_last4 === selectedCardLast4)?.open_session_id,
   );
-
-  useEffect(() => {
-    if (!session || session.status === 'in_progress') return;
-    setSessionId(null);
-    setSearchParams((prev) => {
-      const next = new URLSearchParams(prev);
-      next.delete('cc_session');
-      return next;
-    });
-  }, [session, setSearchParams]);
 
   const proposed =
     activeSession?.lines.filter((l) => l.status === 'proposed_match') ?? [];
@@ -249,13 +254,16 @@ export function CcReconcilePanel() {
       .filter((r) => r.status === 'ignored')
       .map((r) => r.id),
   );
+  const includedAppIds = new Set(
+    (activeSession?.unmatched_app ?? [])
+      .filter((r) => r.status === 'included')
+      .map((r) => r.id),
+  );
   const proposedTxIds = new Set(
     proposed.map((l) => l.proposed_tx_id).filter(Boolean) as string[],
   );
 
-  const ableTxs: UnifiedTransaction[] = txsFromApi(
-    activeSession?.able_txs as Record<string, unknown>[] | undefined,
-  );
+  const foundTxs: UnifiedTransaction[] = ccFoundTxs(reviewSession);
   const notInExcelTxs: UnifiedTransaction[] = txsFromApi(
     activeSession?.not_in_excel_txs as Record<string, unknown>[] | undefined,
   );
@@ -265,7 +273,8 @@ export function CcReconcilePanel() {
   const totalItems =
     LINE_STATUS_KEYS.reduce((sum, key) => sum + (counts[key] ?? 0), 0) +
     (counts.app_unmatched ?? 0) +
-    (counts.app_ignored ?? 0);
+    (counts.app_ignored ?? 0) +
+    (counts.app_included ?? 0);
   const remainingItems = (counts.unresolved_cc ?? 0) + (counts.unresolved_app ?? 0);
   const handledItems = Math.max(0, totalItems - remainingItems);
 
@@ -323,7 +332,9 @@ export function CcReconcilePanel() {
   }
 
   function deferApp(txId?: string) {
-    const pending = notInExcelTxs.filter((tx) => !ignoredAppIds.has(tx.id));
+    const pending = notInExcelTxs.filter(
+      (tx) => !ignoredAppIds.has(tx.id) && !includedAppIds.has(tx.id),
+    );
     runActions(txId ? null : 'defer-cc', txId ?? null, [
       {
         action: 'defer_cc_to_next' as const,
@@ -335,7 +346,9 @@ export function CcReconcilePanel() {
   }
 
   function includeApp(txId?: string) {
-    const pending = notInExcelTxs.filter((tx) => !ignoredAppIds.has(tx.id));
+    const pending = notInExcelTxs.filter(
+      (tx) => !ignoredAppIds.has(tx.id) && !includedAppIds.has(tx.id),
+    );
     runActions(txId ? null : 'include-cc', txId ?? null, [
       {
         action: 'include_cc_in_period' as const,
@@ -355,7 +368,7 @@ export function CcReconcilePanel() {
   }
 
   const pendingMissingCount = notInExcelTxs.filter(
-    (tx) => !ignoredAppIds.has(tx.id),
+    (tx) => !ignoredAppIds.has(tx.id) && !includedAppIds.has(tx.id),
   ).length;
 
   const completeBlockers: string[] = [];
@@ -506,6 +519,8 @@ export function CcReconcilePanel() {
               renderActions={(row) =>
                 ignoredAppIds.has(row.id) ? (
                   <span className="text-xs muted-text">Ignored</span>
+                ) : includedAppIds.has(row.id) ? (
+                  <span className="text-xs muted-text">Checked</span>
                 ) : (
                   <>
                     <button
@@ -533,7 +548,7 @@ export function CcReconcilePanel() {
           <VerifyGroupSection
             title="Found on statement"
             subtitle="Confirm these"
-            count={ableTxs.length}
+            count={foundTxs.length}
             tone="ok"
             defaultOpen
             hideWhenEmpty
@@ -555,7 +570,7 @@ export function CcReconcilePanel() {
             }
           >
             <VerifyTransactionTable
-              rows={ableTxs}
+              rows={foundTxs}
               pendingRowId={pendingRowId}
               renderActions={(row) =>
                 proposedTxIds.has(row.id) ? (
@@ -652,6 +667,18 @@ export function CcReconcilePanel() {
             </button>
           </div>
         </div>
+      ) : null}
+
+      {!activeSession && foundTxs.length > 0 ? (
+        <VerifyGroupSection
+          title="Verified on card statement"
+          subtitle="Charges added in this card period"
+          count={foundTxs.length}
+          tone="ok"
+          defaultOpen
+        >
+          <VerifyTransactionTable rows={foundTxs} />
+        </VerifyGroupSection>
       ) : null}
     </div>
   );

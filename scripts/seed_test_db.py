@@ -6,7 +6,9 @@ seeded app rows always line up with what the parsers actually read:
 * one finished May period (bank + card + settlement) so "Finished periods" has content
 * June-July app rows crafted against ``Bank Account example.xlsx`` so uploading it
   produces a deliberate mix of matched / statement-only / app-only rows
-* pending card expenses crafted against both ``credit card N example.xlsx`` files
+* pending card expenses crafted against ``credit card 1 example.xlsx`` (••6947 only);
+  card ••3848 exists but has no pending charges in its statement window
+* opening balance is set so Confirm-all-found + Ignore the rest finishes at a ₪0 gap
 
 Usage (from the repo root):
 
@@ -49,11 +51,11 @@ PROP_BUFFER = uuid.UUID("b1000000-0000-4000-8000-0000000000ff")
 # June-July bank statement always yields a fresh period with every line in scope.
 LAST_VERIFIED = date(2026, 5, 31)
 MAY_OPENING = Decimal("140000.00")
-MAY_CLOSING = Decimal("152300.00")
+# May verified net = 8500 in - 4070 out = 4430, so this period also closes at ₪0.
+MAY_HISTORY_CLOSING = Decimal("144430.00")
 
-# Fixture choice: a tolerance this wide effectively disables the balance-gap guard,
-# so the period can be finished whichever mix of Confirm / Create / Ignore is used.
-GAP_TOLERANCE = Decimal("1000000.00")
+# Tight identity: after Confirm all found + Ignore the rest, gap is ₪0.
+GAP_TOLERANCE = Decimal("0.01")
 
 # Bank statement lines that should arrive as "Found on statement" proposals.
 # (asmachta, amount) is unique in the sample file; the loader asserts that.
@@ -61,30 +63,38 @@ BANK_MATCHES: list[tuple[str, str, str, uuid.UUID]] = [
     ("99012", "2708", "Rent collected - Rothschild 12", PROP_ROTHSCHILD),
     ("99012", "4292", "Rent collected - Dizengoff 45", PROP_DIZENGOFF),
     ("99020", "7000", "Rent collected - Herzl 8", PROP_HERZL),
+    ("2869612", "2963", "Rent collected - ASAP", PROP_BUFFER),
+    ("210612", "1500", "Cash deposit - Rothschild 12", PROP_ROTHSCHILD),
     ("82726", "9535", "Renovation - kitchen units", PROP_ROTHSCHILD),
-    ("136970", "826", "Water bill - June", PROP_DIZENGOFF),
+    ("136970", "826", "Water bill", PROP_DIZENGOFF),
     ("264501", "25", "Bank handling fee", PROP_BUFFER),
-    ("140780", "2263", "Gardening - June", PROP_HERZL),
+    ("140780", "2263", "Gardening", PROP_HERZL),
     ("166724", "1150", "Cleaning - stairwell", PROP_ROTHSCHILD),
+    ("205889", "650", "Owner transfer", PROP_DIZENGOFF),
+    ("204128", "950", "Internet transfer", PROP_HERZL),
 ]
 
-# App rows inside the statement window that the bank never shows.
+# App rows inside the July–August statement window that the bank never shows.
 BANK_APP_ONLY: list[tuple[str, str, str, uuid.UUID, str]] = [
-    ("expense", "2026-06-18", "777.77", PROP_ROTHSCHILD, "Gardening - extra visit"),
-    ("expense", "2026-07-04", "1111.11", PROP_DIZENGOFF, "Locksmith call-out"),
-    ("deposit", "2026-06-23", "333.33", PROP_HERZL, "Owner top-up - Herzl 8"),
+    ("expense", "2026-07-15", "777.77", PROP_ROTHSCHILD, "Gardening - extra visit"),
+    ("expense", "2026-07-22", "1111.11", PROP_DIZENGOFF, "Locksmith call-out"),
+    ("deposit", "2026-07-18", "333.33", PROP_HERZL, "Owner top-up - Herzl 8"),
 ]
 
-# Card statement lines that should arrive as "Found on statement" proposals.
+# Only card ••6947 has pending charges. Card ••3848 exists but has none in
+# this window, so uploading credit card 2 example.xlsx is "all caught up".
 CARD_MATCHES: list[tuple[str, str, str, uuid.UUID]] = [
     ("6947", "2026-07-06", "160", PROP_ROTHSCHILD),
     ("6947", "2026-06-30", "244.92", PROP_DIZENGOFF),
     ("6947", "2026-06-30", "3132.9", PROP_HERZL),
+    ("6947", "2026-06-30", "117.24", PROP_DIZENGOFF),
+    ("6947", "2026-06-30", "179.4", PROP_ROTHSCHILD),
     ("6947", "2026-06-28", "590.05", PROP_ROTHSCHILD),
-    ("3848", "2026-07-02", "514.5", PROP_DIZENGOFF),
+    ("6947", "2026-06-28", "119", PROP_HERZL),
+    ("6947", "2026-06-25", "477.86", PROP_ROTHSCHILD),
 ]
 
-# Card expenses in the app that no card statement shows.
+# Card expenses in the app that no card statement shows (card ••6947 only).
 CARD_APP_ONLY: list[tuple[str, str, str, uuid.UUID, str]] = [
     ("6947", "2026-06-29", "45.60", PROP_DIZENGOFF, "Hardware store - spare keys"),
 ]
@@ -478,12 +488,12 @@ def main() -> int:
             status="completed",
             filename="Bank Account May 2026.xlsx",
             bank_account_id=ops.id,
-            bank_balance=MAY_CLOSING,
+            bank_balance=MAY_HISTORY_CLOSING,
             statement_start_date=date(2026, 5, 4),
             statement_end_date=LAST_VERIFIED,
             opening_balance=MAY_OPENING,
             after_date=date(2026, 4, 30),
-            gap_tolerance_amount=GAP_TOLERANCE,
+            gap_tolerance_amount=Decimal("50.00"),
             lines_json=may_lines,
             unmatched_app_json=[
                 {
@@ -622,12 +632,39 @@ def main() -> int:
                 )
             )
 
+        # Same amount/date as a ••6947 match, but tagged to ••3848 so uploading
+        # card 1 ignores it (last-4 filter) and card 2 still has nothing in its window.
+        db.add(
+            Expense(
+                property_id=PROP_HERZL,
+                transaction_date=date(2026, 7, 6),
+                amount=Decimal("160.00"),
+                category="maintenance",
+                source="credit_card",
+                payment_method="credit_card",
+                vendor_name="Other card same amount",
+                description="Card 3848 — same 160 as 6947, not tested on that statement",
+                card_last4="3848",
+            )
+        )
+
+        match_net = Decimal("0")
+        for asmachta, amount, _label, _prop in BANK_MATCHES:
+            line = pick_bank_line(bank_lines, asmachta, amount)
+            value = Decimal(str(line["amount"]))
+            if line["side"] == "credit":
+                match_net += value
+            else:
+                match_net -= value
+        statement_closing = Decimal(str(bank["bank_balance"]))
+        period_opening = (statement_closing - match_net).quantize(Decimal("0.01"))
+
         db.commit()
 
         update_settings(
             db,
             bank_account_id=ops.id,
-            opening_balance=MAY_CLOSING,
+            opening_balance=period_opening,
             opening_balance_as_of=LAST_VERIFIED,
             last_verification_date=LAST_VERIFIED,
             gap_tolerance_amount=GAP_TOLERANCE,
@@ -638,9 +675,9 @@ def main() -> int:
     finally:
         db.close()
 
+    card_match_count = len(CARD_MATCHES)
     bank_statement_only = len(bank_lines) - len(BANK_MATCHES) - 2  # 2 card-payment lines
-    card1_only = len(cards["6947"]["lines"]) - 4
-    card2_only = len(cards["3848"]["lines"]) - 1
+    card1_only = len(cards["6947"]["lines"]) - card_match_count
 
     print(f"Database rebuilt: {db_path}")
     if saved:
@@ -648,7 +685,7 @@ def main() -> int:
     print(f"Rows: {deposits} deposits, {expenses} expenses")
     print()
     print("Finished periods (already in the DB):")
-    print(f"  Bank 04/05/2026 - 31/05/2026, closing {MAY_CLOSING}")
+    print(f"  Bank 04/05/2026 - 31/05/2026, closing {MAY_HISTORY_CLOSING}")
     print("    5 verified, 1 skipped statement line, 1 app row not on the statement")
     print(f"  Card \u2022\u20226947 02/05/2026 - 28/05/2026, {len(settlement_members)} verified")
     print()
@@ -657,22 +694,42 @@ def main() -> int:
     print(f"  Found on statement:            {len(BANK_MATCHES)}")
     print(f"  On the statement, not in app:  {bank_statement_only}")
     print(f"  In the app, not on statement:  {len(BANK_APP_ONLY)}")
-    print("  Card payments on the statement: 2 (link after finishing the card step)")
+    print("  Card payments on the statement: 2 (Mastercard - wait for the card step)")
+    print(f"  Opening set to {period_opening} so Confirm found + Ignore rest = gap 0")
     print()
     print("Expected result when you upload 'credit card 1 example.xlsx' (\u2022\u20226947):")
-    print("  Found on statement: 4")
+    print(f"  Found on statement: {card_match_count}")
     print(f"  On the statement, not in app: {card1_only}")
-    print("  In the app, not on statement: 1")
+    print(f"  In the app, not on statement: {len(CARD_APP_ONLY)}")
     print()
     print("Expected result when you upload 'credit card 2 example.xlsx' (\u2022\u20223848):")
-    print("  Found on statement: 1")
-    print(f"  On the statement, not in app: {card2_only}")
+    print("  No transactions for that period")
+    print("  (card exists; nothing on this card matches the statement window)")
     print()
-    print("Notes:")
-    print(f"  Checked through {LAST_VERIFIED} - re-uploading the bank file after")
-    print("  finishing the period shows the 'all caught up' notice.")
-    print("  Gap tolerance is deliberately wide so the period can be finished")
-    print("  with any mix of Confirm / Create / Ignore.")
+    print("=" * 72)
+    print("PRESENTER WALKTHROUGH")
+    print("=" * 72)
+    print("Files to upload are in data/ClientData/")
+    print()
+    print("1. Open Verification. Point at Finished periods (May) first.")
+    print("2. Upload Bank Account example.xlsx")
+    print(f"   - Found: {len(BANK_MATCHES)}  -> Confirm all found")
+    print(f"   - On the statement, not in app: {bank_statement_only}  -> Ignore all")
+    print(f"   - In the app, not on statement: {len(BANK_APP_ONLY)}  -> Ignore all")
+    print("   Do NOT Create from statement (that would put rows on Unassigned")
+    print("   and the gap would no longer be 0).")
+    print("3. Card step: upload credit card 2 example.xlsx (card 3848) first")
+    print("   -> 'No transactions for that period'  (this card is ignored)")
+    print("4. Upload credit card 1 example.xlsx (card 6947)")
+    print(f"   - Found: {card_match_count}  -> Confirm all found")
+    print(f"   - On the statement, not in app: {card1_only}  -> Ignore")
+    print(f"   - In the app, not on statement: {len(CARD_APP_ONLY)}  -> Ignore")
+    print("   Finish the card period.")
+    print("5. If a leftover card charge appears on the bank page, Keep in this period.")
+    print("6. Mastercard settlement lines can stay as-is (no matching merchants).")
+    print("7. Gap should be 0.00 - Complete / close the bank period.")
+    print()
+    print("Do not use Create-all. Ignore unmatched so the period closes at 0.")
     return 0
 
 

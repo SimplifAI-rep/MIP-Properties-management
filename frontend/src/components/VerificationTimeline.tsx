@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { VerificationOperatingAccount } from '../types';
 import { HistorySessionGroups } from './HistorySessionGroups';
 import { PeriodBalanceBadge, periodBalanceState } from './PeriodBalanceCheck';
@@ -87,6 +87,11 @@ export function VerificationTimeline({
   accounts: VerificationOperatingAccount[];
 }) {
   const [openKey, setOpenKey] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (periods.length === 0) return;
+    setOpenKey((current) => current ?? periods[0].key);
+  }, [periods]);
 
   const years = useMemo(() => {
     const found = new Set<number>();
@@ -362,6 +367,7 @@ export function VerificationTimeline({
                         <HistorySessionGroups
                           kind="bank"
                           sessionId={period.bankSessionId}
+                          relatedCcSessionIds={period.cards.map((card) => card.sessionId)}
                         />
                       </div>
                       {period.hasCcDeduction ? (

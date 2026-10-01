@@ -139,7 +139,7 @@ def test_leftover_card_charges_group_defer_and_stay_out_of_totals(client, db):
 
 
 @pytest.mark.skipif(not SAMPLE_BANK.exists(), reason="sample bank Excel not present")
-def test_include_leftover_in_period_clears_it_without_changing_totals(client, db):
+def test_include_leftover_in_period_stays_visible_without_changing_totals(client, db):
     now = datetime.now(timezone.utc)
     leftover = Expense(
         property_id=PROPERTY_ROTHSCHILD_ID,
@@ -179,8 +179,9 @@ def test_include_leftover_in_period_clears_it_without_changing_totals(client, db
     )
     assert kept.status_code == 200, kept.text
     body = kept.json()
-    leftover_after = {str(row["id"]) for row in body.get("leftover_cc_txs") or []}
-    assert leftover_id not in leftover_after
+    leftover_after = {str(row["id"]): row for row in body.get("leftover_cc_txs") or []}
+    assert leftover_id in leftover_after
+    assert leftover_after[leftover_id].get("cc_bank_confirmed_at")
     assert Decimal(body["app_out"]) == before_app_out
     db.refresh(leftover)
     assert leftover.cc_deferred_until is None

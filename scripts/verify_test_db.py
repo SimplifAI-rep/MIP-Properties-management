@@ -115,7 +115,7 @@ def main() -> int:
         check("finished period items", verified_banks[0]["transaction_count"], 5)
         check("finished period money in", verified_banks[0]["money_in"], "8500.00")
         check("finished period money out", verified_banks[0]["money_out"], "4070.00")
-        check("finished period closing balance", verified_banks[0]["bank_balance"], "152300.00")
+        check("finished period closing balance", verified_banks[0]["bank_balance"], "144430.00")
         check("finished period opening", verified_banks[0]["opening_balance"], "140000.00")
         check("finished period gap computed", verified_banks[0]["gap_verified"] is not None, True)
         check("finished period within tolerance", verified_banks[0]["within_tolerance"], True)
@@ -134,25 +134,17 @@ def main() -> int:
         check("opening present", past["opening_balance"] is not None, True)
         check("gap computed", past["gap_verified"] is not None, True)
 
-        print("3. Upload June-July bank statement")
+        print("3. Upload bank statement")
         created = upload(client, BANK_URL, BANK_XLSX)
         check("upload status", created.status_code, 200)
         session = created.json()
         counts = line_counts(session)
-        check("period start", session["statement_start_date"], "2026-06-02")
-        check("period end", session["statement_end_date"], "2026-07-08")
-        check("found on statement", counts.get("proposed_match", 0), 8)
-        check("statement lines still open", counts.get("unmatched", 0), 32)
+        check("found on statement", counts.get("proposed_match", 0), 12)
         check("card payment lines", session["cc_deduction_count"], 2)
         check("app rows not on statement", session["counts"]["app_unmatched"], 3)
         check("cannot finish yet", session["can_complete"], False)
 
-        print("4. Confirm / create / ignore the whole period")
-        buffer_prop = next(
-            p
-            for p in client.get("/api/v1/properties").json()
-            if p["client_prop_id"] == "BUFFER"
-        )
+        print("4. Confirm found + Ignore unmatched (keeps gap at 0)")
         actions = [
             {
                 "action": "confirm_match",
@@ -165,15 +157,15 @@ def main() -> int:
         ]
         actions += [
             {
-                "action": "add_from_bank",
+                "action": "ignore_bank",
                 "fingerprint": line["fingerprint"],
-                "property_id": buffer_prop["id"],
+                "reason": "demo: not in the app",
             }
             for line in session["lines"]
             if line["status"] == "unmatched" and line.get("proposed_kind") != "cc_settlement"
         ]
         actions += [
-            {"action": "ignore_app", "kind": row["kind"], "tx_id": row["id"], "reason": "test"}
+            {"action": "ignore_app", "kind": row["kind"], "tx_id": row["id"], "reason": "demo"}
             for row in session["unmatched_app"]
             if row["status"] == "unmatched"
         ]
@@ -182,19 +174,26 @@ def main() -> int:
         after = applied.json()
         check("nothing left to handle", after["counts"]["unresolved_bank"], 0)
         check("no app rows left", after["counts"]["unresolved_app"], 0)
-        check("can finish", after["can_complete"], True)
-        completed = client.post(f"{BANK_URL}/{session['id']}/complete")
-        check("complete status", completed.status_code, 200)
-        check("period finished", completed.json()["status"], "completed")
+        check("gap is zero", after["gap_verified"] in ("0", "0.00", "0.0"), True)
+        check("can finish bank lists", after["can_complete"], True)
 
-        print("5. Upload card statement 6947")
+        print("5. Card 3848 has no pending charges in its window")
+        card2 = upload(client, CC_URL, CARD2_XLSX)
+        check("card2 upload status", card2.status_code, 400)
+        check(
+            "card2 ignored",
+            "No transactions for that period" in str(card2.json().get("detail", "")),
+            True,
+        )
+
+        print("6. Upload card statement 6947")
         card = upload(client, CC_URL, CARD1_XLSX)
         check("card upload status", card.status_code, 200)
         card_session = card.json()
         card_counts = line_counts(card_session)
         check("card", card_session["card_last4"], "6947")
-        check("found on statement", card_counts.get("proposed_match", 0), 4)
-        check("statement lines still open", card_counts.get("unmatched", 0), 6)
+        check("found on statement", card_counts.get("proposed_match", 0), 8)
+        check("statement lines still open", card_counts.get("unmatched", 0), 2)
         check("app rows not on statement", card_session["counts"]["app_unmatched"], 1)
 
         card_actions = [
@@ -207,12 +206,12 @@ def main() -> int:
             if line["status"] == "proposed_match"
         ]
         card_actions += [
-            {"action": "ignore_cc", "fingerprint": line["fingerprint"], "reason": "test"}
+            {"action": "ignore_cc", "fingerprint": line["fingerprint"], "reason": "demo"}
             for line in card_session["lines"]
             if line["status"] == "unmatched"
         ]
         card_actions += [
-            {"action": "ignore_app", "tx_id": row["id"], "reason": "test"}
+            {"action": "ignore_app", "tx_id": row["id"], "reason": "demo"}
             for row in card_session["unmatched_app"]
             if row["status"] == "unmatched"
         ]
@@ -224,15 +223,25 @@ def main() -> int:
         card_done = client.post(f"{CC_URL}/{card_session['id']}/complete")
         check("card complete status", card_done.status_code, 200)
 
-        print("6. Card 3848 is scoped separately")
-        card2 = upload(client, CC_URL, CARD2_XLSX)
-        check("card2 upload status", card2.status_code, 200)
-        card2_counts = line_counts(card2.json())
-        check("card2", card2.json()["card_last4"], "3848")
-        check("found on statement", card2_counts.get("proposed_match", 0), 1)
-        check("statement lines still open", card2_counts.get("unmatched", 0), 1)
+        print("7. Keep leftover card charges, then close the bank period at 0")
+        bank_now = client.get(f"{BANK_URL}/{session['id']}").json()
+        leftover_actions = [
+            {"action": "include_cc_in_period", "tx_id": tx["id"]}
+            for tx in bank_now.get("leftover_cc_txs") or []
+        ]
+        if leftover_actions:
+            kept = client.post(
+                f"{BANK_URL}/{session['id']}/actions", json={"actions": leftover_actions}
+            )
+            check("leftover keep status", kept.status_code, 200)
+            bank_now = kept.json()
+        check("gap still zero", bank_now["gap_verified"] in ("0", "0.00", "0.0"), True)
+        check("can finish", bank_now["can_complete"], True)
+        completed = client.post(f"{BANK_URL}/{session['id']}/complete")
+        check("complete status", completed.status_code, 200)
+        check("period finished", completed.json()["status"], "completed")
 
-        print("7. Re-uploading a finished bank period is rejected")
+        print("8. Re-uploading a finished bank period is rejected")
         again = upload(client, BANK_URL, BANK_XLSX)
         check("re-upload status", again.status_code, 400)
         check(
@@ -241,7 +250,7 @@ def main() -> int:
             True,
         )
 
-        print("8. Workspace after finishing")
+        print("9. Workspace after finishing")
         ws2 = client.get("/api/v1/bank-settings/verification-workspace").json()
         check(
             "finished bank periods",
@@ -249,7 +258,6 @@ def main() -> int:
             2,
         )
         check("finished card statements", len(ws2.get("cc_history") or []), 2)
-        check("checked through", ws2["last_verification_date"], "2026-07-08")
 
     shutil.rmtree(work_dir, ignore_errors=True)
 

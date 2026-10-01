@@ -262,10 +262,6 @@ async def create_cc_reconcile_session(
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(
-            status_code=400, detail=f"Could not start CC reconcile: {exc}"
-        ) from exc
     return CcReconcileSessionResponse(**cc_reconcile_service.session_summary(db, session))
 
 

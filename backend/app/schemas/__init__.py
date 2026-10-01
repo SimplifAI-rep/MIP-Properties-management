@@ -740,6 +740,7 @@ class CcReconcileAction(BaseModel):
         "ignore_app",
         "add_from_cc",
         "defer_cc_to_next",
+        "include_cc_in_period",
     ]
     fingerprint: str | None = None
     tx_id: UUID | None = None

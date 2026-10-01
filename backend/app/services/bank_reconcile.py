@@ -300,6 +300,19 @@ def _settlement_member_ids(lines: list[dict]) -> set[str]:
     return out
 
 
+def _included_expense_ids(apps: list[dict]) -> set[UUID]:
+    """Card charges kept in this period — stay visible after Keep."""
+    out: set[UUID] = set()
+    for app in apps:
+        if app.get("status") != "included":
+            continue
+        try:
+            out.add(UUID(str(app["id"])))
+        except (TypeError, ValueError, KeyError):
+            continue
+    return out
+
+
 def _leftover_cc_expense_ids(
     db: Session,
     *,
@@ -1144,6 +1157,8 @@ def session_summary(db: Session, session: BankReconcileSession) -> dict:
     not_excel_dep: set[UUID] = set()
     not_excel_exp: set[UUID] = set()
     for app in apps:
+        if app.get("status") == "included":
+            continue
         try:
             uid = UUID(str(app["id"]))
         except (TypeError, ValueError, KeyError):
@@ -1161,7 +1176,8 @@ def session_summary(db: Session, session: BankReconcileSession) -> dict:
         period_start=session.statement_start_date,
         period_end=session.statement_end_date,
     )
-    leftover_cc_id_set = {str(uid) for uid in leftover_cc_ids}
+    leftover_display_ids = set(leftover_cc_ids) | _included_expense_ids(apps)
+    leftover_cc_id_set = {str(uid) for uid in leftover_display_ids}
     able_exp = {uid for uid in able_exp if str(uid) not in leftover_cc_id_set}
 
     able_txs = load_transactions_by_ids(db, deposit_ids=able_dep, expense_ids=able_exp)
@@ -1169,7 +1185,7 @@ def session_summary(db: Session, session: BankReconcileSession) -> dict:
         db, deposit_ids=not_excel_dep, expense_ids=not_excel_exp
     )
     leftover_cc_txs = load_transactions_by_ids(
-        db, deposit_ids=set(), expense_ids=set(leftover_cc_ids)
+        db, deposit_ids=set(), expense_ids=leftover_display_ids
     )
     cc_deduction_count = count_cc_deduction_lines(lines)
     bank_in, bank_out = statement_in_out(lines)
@@ -1466,7 +1482,23 @@ def apply_actions(db: Session, session: BankReconcileSession, actions: list[dict
                     continue
                 row.cc_deferred_until = None
                 row.cc_bank_confirmed_at = now
-                apps.pop(f"expense:{row.id}", None)
+                key = f"expense:{row.id}"
+                existing = apps.get(key)
+                if existing is None:
+                    apps[key] = {
+                        "kind": "expense",
+                        "id": str(row.id),
+                        "transaction_ref": row.transaction_ref,
+                        "transaction_date": row.transaction_date.isoformat()
+                        if row.transaction_date
+                        else None,
+                        "amount": str(row.amount),
+                        "description": row.vendor_name or row.description or row.category,
+                        "status": "included",
+                        "ignore_reason": None,
+                    }
+                else:
+                    existing["status"] = "included"
 
         elif kind == "add_from_bank":
             fp = action["fingerprint"]

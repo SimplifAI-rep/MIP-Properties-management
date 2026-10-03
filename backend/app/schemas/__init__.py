@@ -858,6 +858,14 @@ class CreditCardUpdate(BaseModel):
     is_active: bool | None = None
 
 
+class VerificationHeadline(BaseModel):
+    period_open: bool = False
+    bank_balance: Decimal | None = None
+    bank_balance_date: str | None = None
+    verification_offset: Decimal = Decimal("0")
+    open_session_id: str | None = None
+
+
 class VerificationWorkspaceResponse(BaseModel):
     last_verification_date: str | None = None
     last_cc_verification_date: str | None = None
@@ -868,6 +876,7 @@ class VerificationWorkspaceResponse(BaseModel):
     operating_accounts: list[VerificationOperatingAccount] = []
     credit_cards: list[VerificationCreditCard] = []
     cc_pool: VerificationCcPoolSummary
+    headline: VerificationHeadline = VerificationHeadline()
 
 
 class VerificationTransactionsResponse(BaseModel):

@@ -15,7 +15,7 @@ const navItems = [
   { to: '/properties', label: 'Properties' },
   { to: '/owners', label: 'Owners' },
   { to: '/transactions', label: 'Transactions' },
-  { to: '/verification', label: 'Verification' },
+  { to: '/verification', label: 'Verification', showOpenVerification: true },
   { to: '/next-cycle', label: 'Next cycle' },
   { to: '/unassigned', label: 'Unassigned', showUnassignedCount: true },
   { to: '/credit-cards', label: 'Credit cards' },
@@ -61,6 +61,12 @@ function AppShellInner() {
     refetchInterval: 60_000,
   });
   const unassignedCount = unassignedCountQuery.data ?? 0;
+  const workspaceQuery = useQuery({
+    queryKey: ['verification-workspace'],
+    queryFn: () => api.getVerificationWorkspace(),
+    refetchInterval: 60_000,
+  });
+  const periodOpen = Boolean(workspaceQuery.data?.headline?.period_open);
   const visibleNav = navItems.filter((item) => !item.adminOnly || isAdmin);
 
   useEffect(() => {
@@ -105,6 +111,11 @@ function AppShellInner() {
               {item.showUnassignedCount && unassignedCount > 0 ? (
                 <span className="ml-2 rounded-full bg-amber-500 px-2 py-0.5 text-xs text-white dark:bg-amber-600">
                   {unassignedCount}
+                </span>
+              ) : null}
+              {item.showOpenVerification && periodOpen ? (
+                <span className="ml-2 rounded-full bg-amber-500 px-2 py-0.5 text-xs text-white dark:bg-amber-600">
+                  Open
                 </span>
               ) : null}
             </NavLink>

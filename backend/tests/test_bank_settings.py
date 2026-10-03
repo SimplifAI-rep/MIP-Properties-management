@@ -110,3 +110,12 @@ def test_go_live_cutover_marks_verified(client, db):
 
     settings = client.get("/api/v1/bank-settings").json()
     assert settings["unverified_count"] >= 1
+
+
+def test_workspace_headline_closed_offset_is_zero(client):
+    workspace = client.get("/api/v1/bank-settings/verification-workspace")
+    assert workspace.status_code == 200
+    headline = workspace.json()["headline"]
+    assert headline["period_open"] is False
+    assert Decimal(str(headline["verification_offset"])) == Decimal("0")
+    assert headline["open_session_id"] is None

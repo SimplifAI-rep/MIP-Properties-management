@@ -345,16 +345,9 @@ export function transactionRowClassName(row: UnifiedTransaction): string {
   return 'row-expense';
 }
 
-export function transactionAmountClassName(row: UnifiedTransaction): string {
-  if (row.paid_by_resident) return 'amount-resident-paid';
-  if (row.paid_by_owner) return 'amount-owner-paid';
-  if (row.paid_by_company) return 'amount-mip-paid';
-  if (row.ledger_column === 'nearly_cc') return 'amount-nearly-cc';
-  if (row.ledger_column === 'cash') return 'amount-cash-paid';
-  if (row.ledger_column === 'other') return 'amount-other-paid';
-  if (row.is_rental_income) return 'amount-rental-income';
-  if (row.kind === 'deposit') return 'amount-deposit';
-  return 'amount-expense';
+/** Amount stays uncolored; Balance (not Amount) uses red/green by sign. */
+export function transactionAmountClassName(_row: UnifiedTransaction): string {
+  return '';
 }
 
 export function formatTransactionFeedback(row: UnifiedTransaction): string {

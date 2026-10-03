@@ -667,6 +667,7 @@ def test_frontend_verification_surface_exists():
     assert "deferred_only" in next_cycle
     shell = (frontend / "components" / "layout" / "AppShell.tsx").read_text(encoding="utf-8")
     assert "/next-cycle" in shell
+    assert "showOpenVerification" in shell
     app_routes = (frontend / "App.tsx").read_text(encoding="utf-8")
     assert 'path="next-cycle"' in app_routes
     assert "NextCyclePage" in app_routes

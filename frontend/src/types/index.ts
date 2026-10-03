@@ -868,6 +868,14 @@ export interface CreditCard {
   open_session_id: string | null;
 }
 
+export interface VerificationHeadline {
+  period_open: boolean;
+  bank_balance: string | null;
+  bank_balance_date: string | null;
+  verification_offset: string;
+  open_session_id: string | null;
+}
+
 export interface VerificationWorkspace {
   last_verification_date: string | null;
   last_cc_verification_date?: string | null;
@@ -881,6 +889,7 @@ export interface VerificationWorkspace {
     pending_count: number;
     cc_verified_count: number;
   };
+  headline?: VerificationHeadline;
 }
 
 export interface VerificationTransactionsResponse {

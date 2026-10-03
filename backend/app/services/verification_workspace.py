@@ -534,6 +534,54 @@ def list_cc_history_groups(db: Session) -> list[dict]:
     return groups
 
 
+def _workspace_headline(
+    db: Session,
+    *,
+    bank_groups: list[dict],
+    open_cc_sessions: list,
+    default_payload: dict,
+) -> dict:
+    """Dashboard/nav: last closing, open-period gap, and whether a period is in progress."""
+    open_bank = next(
+        (
+            group
+            for group in bank_groups
+            if group.get("status") == "unverified" and group.get("session_id")
+        ),
+        None,
+    )
+    finished = next(
+        (group for group in bank_groups if group.get("status") == "verified"), None
+    )
+    period_open = bool(open_bank) or bool(open_cc_sessions)
+
+    bank_balance = None
+    bank_balance_date = None
+    if finished and finished.get("bank_balance") is not None:
+        bank_balance = Decimal(str(finished["bank_balance"]))
+        bank_balance_date = finished.get("date") or finished.get("statement_end_date")
+    elif default_payload.get("opening_balance") is not None:
+        bank_balance = Decimal(str(default_payload["opening_balance"]))
+
+    offset = Decimal("0")
+    if open_bank and open_bank.get("session_id"):
+        session = db.get(BankReconcileSession, UUID(str(open_bank["session_id"])))
+        if session is not None:
+            from app.services.bank_reconcile import session_summary as bank_session_summary
+
+            raw = bank_session_summary(db, session).get("gap_verified")
+            if raw is not None:
+                offset = Decimal(str(raw))
+
+    return {
+        "period_open": period_open,
+        "bank_balance": bank_balance,
+        "bank_balance_date": bank_balance_date,
+        "verification_offset": offset,
+        "open_session_id": open_bank.get("session_id") if open_bank else None,
+    }
+
+
 def verification_workspace(db: Session) -> dict:
     from app.services.account_scope import (
         account_display_name,
@@ -664,12 +712,13 @@ def verification_workspace(db: Session) -> dict:
     )
 
     default_payload = settings_read_payload(db)
+    bank_groups = list_bank_groups(db)
     return {
         "last_verification_date": default_payload["last_verification_date"].isoformat()
         if default_payload["last_verification_date"]
         else None,
         "last_cc_verification_date": last_cc.isoformat() if last_cc else None,
-        "bank_groups": list_bank_groups(db),
+        "bank_groups": bank_groups,
         "cc_history": list_cc_history_groups(db),
         "cc_active_session_id": str(open_cc_sessions[0].id) if open_cc_sessions else None,
         "cc_active_session_ids": [str(s.id) for s in open_cc_sessions],
@@ -679,4 +728,10 @@ def verification_workspace(db: Session) -> dict:
             "pending_count": int(pending_n),
             "cc_verified_count": int(verified_n),
         },
+        "headline": _workspace_headline(
+            db,
+            bank_groups=bank_groups,
+            open_cc_sessions=open_cc_sessions,
+            default_payload=default_payload,
+        ),
     }

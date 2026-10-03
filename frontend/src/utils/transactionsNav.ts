@@ -8,7 +8,8 @@ export type TransactionsTypeKind =
   | 'he_she_paid'
   | 'owner_paid'
   | 'bank_statement'
-  | 'nearly_cc';
+  | 'nearly_cc'
+  | 'created_from_verification';
 export type TransactionsAlertFilter = 'incomplete_import';
 
 export type TransactionsFilterState = {

@@ -27,6 +27,12 @@ from app.schemas import (
     TransactionDraft,
 )
 from app.services.bank_reconcile import session_summary as bank_session_summary
+from app.services.bank_settings import (
+    count_unverified_since,
+    effective_last_verification,
+    month_ago,
+    resolve_account_settings,
+)
 from app.services.cc_reconcile import session_summary as cc_session_summary
 from app.services.deposit_query import create_deposit, find_deposit_gaps
 from app.services.document_import import DocumentImportService
@@ -127,6 +133,52 @@ def _bank_gap_key(session_id: UUID) -> str:
 
 def _verification_link(session_id: UUID) -> str:
     return f"/verification?session={session_id}"
+
+
+UNVERIFIED_STALE_KEY = "unverified_stale"
+
+
+def _append_unverified_stale_alerts(
+    db: Session,
+    alerts: list[AlertRead],
+    closed_keys: set[str],
+) -> None:
+    """Warn after go-live when bank check (or leftover unverified txs) is over a month old."""
+    account, company = resolve_account_settings(db)
+    last = effective_last_verification(account, company)
+    if last is None:
+        _clear_alert_actions(db, [UNVERIFIED_STALE_KEY])
+        return
+
+    cutoff = month_ago()
+    stale_count = count_unverified_since(
+        db,
+        last_verification_date=last,
+        bank_account_id=account.id if account else None,
+        date_to=cutoff,
+    )
+    if stale_count == 0:
+        _clear_alert_actions(db, [UNVERIFIED_STALE_KEY])
+        return
+    if UNVERIFIED_STALE_KEY in closed_keys:
+        return
+
+    last_label = last.isoformat()
+    cutoff_label = cutoff.isoformat()
+    alerts.append(
+        AlertRead(
+            id=UNVERIFIED_STALE_KEY,
+            alert_type="unverified_stale",
+            severity="warning",
+            title="Unverified for more than a month",
+            message=(
+                f"{stale_count} company-float transaction(s) dated on or before {cutoff_label} "
+                f"are still unverified. Last bank check was {last_label}. Open Verification to catch up."
+            ),
+            transaction_date=last,
+            link_path="/verification",
+        )
+    )
 
 
 def _clear_alert_actions(db: Session, keys: list[str]) -> None:
@@ -423,7 +475,7 @@ def _append_unassigned_transaction_alerts(
                 notes=expense.notes,
                 review_reasons=expense.review_reasons,
                 created_at=expense.created_at,
-                link_path=link or "/unassigned",
+                link_path=link or "/transactions",
             )
         )
 
@@ -462,7 +514,7 @@ def _append_unassigned_transaction_alerts(
                 notes=None,
                 review_reasons=deposit.review_reasons,
                 created_at=deposit.created_at,
-                link_path=link or "/unassigned",
+                link_path=link or "/transactions",
             )
         )
 
@@ -818,6 +870,7 @@ def list_alerts(
     )
     _append_bank_reconcile_alerts(db, alerts, closed_keys)
     _append_cc_reconcile_alerts(db, alerts, closed_keys)
+    _append_unverified_stale_alerts(db, alerts, closed_keys)
 
     alerts.sort(
         key=lambda alert: (

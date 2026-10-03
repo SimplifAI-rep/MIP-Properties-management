@@ -23,9 +23,10 @@ from app.services.account_scope import (
 )
 from app.services.bank_reconcile_gap import parse_bank_statement_lines, sum_bank_scoped_nets
 from app.services.holding import (
-    UNASSIGNED_REVIEW_REASON,
-    ensure_unassigned_holding,
+    CREATED_FROM_VERIFICATION_REASON,
+    require_real_property,
     session_unassigned_count,
+    stamp_created_from_verification,
 )
 from app.services.bank_settings import (
     effective_last_verification,
@@ -445,6 +446,14 @@ def _propose_settlement_groups(
         )
     )
     used_ids: set[UUID] = set()
+    for line in lines:
+        if line.get("proposed_kind") != "cc_settlement":
+            continue
+        for mid in line.get("proposed_member_ids") or []:
+            try:
+                used_ids.add(UUID(str(mid)))
+            except (TypeError, ValueError):
+                continue
     prev_settlement_date: date | None = None
 
     for line in settlements:
@@ -555,6 +564,8 @@ def _propose_matches(
     date_to: date | None,
     bank_account_id: UUID | None = None,
     is_default_account: bool = True,
+    extra_used_dep: set[UUID] | None = None,
+    extra_used_exp: set[UUID] | None = None,
 ) -> None:
     # Stage C first: settlement lines are groups, not 1:1 merchant matches
     # Settlements only apply on the default operating account
@@ -571,8 +582,22 @@ def _propose_matches(
     expenses = (
         list(db.scalars(select(Expense).where(and_(*exp_f)))) if exp_f is not None else []
     )
-    used_dep: set[UUID] = set()
-    used_exp: set[UUID] = set()
+    used_dep: set[UUID] = set(extra_used_dep or ())
+    used_exp: set[UUID] = set(extra_used_exp or ())
+    for line in lines:
+        if line.get("status") not in ("proposed_match", "matched", "added"):
+            continue
+        raw = line.get("proposed_tx_id")
+        if not raw:
+            continue
+        try:
+            uid = UUID(str(raw))
+        except (TypeError, ValueError):
+            continue
+        if line.get("proposed_kind") == "deposit":
+            used_dep.add(uid)
+        elif line.get("proposed_kind") == "expense":
+            used_exp.add(uid)
 
     for line in lines:
         if line.get("status") != "unmatched":
@@ -709,6 +734,265 @@ def _unmatched_app_rows(
     return out
 
 
+def _exclusion_tag_reasons(row: Deposit | Expense) -> list[str]:
+    """Why this row is kept off the bank lists — shown as a possible mis-tag."""
+    reasons: list[str] = []
+    if isinstance(row, Deposit):
+        if row.is_rental_income:
+            reasons.append("tagged rental income — possible mis-tag")
+        if row.bank_reconcile_exclude:
+            reasons.append("excluded from bank — possible mis-tag")
+        return reasons
+    if row.paid_by_resident:
+        reasons.append("tagged He/She paid — possible mis-tag")
+    if row.paid_by_owner:
+        reasons.append("tagged owner-paid — possible mis-tag")
+    if row.payment_method == "credit_card":
+        reasons.append("tagged paid-by-card — possible mis-tag")
+    if row.payment_method == "owner_personal":
+        reasons.append("tagged owner-personal — possible mis-tag")
+    if row.bank_reconcile_exclude:
+        reasons.append("excluded from bank — possible mis-tag")
+    return reasons
+
+
+def _excluded_tag_app_rows(
+    db: Session,
+    *,
+    date_from: date | None,
+    date_to: date | None,
+    matched_ids: set[str],
+    bank_account_id: UUID | None = None,
+    is_default_account: bool = True,
+) -> list[dict]:
+    """Unverified rows tagged off company-float / bank lists (mis-tag search)."""
+    start = (date_from - timedelta(days=NEAR_MISS_DAYS)) if date_from else None
+    end = (date_to + timedelta(days=NEAR_MISS_DAYS)) if date_to else None
+    dep = [
+        Deposit.bank_verified_at.is_(None),
+        Deposit.transaction_date.is_not(None),
+        Deposit.amount > 0,
+        or_(
+            Deposit.is_rental_income.is_(True),
+            Deposit.bank_reconcile_exclude.is_(True),
+        ),
+    ]
+    if start is not None:
+        dep.append(Deposit.transaction_date >= start)
+    if end is not None:
+        dep.append(Deposit.transaction_date <= end)
+    if bank_account_id is not None:
+        dep.append(
+            deposit_belongs_to_account_clause(
+                bank_account_id, is_default=is_default_account
+            )
+        )
+    out: list[dict] = []
+    for row in db.scalars(select(Deposit).where(and_(*dep))):
+        if str(row.id) in matched_ids:
+            continue
+        tags = _exclusion_tag_reasons(row)
+        if not tags:
+            continue
+        out.append(
+            {
+                "kind": "deposit",
+                "id": str(row.id),
+                "transaction_ref": row.transaction_ref,
+                "transaction_date": row.transaction_date.isoformat()
+                if row.transaction_date
+                else None,
+                "amount": str(row.amount),
+                "description": row.description,
+                "status": "excluded_tag",
+                "exclusion_reasons": tags,
+            }
+        )
+    if not is_default_account:
+        return out
+    card_clause = Expense.payment_method == "credit_card"
+    if date_from is not None:
+        card_clause = and_(
+            card_clause,
+            or_(
+                Expense.cc_deferred_until.is_(None),
+                Expense.cc_deferred_until >= date_from,
+            ),
+        )
+    exp = [
+        Expense.bank_verified_at.is_(None),
+        Expense.transaction_date.is_not(None),
+        Expense.amount > 0,
+        or_(
+            Expense.paid_by_resident.is_(True),
+            Expense.paid_by_owner.is_(True),
+            Expense.bank_reconcile_exclude.is_(True),
+            Expense.payment_method == "owner_personal",
+            card_clause,
+        ),
+    ]
+    if start is not None:
+        exp.append(Expense.transaction_date >= start)
+    if end is not None:
+        exp.append(Expense.transaction_date <= end)
+    for row in db.scalars(select(Expense).where(and_(*exp))):
+        if str(row.id) in matched_ids:
+            continue
+        tags = _exclusion_tag_reasons(row)
+        if not tags:
+            continue
+        out.append(
+            {
+                "kind": "expense",
+                "id": str(row.id),
+                "transaction_ref": row.transaction_ref,
+                "transaction_date": row.transaction_date.isoformat()
+                if row.transaction_date
+                else None,
+                "amount": str(row.amount),
+                "description": row.vendor_name or row.description or row.category,
+                "status": "excluded_tag",
+                "exclusion_reasons": tags,
+                "payment_method": row.payment_method,
+            }
+        )
+    return out
+
+
+def _has_amount_or_date_signal(reasons: list[str]) -> bool:
+    return any(
+        part.startswith(("same amount", "amount ", "same date", "date "))
+        for part in reasons
+    )
+
+
+def _reserved_app_ids(apps: list[dict]) -> tuple[set[UUID], set[UUID]]:
+    """Ignored / included app rows must not be proposed onto a bank line."""
+    used_dep: set[UUID] = set()
+    used_exp: set[UUID] = set()
+    for app in apps:
+        if app.get("status") not in ("ignored", "included"):
+            continue
+        raw = app.get("id")
+        if not raw:
+            continue
+        try:
+            uid = UUID(str(raw))
+        except (TypeError, ValueError):
+            continue
+        if app.get("kind") == "deposit":
+            used_dep.add(uid)
+        else:
+            used_exp.add(uid)
+    return used_dep, used_exp
+
+
+def _match_fingerprint(lines: list[dict], apps: list[dict]) -> tuple:
+    line_sig = tuple(
+        (
+            line.get("fingerprint"),
+            line.get("status"),
+            line.get("proposed_tx_id"),
+            tuple(line.get("proposed_member_ids") or []),
+        )
+        for line in lines
+    )
+    app_sig = tuple((a.get("kind"), a.get("id"), a.get("status")) for a in apps)
+    return line_sig, app_sig
+
+
+def _merge_unmatched_app(
+    db: Session,
+    *,
+    date_from: date | None,
+    date_to: date | None,
+    lines: list[dict],
+    previous_apps: list[dict],
+    bank_account_id: UUID | None,
+    is_default_account: bool,
+) -> list[dict]:
+    claimed = {
+        str(line["proposed_tx_id"])
+        for line in lines
+        if line.get("proposed_tx_id")
+    }
+    previous = {(a.get("kind"), str(a.get("id"))): a for a in previous_apps}
+    fresh = _unmatched_app_rows(
+        db,
+        date_from=date_from,
+        date_to=date_to,
+        matched_ids=claimed,
+        bank_account_id=bank_account_id,
+        is_default_account=is_default_account,
+    )
+    out: list[dict] = []
+    seen: set[tuple] = set()
+    for row in fresh:
+        key = (row.get("kind"), str(row.get("id")))
+        prev = previous.get(key)
+        if prev and prev.get("status") in ("ignored", "included"):
+            out.append(prev)
+        else:
+            out.append(row)
+        seen.add(key)
+    for prev in previous_apps:
+        if prev.get("status") not in ("ignored", "included"):
+            continue
+        key = (prev.get("kind"), str(prev.get("id")))
+        if key not in seen:
+            out.append(prev)
+            seen.add(key)
+    return out
+
+
+def _session_is_default_account(db: Session, session: BankReconcileSession) -> bool:
+    default = get_default_operating_account(db)
+    return default is not None and (
+        (session.bank_account_id is not None and session.bank_account_id == default.id)
+        or session.bank_account_id is None
+    )
+
+
+def rematch_open_bank_session(
+    db: Session, session: BankReconcileSession, *, persist: bool = True
+) -> None:
+    """Re-run matching on unmatched lines so Transactions-page creates are picked up."""
+    if session.status != "in_progress":
+        return
+    lines = copy.deepcopy(list(session.lines_json or []))
+    apps = copy.deepcopy(list(session.unmatched_app_json or []))
+    before = _match_fingerprint(lines, apps)
+    is_default = _session_is_default_account(db, session)
+    extra_dep, extra_exp = _reserved_app_ids(apps)
+    _propose_matches(
+        db,
+        lines,
+        date_from=session.statement_start_date,
+        date_to=session.statement_end_date,
+        bank_account_id=session.bank_account_id,
+        is_default_account=is_default,
+        extra_used_dep=extra_dep,
+        extra_used_exp=extra_exp,
+    )
+    apps = _merge_unmatched_app(
+        db,
+        date_from=session.statement_start_date,
+        date_to=session.statement_end_date,
+        lines=lines,
+        previous_apps=apps,
+        bank_account_id=session.bank_account_id,
+        is_default_account=is_default,
+    )
+    session.lines_json = lines
+    session.unmatched_app_json = apps
+    flag_modified(session, "lines_json")
+    flag_modified(session, "unmatched_app_json")
+    if persist and before != _match_fingerprint(lines, apps):
+        db.add(session)
+        db.commit()
+        db.refresh(session)
+
+
 def _is_actionable_bank_line(line: dict) -> bool:
     """Unmatched bank-only row that still needs Create / Ignore / Merge."""
     if (line.get("status") or "unmatched") != "unmatched":
@@ -801,10 +1085,19 @@ def _merge_candidate_from_app(app: dict, reasons: list[str]) -> dict:
     }
 
 
-def _attach_diagnostics(lines: list[dict], apps: list[dict]) -> None:
+def _attach_diagnostics(
+    lines: list[dict],
+    apps: list[dict],
+    excluded_apps: list[dict] | None = None,
+) -> None:
     """Near-miss hints and merge pick-lists for leftover bank/app rows."""
     pending_lines = [line for line in lines if _is_actionable_bank_line(line)]
     pending_apps = [app for app in apps if app.get("status") == "unmatched"]
+    excluded = [
+        app
+        for app in (excluded_apps or [])
+        if app.get("kind") and app.get("id")
+    ]
 
     for app in pending_apps:
         ranked: list[tuple[int, str, dict]] = []
@@ -843,10 +1136,46 @@ def _attach_diagnostics(lines: list[dict], apps: list[dict]) -> None:
                     _merge_candidate_from_app(app, reasons),
                 )
             )
+        for app in excluded:
+            if not _same_bank_side(line, str(app.get("kind") or "")):
+                continue
+            if any(
+                candidate.get("id") == app.get("id") and candidate.get("kind") == app.get("kind")
+                for _, _, _, candidate in ranked_apps
+            ):
+                continue
+            reasons = _near_miss_reasons(line, app)
+            if not _has_amount_or_date_signal(reasons):
+                continue
+            reasons = list(app.get("exclusion_reasons") or []) + reasons
+            ranked_apps.append(
+                (
+                    len(reasons) + 2,
+                    str(app.get("transaction_date") or ""),
+                    str(app.get("id") or ""),
+                    _merge_candidate_from_app(app, reasons),
+                )
+            )
         ranked_apps.sort(key=lambda item: (-item[0], item[1], item[2]))
         candidates = [item[3] for item in ranked_apps]
         line["merge_candidates"] = candidates
         line["near_misses"] = [row for row in candidates if row["reasons"]]
+
+
+def _include_in_bank_on_merge(row: Deposit | Expense) -> None:
+    """Merging a mis-tagged row means it is company-float bank money after all."""
+    if isinstance(row, Deposit):
+        row.is_rental_income = False
+        row.bank_reconcile_exclude = False
+        return
+    row.paid_by_resident = False
+    row.paid_by_owner = False
+    row.bank_reconcile_exclude = False
+    if row.payment_method in ("credit_card", "owner_personal"):
+        row.payment_method = "bank_transfer"
+        row.card_last4 = None
+        row.cc_verified_at = None
+        row.cc_deferred_until = None
 
 
 def _reject_if_excluded_from_bank(row: Deposit | Expense) -> None:
@@ -1119,6 +1448,7 @@ def create_session_from_upload(
 
 
 def session_summary(db: Session, session: BankReconcileSession) -> dict:
+    rematch_open_bank_session(db, session, persist=True)
     lines = list(session.lines_json or [])
     apps = list(session.unmatched_app_json or [])
     counts = {
@@ -1148,9 +1478,7 @@ def session_summary(db: Session, session: BankReconcileSession) -> dict:
     unresolved_bank = sum(1 for line in lines if _line_requires_bank_action(line))
     unresolved_app = app_unmatched
     unassigned_count = session_unassigned_count(db, lines)
-    lists_ready = (
-        unresolved_bank == 0 and unresolved_app == 0 and unassigned_count == 0
-    )
+    lists_ready = unresolved_bank == 0 and unresolved_app == 0
 
     able_dep, able_exp = verified_tx_ids(lines)
 
@@ -1219,12 +1547,27 @@ def session_summary(db: Session, session: BankReconcileSession) -> dict:
     gap_ok = (
         gap_verified is not None and abs(gap_verified) <= FINISH_GAP_TOLERANCE
     )
-    # Lists handled, bank-created rows off UNASSIGNED, and identity at ₪0.
+    # Lists handled and identity at ₪0. Create-from-verification no longer
+    # parks rows on UNASSIGNED, so that count is not a finish gate.
     can_complete = lists_ready and gap_ok
 
     response_lines = copy.deepcopy(lines)
     response_apps = copy.deepcopy(apps)
-    _attach_diagnostics(response_lines, response_apps)
+    claimed_ids = {
+        str(line.get("proposed_tx_id"))
+        for line in response_lines
+        if line.get("proposed_tx_id")
+    }
+    claimed_ids.update(str(app["id"]) for app in response_apps if app.get("id"))
+    excluded_apps = _excluded_tag_app_rows(
+        db,
+        date_from=session.statement_start_date,
+        date_to=session.statement_end_date,
+        matched_ids=claimed_ids,
+        bank_account_id=session.bank_account_id,
+        is_default_account=_session_is_default_account(db, session),
+    )
+    _attach_diagnostics(response_lines, response_apps, excluded_apps=excluded_apps)
 
     return {
         "id": str(session.id),
@@ -1272,6 +1615,7 @@ def session_summary(db: Session, session: BankReconcileSession) -> dict:
 def apply_actions(db: Session, session: BankReconcileSession, actions: list[dict]) -> BankReconcileSession:
     if session.status != "in_progress":
         raise ValueError("Session is not in progress")
+    rematch_open_bank_session(db, session, persist=False)
     lines = {line["fingerprint"]: line for line in (session.lines_json or [])}
     apps = {f"{a['kind']}:{a['id']}": a for a in (session.unmatched_app_json or [])}
     now = datetime.now(timezone.utc)
@@ -1296,6 +1640,7 @@ def apply_actions(db: Session, session: BankReconcileSession, actions: list[dict
                 row = db.get(Expense, uid)
             if not row:
                 raise ValueError(f"Transaction {tx_id} not found")
+            _reject_if_excluded_from_bank(row)
             row.bank_verified_at = now
             row.bank_asmachta = line.get("asmachta")
             if isinstance(row, Expense):
@@ -1331,7 +1676,7 @@ def apply_actions(db: Session, session: BankReconcileSession, actions: list[dict
                 raise ValueError(f"Transaction {tx_id} not found")
             if getattr(row, "bank_verified_at", None):
                 raise ValueError("That transaction is already bank-verified")
-            _reject_if_excluded_from_bank(row)
+            _include_in_bank_on_merge(row)
             tx_date = _parse_iso_date(line.get("transaction_date"))
             if tx_date is None:
                 raise ValueError("Cannot merge a bank line without a date")
@@ -1505,15 +1850,15 @@ def apply_actions(db: Session, session: BankReconcileSession, actions: list[dict
             line = lines.get(fp)
             if not line:
                 raise ValueError(f"Unknown bank line {fp}")
-            prop = ensure_unassigned_holding(db)
+            if action.get("is_payback") and line["side"] != "credit":
+                raise ValueError("Payback can only be created from a bank credit.")
+            prop = require_real_property(db, action.get("property_id"))
             amount = Decimal(str(line["amount"]))
             tx_date = _parse_iso_date(line.get("transaction_date"))
             if tx_date is None:
                 raise ValueError("Cannot create a transaction without a date")
             if amount <= 0:
                 raise ValueError("Cannot create a transaction without an amount")
-            if action.get("is_payback") and line["side"] != "credit":
-                raise ValueError("Payback can only be created from a bank credit.")
             asmachta = line.get("asmachta")
             desc = line.get("description")
             default = get_default_operating_account(db)
@@ -1557,8 +1902,8 @@ def apply_actions(db: Session, session: BankReconcileSession, actions: list[dict
                     source_file=session.filename,
                     bank_verified_at=now,
                     bank_asmachta=asmachta,
-                    needs_review=True,
-                    review_reasons=UNASSIGNED_REVIEW_REASON,
+                    needs_review=False,
+                    review_reasons=CREATED_FROM_VERIFICATION_REASON,
                 )
                 apply_payback_fields(
                     db,
@@ -1567,6 +1912,7 @@ def apply_actions(db: Session, session: BankReconcileSession, actions: list[dict
                     payback_of_expense_id=action.get("payback_of_expense_id"),
                     as_http=False,
                 )
+                stamp_created_from_verification(row)
                 db.add(row)
                 db.flush()
                 line["status"] = "added"
@@ -1587,9 +1933,10 @@ def apply_actions(db: Session, session: BankReconcileSession, actions: list[dict
                     description=desc or "Bank statement debit",
                     bank_verified_at=now,
                     bank_asmachta=asmachta,
-                    needs_review=True,
-                    review_reasons=UNASSIGNED_REVIEW_REASON,
+                    needs_review=False,
+                    review_reasons=CREATED_FROM_VERIFICATION_REASON,
                 )
+                stamp_created_from_verification(row)
                 db.add(row)
                 db.flush()
                 line["status"] = "added"
@@ -1609,6 +1956,27 @@ def apply_actions(db: Session, session: BankReconcileSession, actions: list[dict
     return session
 
 
+def _defer_pending_leftover_cc(db: Session, session: BankReconcileSession) -> None:
+    """Un-Kept leftover card charges wait for the next bank cycle."""
+    until = session.statement_end_date or session.after_date
+    if until is None:
+        return
+    leftover_ids = _leftover_cc_expense_ids(
+        db,
+        lines=list(session.lines_json or []),
+        period_start=session.statement_start_date,
+        period_end=session.statement_end_date,
+    )
+    deferred: set[str] = set()
+    for uid in leftover_ids:
+        row = db.get(Expense, uid)
+        if row is None or row.payment_method != "credit_card":
+            continue
+        row.cc_deferred_until = until
+        deferred.add(str(row.id))
+    _drop_deferred_from_open_cc_sessions(db, deferred)
+
+
 def complete_session(db: Session, session: BankReconcileSession) -> BankReconcileSession:
     summary = session_summary(db, session)
     if not summary["can_complete"]:
@@ -1624,6 +1992,7 @@ def complete_session(db: Session, session: BankReconcileSession) -> BankReconcil
             f"Cannot complete: period is off by {gap}. "
             "Create a transaction for that amount."
         )
+    _defer_pending_leftover_cc(db, session)
     settings = get_or_create_settings(db)
     if session.statement_end_date is not None:
         from app.models.bank_account import BankAccount

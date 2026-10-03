@@ -304,7 +304,7 @@ def test_link_to_app_alias_merges(client, db):
     assert updated.bank_asmachta == "M195"
 
 
-def test_merge_rejects_rental_and_he_she(client, db):
+def test_merge_excluded_tag_retags_into_bank(client, db):
     rental = Deposit(
         property_id=PROPERTY_ROTHSCHILD_ID,
         transaction_date=date(2026, 7, 10),
@@ -324,10 +324,20 @@ def test_merge_rejects_rental_and_he_she(client, db):
         paid_by_resident=True,
         description="He/She paid",
     )
-    db.add_all([rental, he_she])
+    card = Expense(
+        property_id=PROPERTY_ROTHSCHILD_ID,
+        transaction_date=date(2026, 7, 12),
+        amount=Decimal("20.00"),
+        category="maintenance",
+        source="credit_card",
+        payment_method="credit_card",
+        description="Card merchant",
+    )
+    db.add_all([rental, he_she, card])
     db.commit()
     db.refresh(rental)
     db.refresh(he_she)
+    db.refresh(card)
     session = _open_session(
         db,
         lines=[
@@ -351,9 +361,19 @@ def test_merge_rejects_rental_and_he_she(client, db):
                 "description": "He she",
                 "status": "unmatched",
             },
+            {
+                "fingerprint": "debit-card",
+                "row_number": 3,
+                "transaction_date": "2026-07-12",
+                "side": "debit",
+                "amount": "20.00",
+                "asmachta": "C1",
+                "description": "Merchant",
+                "status": "unmatched",
+            },
         ],
     )
-    rental_fail = client.post(
+    rental_ok = client.post(
         f"/api/v1/bank-settings/reconcile/sessions/{session.id}/actions",
         json={
             "actions": [
@@ -366,10 +386,8 @@ def test_merge_rejects_rental_and_he_she(client, db):
             ]
         },
     )
-    assert rental_fail.status_code == 400
-    assert "rental" in rental_fail.json()["detail"].lower()
-
-    he_she_fail = client.post(
+    assert rental_ok.status_code == 200, rental_ok.text
+    he_she_ok = client.post(
         f"/api/v1/bank-settings/reconcile/sessions/{session.id}/actions",
         json={
             "actions": [
@@ -382,5 +400,162 @@ def test_merge_rejects_rental_and_he_she(client, db):
             ]
         },
     )
-    assert he_she_fail.status_code == 400
-    assert "he/she" in he_she_fail.json()["detail"].lower()
+    assert he_she_ok.status_code == 200, he_she_ok.text
+    card_ok = client.post(
+        f"/api/v1/bank-settings/reconcile/sessions/{session.id}/actions",
+        json={
+            "actions": [
+                {
+                    "action": "merge",
+                    "fingerprint": "debit-card",
+                    "kind": "expense",
+                    "tx_id": str(card.id),
+                }
+            ]
+        },
+    )
+    assert card_ok.status_code == 200, card_ok.text
+    db.expire_all()
+    updated_rental = db.get(Deposit, rental.id)
+    updated_he = db.get(Expense, he_she.id)
+    updated_card = db.get(Expense, card.id)
+    assert updated_rental is not None
+    assert updated_rental.is_rental_income is False
+    assert updated_rental.bank_verified_at is not None
+    assert updated_he is not None
+    assert updated_he.paid_by_resident is False
+    assert updated_he.bank_verified_at is not None
+    assert updated_card is not None
+    assert updated_card.payment_method == "bank_transfer"
+    assert updated_card.bank_verified_at is not None
+
+
+def test_excluded_tags_surface_as_mis_tag_merge_candidates(client, db):
+    he_she = Expense(
+        property_id=PROPERTY_ROTHSCHILD_ID,
+        transaction_date=date(2026, 7, 10),
+        amount=Decimal("50.00"),
+        category="maintenance",
+        source="manual",
+        payment_method="cash",
+        paid_by_resident=True,
+        description="Grocery",
+    )
+    rental = Deposit(
+        property_id=PROPERTY_ROTHSCHILD_ID,
+        transaction_date=date(2026, 7, 10),
+        amount=Decimal("100.00"),
+        currency="ILS",
+        source="rental_income",
+        is_rental_income=True,
+        description="July rent",
+    )
+    card = Expense(
+        property_id=PROPERTY_ROTHSCHILD_ID,
+        transaction_date=date(2026, 7, 12),
+        amount=Decimal("20.00"),
+        category="maintenance",
+        source="credit_card",
+        payment_method="credit_card",
+        description="Card merchant",
+    )
+    owner_personal = Expense(
+        property_id=PROPERTY_ROTHSCHILD_ID,
+        transaction_date=date(2026, 7, 11),
+        amount=Decimal("30.00"),
+        category="maintenance",
+        source="manual_owner",
+        payment_method="owner_personal",
+        description="Owner personal",
+    )
+    db.add_all([he_she, rental, card, owner_personal])
+    db.commit()
+    db.refresh(he_she)
+    db.refresh(rental)
+    db.refresh(card)
+    db.refresh(owner_personal)
+    session = _open_session(
+        db,
+        lines=[
+            {
+                "fingerprint": "debit-he",
+                "row_number": 1,
+                "transaction_date": "2026-07-10",
+                "side": "debit",
+                "amount": "50.00",
+                "asmachta": "H1",
+                "description": "Grocery",
+                "status": "unmatched",
+            },
+            {
+                "fingerprint": "credit-rent",
+                "row_number": 2,
+                "transaction_date": "2026-07-10",
+                "side": "credit",
+                "amount": "100.00",
+                "asmachta": "R1",
+                "description": "Rent in",
+                "status": "unmatched",
+            },
+            {
+                "fingerprint": "debit-card",
+                "row_number": 3,
+                "transaction_date": "2026-07-12",
+                "side": "debit",
+                "amount": "20.00",
+                "asmachta": "C1",
+                "description": "Card merchant",
+                "status": "unmatched",
+            },
+            {
+                "fingerprint": "debit-owner",
+                "row_number": 4,
+                "transaction_date": "2026-07-11",
+                "side": "debit",
+                "amount": "30.00",
+                "asmachta": "O1",
+                "description": "Owner personal",
+                "status": "unmatched",
+            },
+        ],
+    )
+    body = client.get(f"/api/v1/bank-settings/reconcile/sessions/{session.id}").json()
+    app_ids = {row["id"] for row in body.get("unmatched_app") or []}
+    assert str(he_she.id) not in app_ids
+    assert str(rental.id) not in app_ids
+    assert str(card.id) not in app_ids
+    assert str(owner_personal.id) not in app_ids
+
+    def _line(fingerprint: str) -> dict:
+        return next(row for row in body["lines"] if row["fingerprint"] == fingerprint)
+
+    he_line = _line("debit-he")
+    assert any(c.get("id") == str(he_she.id) for c in he_line.get("merge_candidates") or [])
+    he_reasons = " ".join(
+        " ".join(miss.get("reasons") or []) for miss in he_line.get("near_misses") or []
+    )
+    assert "he/she" in he_reasons.lower()
+    assert "mis-tag" in he_reasons.lower()
+
+    rent_line = _line("credit-rent")
+    rent_reasons = " ".join(
+        " ".join(miss.get("reasons") or []) for miss in rent_line.get("near_misses") or []
+    )
+    assert "rental" in rent_reasons.lower()
+    assert any(c.get("id") == str(rental.id) for c in rent_line.get("merge_candidates") or [])
+
+    card_line = _line("debit-card")
+    card_reasons = " ".join(
+        " ".join(miss.get("reasons") or []) for miss in card_line.get("near_misses") or []
+    )
+    assert "card" in card_reasons.lower()
+    assert any(c.get("id") == str(card.id) for c in card_line.get("merge_candidates") or [])
+
+    owner_line = _line("debit-owner")
+    owner_reasons = " ".join(
+        " ".join(miss.get("reasons") or []) for miss in owner_line.get("near_misses") or []
+    )
+    assert "owner-personal" in owner_reasons.lower()
+    assert any(
+        c.get("id") == str(owner_personal.id) for c in owner_line.get("merge_candidates") or []
+    )

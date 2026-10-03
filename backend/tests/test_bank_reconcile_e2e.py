@@ -146,6 +146,15 @@ def test_step2_opening_cutover_and_settings(client, db):
         payment_method="bank_transfer",
         description="pre-cutover",
     )
+    card = Expense(
+        property_id=PROPERTY_ROTHSCHILD_ID,
+        transaction_date=date(2026, 5, 10),
+        amount=Decimal("88.00"),
+        category="insurance",
+        source="credit_card",
+        payment_method="credit_card",
+        description="pre-cutover-card",
+    )
     new = Expense(
         property_id=PROPERTY_ROTHSCHILD_ID,
         transaction_date=date(2026, 6, 5),
@@ -155,9 +164,10 @@ def test_step2_opening_cutover_and_settings(client, db):
         payment_method="bank_transfer",
         description="post-cutover",
     )
-    db.add_all([old, new])
+    db.add_all([old, card, new])
     db.commit()
     db.refresh(old)
+    db.refresh(card)
     db.refresh(new)
 
     cutover = client.post(
@@ -169,10 +179,15 @@ def test_step2_opening_cutover_and_settings(client, db):
     )
     assert cutover.status_code == 200, cutover.text
     db.refresh(old)
+    db.refresh(card)
     db.refresh(new)
     assert old.bank_verified_at is not None
     assert old.bank_asmachta is None
+    assert card.bank_verified_at is not None
+    assert card.cc_verified_at is not None
+    assert card.cc_bank_confirmed_at is not None
     assert new.bank_verified_at is None
+    assert new.cc_verified_at is None
 
 
 def test_step3_gap_parse_earliest_and_owner_paid(client, db):
@@ -363,13 +378,14 @@ def test_step4_add_from_bank_creates_verified(client, db):
     assert expense.bank_asmachta == unmatched.get("asmachta")
     assert expense.transaction_ref
     from app.models.property import Property
-    from app.services.holding import UNASSIGNED_PROP_ID, UNASSIGNED_REVIEW_REASON
+    from app.services.holding import CREATED_FROM_VERIFICATION_REASON
 
     holding = db.get(Property, expense.property_id)
     assert holding is not None
-    assert holding.client_prop_id == UNASSIGNED_PROP_ID
-    assert expense.needs_review is True
-    assert expense.review_reasons == UNASSIGNED_REVIEW_REASON
+    assert holding.client_prop_id != "UNASSIGNED"
+    assert expense.property_id == PROPERTY_ROTHSCHILD_ID
+    assert expense.needs_review is False
+    assert expense.review_reasons == CREATED_FROM_VERIFICATION_REASON
     assert expense.source_file == session["filename"]
     listed_row = next(
         item
@@ -377,8 +393,14 @@ def test_step4_add_from_bank_creates_verified(client, db):
         if item["id"] == str(expense.id)
     )
     assert listed_row["source_file"] == session["filename"]
-    assert added.json()["counts"]["unassigned"] >= 1
-    assert added.json()["can_complete"] is False
+    assert listed_row["review_reasons"] == CREATED_FROM_VERIFICATION_REASON
+    tagged = client.get(
+        "/api/v1/expenses",
+        params={"review_reason": CREATED_FROM_VERIFICATION_REASON, "page_size": 200},
+    )
+    assert tagged.status_code == 200
+    assert str(expense.id) in {item["id"] for item in tagged.json()["items"]}
+    assert added.json()["counts"].get("unassigned", 0) == 0
 
 
 def test_step5_bank_alerts_require_reason_and_clear(client, db):
@@ -587,14 +609,15 @@ def test_frontend_verification_surface_exists():
     assert "Found on statement" in bank_panel
     assert "In the app, not on the statement" in bank_panel
     assert "On the statement, not in the app" in bank_panel
+    assert "He/She, rental, owner-paid, and card tags" in bank_panel
     assert "Finish period" in bank_panel
     assert "Confirm all found" in bank_panel
     assert "Upload bank statement" in bank_panel
     assert "Card payments" in bank_panel
     assert "Push to next cycle" in bank_panel
     assert "Keep in this period" in bank_panel
-    assert "Not for this period" in bank_panel
-    assert bank_panel.find("Not for this period") < bank_panel.find("Found on statement")
+    assert "leftoverHint" in bank_panel
+    assert "Leftover can wait" in bank_panel
     assert "PeriodBalanceCheck" in bank_panel
     assert "Finish anyway" not in bank_panel
     assert "finishGapCopy" in bank_panel
@@ -628,6 +651,9 @@ def test_frontend_verification_surface_exists():
     assert "Not for this period" in cc_panel
     assert "Keep in this period" in cc_panel
     assert "Push to next cycle" in cc_panel
+    assert "Leftover can wait" in cc_panel
+    assert "Another card" in cc_panel
+    assert "disabled={busy || Boolean(activeSession)}" not in cc_panel
     assert cc_panel.find("Not for this period") < cc_panel.find("Found on statement")
     assert "no transactions for that period" in cc_panel
     assert "On the statement, not in the app" in cc_panel
@@ -648,7 +674,8 @@ def test_frontend_verification_surface_exists():
     bank_panel_text = (frontend / "components" / "BankReconcilePanel.tsx").read_text(
         encoding="utf-8"
     )
-    assert "Needs assignment" in bank_panel_text
+    assert "OwnerPropertyFields" in bank_panel_text
+    assert "Choose owner and property" in bank_panel_text
     assert "Create payback" in bank_panel_text
     assert "Save" in bank_panel_text
     assert "Merge" in bank_panel_text
@@ -675,10 +702,18 @@ def test_frontend_verification_surface_exists():
     assert "cc_unmatched" in alerts
     assert "Open Verification" in alerts
     assert "unassigned_transaction" in alerts
-    assert "Open Unassigned" in alerts
-    unassigned_page = (frontend / "pages" / "UnassignedPage.tsx").read_text(encoding="utf-8")
-    assert "Unassigned" in unassigned_page
-    assert "UNASSIGNED" in unassigned_page
-    assert "/unassigned" in shell
-    assert 'path="unassigned"' in app_routes
-    assert "UnassignedPage" in app_routes
+    assert "unverified_stale" in alerts
+    assert "Unverified for more than a month" in alerts
+    assert "Open Transactions" in alerts
+    admin_bank = (frontend / "pages" / "AdminBankSettingsPage.tsx").read_text(
+        encoding="utf-8"
+    )
+    assert "Go live" in admin_bank
+    assert "next in-app period" in admin_bank
+    assert "created_from_verification" in tx_page
+    assert "From verification" in table
+    assert "Awaiting return" in table
+    assert "Write off to Buffer" in tx_page
+    assert "Record return" in tx_page
+    assert "/unassigned" not in shell
+    assert "UnassignedPage" not in app_routes

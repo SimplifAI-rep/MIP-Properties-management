@@ -14,6 +14,7 @@ from app.services.running_balance import compute_running_balances
 from app.services.source_file import load_upload_filenames, resolve_source_file
 from app.services.holding import (
     clear_unassigned_review,
+    keep_created_from_verification,
     reject_unassigned_for_manual_create,
 )
 from app.services.transaction_filters import (
@@ -115,6 +116,7 @@ def list_expenses(
     max_amount: Decimal | None = None,
     source_file: str | None = None,
     needs_review: bool | None = None,
+    review_reason: str | None = None,
     paid_by_resident: bool | None = None,
     paid_by_owner: bool | None = None,
     paid_by_company: bool | None = None,
@@ -158,6 +160,7 @@ def list_expenses(
         max_amount=max_amount,
         source_file=source_file,
         needs_review=needs_review,
+        review_reason=review_reason,
         paid_by_resident=paid_by_resident,
         paid_by_owner=paid_by_owner,
         paid_by_company=paid_by_company,
@@ -252,7 +255,7 @@ def _clear_review_if_complete(expense: Expense, prop: Property | None = None) ->
         and (prop is None or prop.client_prop_id != "UNASSIGNED")
     ):
         expense.needs_review = False
-        expense.review_reasons = None
+        expense.review_reasons = keep_created_from_verification(expense.review_reasons)
 
 
 def update_expense(db: Session, expense_id: UUID, payload: ExpenseUpdate) -> ExpenseRead:

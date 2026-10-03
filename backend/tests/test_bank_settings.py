@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 
 import pytest
@@ -89,9 +89,18 @@ def test_go_live_cutover_marks_verified(client, db):
     assert body["settings"]["last_verification_date"] == cutover
     assert Decimal(body["settings"]["opening_balance"]) == Decimal("100000.00")
 
+    db.expire_all()
     expenses = db.scalars(select(Expense)).all()
     assert all(e.bank_verified_at is not None for e in expenses)
     assert all(e.bank_asmachta is None for e in expenses)
+    card_rows = [e for e in expenses if e.payment_method == "credit_card"]
+    assert card_rows
+    assert all(e.cc_verified_at is not None for e in card_rows)
+    assert all(e.cc_bank_confirmed_at is not None for e in card_rows)
+    assert all(e.cc_deferred_until is None for e in card_rows)
+    non_card = [e for e in expenses if e.payment_method != "credit_card"]
+    assert non_card
+    assert all(e.cc_verified_at is None for e in non_card)
 
     # New expense after cutover stays unverified
     create = client.post(
@@ -110,6 +119,86 @@ def test_go_live_cutover_marks_verified(client, db):
 
     settings = client.get("/api/v1/bank-settings").json()
     assert settings["unverified_count"] >= 1
+    assert settings["last_verification_date"] == cutover
+
+
+def test_unverified_stale_alert_after_go_live(client, db):
+    from app.services.bank_settings import month_ago, resolve_account_settings
+
+    today = date.today()
+    last = month_ago(month_ago(today))
+    stale_date = month_ago(today) - timedelta(days=2)
+    fresh_date = today - timedelta(days=3)
+
+    account, company = resolve_account_settings(db)
+    if account is not None:
+        account.last_verification_date = last
+        db.add(account)
+    company.last_verification_date = last
+    db.add(company)
+    db.add(
+        Expense(
+            property_id=PROPERTY_ROTHSCHILD_ID,
+            transaction_date=stale_date,
+            amount=Decimal("40.00"),
+            category="maintenance",
+            source="manual_company",
+            payment_method="bank_transfer",
+            description="stale unverified",
+        )
+    )
+    db.add(
+        Expense(
+            property_id=PROPERTY_ROTHSCHILD_ID,
+            transaction_date=fresh_date,
+            amount=Decimal("15.00"),
+            category="maintenance",
+            source="manual_company",
+            payment_method="bank_transfer",
+            description="recent unverified",
+        )
+    )
+    db.commit()
+
+    alerts = client.get("/api/v1/alerts").json()["items"]
+    stale = next(item for item in alerts if item["alert_type"] == "unverified_stale")
+    assert stale["title"] == "Unverified for more than a month"
+    assert stale["link_path"] == "/verification"
+    assert "still unverified" in stale["message"]
+
+
+def test_unverified_stale_alert_skips_before_go_live(client, db):
+    db.add(
+        Expense(
+            property_id=PROPERTY_ROTHSCHILD_ID,
+            transaction_date=date.today() - timedelta(days=80),
+            amount=Decimal("40.00"),
+            category="maintenance",
+            source="manual_company",
+            payment_method="bank_transfer",
+            description="old but never went live",
+        )
+    )
+    db.commit()
+    alerts = client.get("/api/v1/alerts").json()["items"]
+    assert all(item["alert_type"] != "unverified_stale" for item in alerts)
+
+
+def test_unverified_stale_alert_skips_when_only_last_check_is_old(client, db):
+    """Go-live from an older Excel must not nag until leftover unverified txs age out."""
+    from app.services.bank_settings import month_ago, resolve_account_settings
+
+    last = month_ago(month_ago())
+    account, company = resolve_account_settings(db)
+    if account is not None:
+        account.last_verification_date = last
+        db.add(account)
+    company.last_verification_date = last
+    db.add(company)
+    db.commit()
+
+    alerts = client.get("/api/v1/alerts").json()["items"]
+    assert all(item["alert_type"] != "unverified_stale" for item in alerts)
 
 
 def test_workspace_headline_closed_offset_is_zero(client):

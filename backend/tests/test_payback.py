@@ -187,6 +187,7 @@ def test_add_from_bank_payback_on_credit_and_rejects_debit(client, db):
                 {
                     "action": "add_from_bank",
                     "fingerprint": credit_fp,
+                    "property_id": str(PROPERTY_ROTHSCHILD_ID),
                     "is_payback": True,
                     "payback_of_expense_id": expense["id"],
                 }

@@ -1,7 +1,6 @@
+from decimal import Decimal
 from datetime import date
 from uuid import UUID, uuid4
-
-import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -12,6 +11,13 @@ from app.core.admin_auth import require_admin
 from app.core.database import Base
 from app.main import app
 from app.models.bank_reconcile_session import BankReconcileSession
+from app.models.expense import Expense
+from app.models.property import Property
+from app.services.holding import (
+    CREATED_FROM_VERIFICATION_REASON,
+    UNASSIGNED_PROP_ID,
+    ensure_unassigned_holding,
+)
 from app.services.seed import PROPERTY_ROTHSCHILD_ID, seed_reference_data
 from app.services.transaction_ref import register_transaction_ref_listeners
 
@@ -61,7 +67,7 @@ def _open_session(db, fingerprints: list[tuple[str, str, str]]) -> BankReconcile
     session = BankReconcileSession(
         id=uuid4(),
         status="in_progress",
-        filename="unassigned-alert.xlsx",
+        filename="create-from-verification.xlsx",
         statement_start_date=date(2026, 7, 1),
         statement_end_date=date(2026, 7, 31),
         lines_json=lines,
@@ -72,103 +78,104 @@ def _open_session(db, fingerprints: list[tuple[str, str, str]]) -> BankReconcile
     return session
 
 
-def _add_from_bank(client, session_id, fingerprint: str):
+def test_add_from_bank_requires_property(client, db):
+    session = _open_session(db, [("debit-1", "debit", "40.00")])
     response = client.post(
-        f"/api/v1/bank-settings/reconcile/sessions/{session_id}/actions",
-        json={"actions": [{"action": "add_from_bank", "fingerprint": fingerprint}]},
+        f"/api/v1/bank-settings/reconcile/sessions/{session.id}/actions",
+        json={"actions": [{"action": "add_from_bank", "fingerprint": "debit-1"}]},
+    )
+    assert response.status_code == 400
+    assert "property" in response.json()["detail"].lower()
+
+
+def test_add_from_bank_tags_created_from_verification(client, db):
+    session = _open_session(db, [("debit-1", "debit", "40.00")])
+    response = client.post(
+        f"/api/v1/bank-settings/reconcile/sessions/{session.id}/actions",
+        json={
+            "actions": [
+                {
+                    "action": "add_from_bank",
+                    "fingerprint": "debit-1",
+                    "property_id": str(PROPERTY_ROTHSCHILD_ID),
+                }
+            ]
+        },
     )
     assert response.status_code == 200, response.text
-    line = next(row for row in response.json()["lines"] if row["fingerprint"] == fingerprint)
-    return line["proposed_tx_id"], line["proposed_kind"]
-
-
-def test_add_from_bank_raises_one_unassigned_alert(client, db):
-    session = _open_session(db, [("debit-1", "debit", "40.00")])
-    tx_id, kind = _add_from_bank(client, session.id, "debit-1")
-    assert kind == "expense"
-
+    line = next(row for row in response.json()["lines"] if row["fingerprint"] == "debit-1")
+    assert line["status"] == "added"
+    expense = db.get(Expense, UUID(line["proposed_tx_id"]))
+    assert expense is not None
+    assert expense.property_id == PROPERTY_ROTHSCHILD_ID
+    assert expense.needs_review is False
+    assert CREATED_FROM_VERIFICATION_REASON in (expense.review_reasons or "")
+    listed = client.get(
+        "/api/v1/expenses",
+        params={"review_reason": CREATED_FROM_VERIFICATION_REASON, "page_size": 50},
+    )
+    assert listed.status_code == 200
+    ids = {item["id"] for item in listed.json()["items"]}
+    assert str(expense.id) in ids
     alerts = client.get("/api/v1/alerts?property_status=all").json()["items"]
-    unassigned = [item for item in alerts if item["alert_type"] == "unassigned_transaction"]
-    assert len(unassigned) == 1
-    alert = unassigned[0]
-    assert alert["expense_id"] == tx_id
-    assert alert["id"] == f"unassigned_transaction:expense:{tx_id}"
-    assert alert["link_path"] == f"/verification?session={session.id}"
     assert not any(
-        item["alert_type"] == "incomplete_import" and item.get("expense_id") == tx_id
+        item["alert_type"] == "unassigned_transaction" and item.get("expense_id") == str(expense.id)
         for item in alerts
     )
 
 
-def test_assigning_property_clears_unassigned_alert(client, db):
-    session = _open_session(db, [("credit-1", "credit", "5.00")])
-    tx_id, kind = _add_from_bank(client, session.id, "credit-1")
-    assert kind == "deposit"
+def test_open_session_rematch_picks_up_manual_create(client, db):
+    session = _open_session(db, [("debit-1", "debit", "40.00")])
+    first = client.get(f"/api/v1/bank-settings/reconcile/sessions/{session.id}")
+    assert first.status_code == 200
+    line = next(row for row in first.json()["lines"] if row["fingerprint"] == "debit-1")
+    assert line["status"] == "unmatched"
 
-    before = client.get("/api/v1/alerts?property_status=all").json()["items"]
-    assert any(
-        item["alert_type"] == "unassigned_transaction" and item.get("deposit_id") == tx_id
-        for item in before
+    created = client.post(
+        "/api/v1/expenses",
+        json={
+            "property_id": str(PROPERTY_ROTHSCHILD_ID),
+            "transaction_date": "2026-07-20",
+            "amount": "40.00",
+            "category": "maintenance",
+            "source": "manual_company",
+            "payment_method": "company_account",
+            "description": "manual match",
+        },
     )
+    assert created.status_code in (200, 201), created.text
+    tx_id = created.json()["id"]
 
-    patched = client.patch(
-        f"/api/v1/deposits/{tx_id}",
-        json={"property_id": str(PROPERTY_ROTHSCHILD_ID)},
+    again = client.get(f"/api/v1/bank-settings/reconcile/sessions/{session.id}")
+    assert again.status_code == 200, again.text
+    line = next(row for row in again.json()["lines"] if row["fingerprint"] == "debit-1")
+    assert line["status"] == "proposed_match"
+    assert line["proposed_tx_id"] == tx_id
+    app_ids = {row["id"] for row in again.json().get("unmatched_app") or []}
+    assert tx_id not in app_ids
+
+
+def test_leftover_unassigned_property_still_alerts(client, db):
+    holding = ensure_unassigned_holding(db)
+    db.commit()
+    expense = Expense(
+        property_id=holding.id,
+        transaction_date=date(2026, 7, 20),
+        amount=Decimal("12.00"),
+        category="maintenance",
+        source="bank_statement",
+        payment_method="bank_transfer",
+        needs_review=True,
+        review_reasons="unassigned_bank",
     )
-    assert patched.status_code == 200, patched.text
-
-    after = client.get("/api/v1/alerts?property_status=all").json()["items"]
-    assert not any(
-        item["alert_type"] == "unassigned_transaction" and item.get("deposit_id") == tx_id
-        for item in after
-    )
-
-
-def test_dismissed_unassigned_alert_can_fire_again_after_reassign(client, db):
-    session = _open_session(db, [("debit-2", "debit", "12.00")])
-    tx_id, _ = _add_from_bank(client, session.id, "debit-2")
-    alert_id = f"unassigned_transaction:expense:{tx_id}"
-    dismissed = client.post(f"/api/v1/alerts/{alert_id}/dismiss", json={})
-    assert dismissed.status_code == 200, dismissed.text
-
-    hidden = client.get("/api/v1/alerts?property_status=all").json()["items"]
-    assert not any(item["id"] == alert_id for item in hidden)
-
-    assigned = client.patch(
-        f"/api/v1/expenses/{tx_id}",
-        json={"property_id": str(PROPERTY_ROTHSCHILD_ID)},
-    )
-    assert assigned.status_code == 200, assigned.text
-    # Listing after assign drops the dismiss record so a later UNASSIGNED move can alert again.
-    client.get("/api/v1/alerts?property_status=all")
-
-    from app.models.property import Property
-    from app.services.holding import UNASSIGNED_PROP_ID
-
-    holding = db.query(Property).filter(Property.client_prop_id == UNASSIGNED_PROP_ID).one()
-    moved_back = client.patch(
-        f"/api/v1/expenses/{tx_id}",
-        json={"property_id": str(holding.id)},
-    )
-    assert moved_back.status_code == 200, moved_back.text
-
-    again = client.get("/api/v1/alerts?property_status=all").json()["items"]
-    assert any(item["id"] == alert_id for item in again)
-
-
-def test_one_alert_per_unassigned_transaction(client, db):
-    session = _open_session(
-        db,
-        [("debit-a", "debit", "10.00"), ("credit-b", "credit", "7.00")],
-    )
-    first_id, _ = _add_from_bank(client, session.id, "debit-a")
-    second_id, _ = _add_from_bank(client, session.id, "credit-b")
+    db.add(expense)
+    db.commit()
     alerts = [
         item
         for item in client.get("/api/v1/alerts?property_status=all").json()["items"]
         if item["alert_type"] == "unassigned_transaction"
     ]
-    ids = {item.get("expense_id") or item.get("deposit_id") for item in alerts}
-    assert ids == {first_id, second_id}
-    assert UUID(first_id)
-    assert UUID(second_id)
+    assert len(alerts) == 1
+    assert alerts[0]["expense_id"] == str(expense.id)
+    assert alerts[0]["link_path"] == "/transactions"
+    assert db.query(Property).filter(Property.client_prop_id == UNASSIGNED_PROP_ID).one()

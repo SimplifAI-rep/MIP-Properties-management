@@ -334,7 +334,7 @@ export function DataImportPage() {
             </p>
             <ul className="mt-2 grid gap-1 text-sm sm:grid-cols-2">
               <li>
-                <Tooltip content="Properties on the current clients sheet (plus BUFFER).">
+                <Tooltip content="Properties on the current clients sheet (plus BUFFER and Awaiting return).">
                   Active now
                 </Tooltip>
                 : {result.properties_active ?? result.database_counts.properties_active ?? 0}

@@ -306,6 +306,7 @@ export const api = {
         max_amount: filters.max_amount,
         source_file: filters.source_file,
         needs_review: filters.needs_review,
+        review_reason: filters.review_reason,
         is_rental_income: filters.is_rental_income,
         include_running_balance:
           filters.include_running_balance === false ? false : undefined,
@@ -404,6 +405,7 @@ export const api = {
         max_amount: filters.max_amount,
         source_file: filters.source_file,
         needs_review: filters.needs_review,
+        review_reason: filters.review_reason,
         paid_by_resident: filters.paid_by_resident,
         paid_by_owner: filters.paid_by_owner,
         paid_by_company: filters.paid_by_company,
@@ -506,6 +508,19 @@ export const api = {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
+    }),
+  writeOffExpenseToBuffer: (id: string) =>
+    request<import('../types').Expense>(`/expenses/${id}/write-off-to-buffer`, {
+      method: 'POST',
+    }),
+  recordExpenseReturn: (id: string) =>
+    request<{
+      expense: import('../types').Expense;
+      return_deposit: import('../types').Deposit;
+    }>(`/expenses/${id}/record-return`, { method: 'POST' }),
+  writeOffDepositToBuffer: (id: string) =>
+    request<import('../types').Deposit>(`/deposits/${id}/write-off-to-buffer`, {
+      method: 'POST',
     }),
   deleteExpense: (id: string) =>
     request<void>(`/expenses/${id}`, {

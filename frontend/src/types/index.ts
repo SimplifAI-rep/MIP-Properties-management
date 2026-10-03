@@ -204,6 +204,7 @@ export interface DepositFilters {
   max_amount?: string;
   source_file?: string;
   needs_review?: boolean;
+  review_reason?: string;
   is_rental_income?: boolean;
   include_running_balance?: boolean;
   page?: number;
@@ -286,6 +287,7 @@ export interface ExpenseFilters {
   max_amount?: string;
   source_file?: string;
   needs_review?: boolean;
+  review_reason?: string;
   paid_by_resident?: boolean;
   paid_by_owner?: boolean;
   paid_by_company?: boolean;
@@ -495,7 +497,8 @@ export interface AlertItem {
     | 'app_unmatched'
     | 'bank_gap'
     | 'cc_unmatched'
-    | 'cc_app_unmatched';
+    | 'cc_app_unmatched'
+    | 'unverified_stale';
   severity: 'error' | 'warning' | 'info';
   title: string;
   message: string;

@@ -57,6 +57,7 @@ const ALERT_TYPE_OPTIONS: { value: AlertTypeFilter; label: string }[] = [
   { value: 'bank_gap', label: 'Bank Gap' },
   { value: 'cc_unmatched', label: 'Unmatched CC' },
   { value: 'cc_app_unmatched', label: 'Unmatched paid-by-card' },
+  { value: 'unverified_stale', label: 'Unverified for more than a month' },
 ];
 
 const RECONCILE_ALERT_TYPES = new Set<AlertItem['alert_type']>([
@@ -140,6 +141,7 @@ function typeLabel(alert: AlertItem): string {
   if (alert.alert_type === 'bank_gap') return 'Bank Gap';
   if (alert.alert_type === 'cc_unmatched') return 'Unmatched CC';
   if (alert.alert_type === 'cc_app_unmatched') return 'Unmatched paid-by-card';
+  if (alert.alert_type === 'unverified_stale') return 'Unverified for more than a month';
   return 'Upload review';
 }
 
@@ -797,18 +799,44 @@ export function AlertsPage() {
                     </div>
                   </dl>
                   <p className="text-sm text-muted">
-                    Assign a real owner and property on Unassigned, or edit the row
+                    Assign a real owner and property on Transactions, or edit the row
                     in an open verification period.
                   </p>
                   <div className="flex flex-wrap gap-2">
-                    <Link to="/unassigned" className="btn-primary">
-                      Open Unassigned
+                    <Link to="/transactions" className="btn-primary">
+                      Open Transactions
                     </Link>
                     {selectedAlert.link_path?.startsWith('/verification') ? (
                       <Link to={selectedAlert.link_path} className="btn-secondary">
                         Open Verification
                       </Link>
                     ) : null}
+                    <button
+                      type="button"
+                      className="btn-secondary"
+                      disabled={dismissMutation.isPending}
+                      onClick={() =>
+                        dismissMutation.mutate({ alertId: selectedAlert.id })
+                      }
+                    >
+                      Dismiss
+                    </button>
+                  </div>
+                </div>
+              ) : selectedAlert.alert_type === 'unverified_stale' ? (
+                <div className="space-y-4">
+                  <p className="text-sm text-muted">
+                    Catch up on Verification. The next in-app period starts the day after
+                    bank verified through. Dismiss hides this until the lag clears and
+                    then returns later.
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    <Link
+                      to={selectedAlert.link_path || '/verification'}
+                      className="btn-primary"
+                    >
+                      Open Verification
+                    </Link>
                     <button
                       type="button"
                       className="btn-secondary"
@@ -1220,7 +1248,8 @@ export function AlertsPage() {
                 </div>
               ) : selectedAlert.alert_type !== 'incomplete_import' &&
                 selectedAlert.alert_type !== 'missing_deposit' &&
-                selectedAlert.alert_type !== 'unassigned_transaction' ? (
+                selectedAlert.alert_type !== 'unassigned_transaction' &&
+                selectedAlert.alert_type !== 'unverified_stale' ? (
                 <button
                   type="button"
                   className="btn-secondary"

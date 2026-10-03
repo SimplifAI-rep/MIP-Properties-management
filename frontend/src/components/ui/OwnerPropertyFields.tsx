@@ -1,6 +1,7 @@
 import type { OwnerSummary, Property } from '../../types';
 
 export const UNASSIGNED_CLIENT_PROP_ID = 'UNASSIGNED';
+export const AWAITING_RETURN_CLIENT_PROP_ID = 'AWAITING';
 
 export function OwnerPropertyFields({
   owners,

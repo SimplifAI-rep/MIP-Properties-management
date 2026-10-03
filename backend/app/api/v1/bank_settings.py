@@ -88,7 +88,10 @@ def go_live_cutover(
     db: Session = Depends(get_db),
     _admin: str = Depends(require_admin),
 ) -> BankCutoverResponse:
-    """Go-live: set opening balance + as-of, mark txs ≤ as-of Verified."""
+    """Go-live: set opening + as-of, stamp bank and card txs ≤ as-of as verified.
+
+    The next in-app verification period starts the day after as-of.
+    """
     try:
         account, _company, deposits_marked, expenses_marked = (
             bank_settings_service.run_go_live_cutover(

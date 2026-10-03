@@ -17,9 +17,13 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from app.models.cc_reconcile_session import CcReconcileSession
 from app.models.expense import Expense
-from app.models.property import Property
 from app.services.account_scope import ensure_cc_account
 from app.services.bank_reconcile import cc_deferral_allows_clause
+from app.services.holding import (
+    CREATED_FROM_VERIFICATION_REASON,
+    require_real_property,
+    stamp_created_from_verification,
+)
 
 
 def _parse_amount(value: Any) -> Decimal | None:
@@ -227,6 +231,7 @@ def _propose_matches(
     date_from: date | None,
     date_to: date | None,
     card_last4: str | None = None,
+    extra_used: set[str] | None = None,
 ) -> None:
     candidates = list(
         db.scalars(
@@ -239,8 +244,15 @@ def _propose_matches(
             )
         )
     )
-    used: set[str] = set()
+    used: set[str] = set(extra_used or ())
     for line in lines:
+        if line.get("status") in ("proposed_match", "matched", "added") and line.get(
+            "proposed_tx_id"
+        ):
+            used.add(str(line["proposed_tx_id"]))
+    for line in lines:
+        if (line.get("status") or "unmatched") != "unmatched":
+            continue
         best: Expense | None = None
         best_score = 0
         for row in candidates:
@@ -336,8 +348,27 @@ def create_session_from_upload(
         )
     ) or 0
     if pending_n == 0:
-        db.commit()
-        raise ValueError("No transactions for that period")
+        # Caught-up: this card already has app rows in the window and none
+        # are still pending. A different / new card with a statement and no
+        # tagged app rows still opens so she can Create from the Excel.
+        tagged_n = 0
+        if card_last4 and card_last4 != "unknown":
+            tagged = [
+                Expense.payment_method == "credit_card",
+                Expense.amount > 0,
+                Expense.transaction_date.is_not(None),
+                Expense.card_last4 == card_last4,
+            ]
+            if date_from is not None:
+                tagged.append(Expense.transaction_date >= date_from)
+            if date_to is not None:
+                tagged.append(Expense.transaction_date <= date_to)
+            tagged_n = db.scalar(
+                select(func.count()).select_from(Expense).where(and_(*tagged))
+            ) or 0
+        if tagged_n > 0 or not lines:
+            db.commit()
+            raise ValueError("No transactions for that period")
 
     _propose_matches(
         db, lines, date_from=date_from, date_to=date_to, card_last4=card_last4
@@ -369,7 +400,98 @@ def create_session_from_upload(
     return session
 
 
+def _cc_match_fingerprint(lines: list[dict], apps: list[dict]) -> tuple:
+    line_sig = tuple(
+        (line.get("fingerprint"), line.get("status"), line.get("proposed_tx_id"))
+        for line in lines
+    )
+    app_sig = tuple((a.get("kind"), a.get("id"), a.get("status")) for a in apps)
+    return line_sig, app_sig
+
+
+def _merge_unmatched_cc_app(
+    db: Session,
+    *,
+    date_from: date | None,
+    date_to: date | None,
+    lines: list[dict],
+    previous_apps: list[dict],
+    card_last4: str | None,
+) -> list[dict]:
+    claimed = {
+        str(line["proposed_tx_id"])
+        for line in lines
+        if line.get("proposed_tx_id")
+    }
+    previous = {(a.get("kind"), str(a.get("id"))): a for a in previous_apps}
+    fresh = _unmatched_cc_app(
+        db,
+        date_from=date_from,
+        date_to=date_to,
+        matched_ids=claimed,
+        card_last4=card_last4,
+    )
+    out: list[dict] = []
+    seen: set[tuple] = set()
+    for row in fresh:
+        key = (row.get("kind"), str(row.get("id")))
+        prev = previous.get(key)
+        if prev and prev.get("status") in ("ignored", "included"):
+            out.append(prev)
+        else:
+            out.append(row)
+        seen.add(key)
+    for prev in previous_apps:
+        if prev.get("status") not in ("ignored", "included"):
+            continue
+        key = (prev.get("kind"), str(prev.get("id")))
+        if key not in seen:
+            out.append(prev)
+            seen.add(key)
+    return out
+
+
+def rematch_open_cc_session(
+    db: Session, session: CcReconcileSession, *, persist: bool = True
+) -> None:
+    if session.status != "in_progress":
+        return
+    lines = copy.deepcopy(list(session.lines_json or []))
+    apps = copy.deepcopy(list(session.unmatched_app_json or []))
+    before = _cc_match_fingerprint(lines, apps)
+    extra_used = {
+        str(app["id"])
+        for app in apps
+        if app.get("status") in ("ignored", "included") and app.get("id")
+    }
+    _propose_matches(
+        db,
+        lines,
+        date_from=session.statement_start_date,
+        date_to=session.statement_end_date,
+        card_last4=session.card_last4,
+        extra_used=extra_used,
+    )
+    apps = _merge_unmatched_cc_app(
+        db,
+        date_from=session.statement_start_date,
+        date_to=session.statement_end_date,
+        lines=lines,
+        previous_apps=apps,
+        card_last4=session.card_last4,
+    )
+    session.lines_json = lines
+    session.unmatched_app_json = apps
+    flag_modified(session, "lines_json")
+    flag_modified(session, "unmatched_app_json")
+    if persist and before != _cc_match_fingerprint(lines, apps):
+        db.add(session)
+        db.commit()
+        db.refresh(session)
+
+
 def session_summary(db: Session, session: CcReconcileSession) -> dict:
+    rematch_open_cc_session(db, session, persist=True)
     lines = list(session.lines_json or [])
     apps = list(session.unmatched_app_json or [])
     counts = {
@@ -392,7 +514,8 @@ def session_summary(db: Session, session: CcReconcileSession) -> dict:
     from app.services.holding import session_unassigned_count
 
     unassigned_count = session_unassigned_count(db, lines)
-    can_complete = unresolved_cc == 0 and unresolved_app == 0 and unassigned_count == 0
+    # Leftover "Not for this period" charges can wait; statement lines cannot.
+    can_complete = unresolved_cc == 0
 
     able_ids: set[UUID] = set()
     for line in lines:
@@ -450,6 +573,7 @@ def session_summary(db: Session, session: CcReconcileSession) -> dict:
 def apply_actions(db: Session, session: CcReconcileSession, actions: list[dict]) -> CcReconcileSession:
     if session.status != "in_progress":
         raise ValueError("Session is not in progress")
+    rematch_open_cc_session(db, session, persist=False)
     lines = {line["fingerprint"]: line for line in (session.lines_json or [])}
     apps = {f"{a['kind']}:{a['id']}": a for a in (session.unmatched_app_json or [])}
     now = datetime.now(timezone.utc)
@@ -524,9 +648,7 @@ def apply_actions(db: Session, session: CcReconcileSession, actions: list[dict])
             line = lines.get(fp)
             if not line:
                 raise ValueError(f"Unknown CC line {fp}")
-            from app.services.holding import UNASSIGNED_REVIEW_REASON, ensure_unassigned_holding
-
-            prop = ensure_unassigned_holding(db)
+            prop = require_real_property(db, action.get("property_id"))
             amount = Decimal(str(line["amount"]))
             tx_date = (
                 date.fromisoformat(line["transaction_date"])
@@ -551,9 +673,10 @@ def apply_actions(db: Session, session: CcReconcileSession, actions: list[dict])
                 card_last4=session.card_last4
                 if session.card_last4 and session.card_last4 != "unknown"
                 else None,
-                needs_review=True,
-                review_reasons=UNASSIGNED_REVIEW_REASON,
+                needs_review=False,
+                review_reasons=CREATED_FROM_VERIFICATION_REASON,
             )
+            stamp_created_from_verification(row)
             db.add(row)
             db.flush()
             line["status"] = "added"
@@ -603,12 +726,36 @@ def apply_actions(db: Session, session: CcReconcileSession, actions: list[dict])
     return session
 
 
+def _defer_unmatched_cc_leftover(db: Session, session: CcReconcileSession) -> None:
+    """Unfinished 'Not for this period' rows wait for the next cycle."""
+    until = session.statement_end_date or session.statement_start_date
+    if until is None:
+        return
+    apps = list(session.unmatched_app_json or [])
+    kept: list[dict] = []
+    for app in apps:
+        if app.get("status") != "unmatched":
+            kept.append(app)
+            continue
+        raw = app.get("id")
+        if not raw:
+            continue
+        try:
+            row = db.get(Expense, UUID(str(raw)))
+        except (TypeError, ValueError):
+            continue
+        if row is None or row.payment_method != "credit_card":
+            continue
+        row.cc_deferred_until = until
+    session.unmatched_app_json = kept
+    flag_modified(session, "unmatched_app_json")
+
+
 def complete_session(db: Session, session: CcReconcileSession) -> CcReconcileSession:
     summary = session_summary(db, session)
     if not summary["can_complete"]:
-        raise ValueError(
-            "Cannot complete: unresolved CC file lines or unpaid-by-card app rows remain"
-        )
+        raise ValueError("Cannot complete: unresolved CC file lines remain")
+    _defer_unmatched_cc_leftover(db, session)
     session.status = "completed"
     db.add(session)
     db.commit()

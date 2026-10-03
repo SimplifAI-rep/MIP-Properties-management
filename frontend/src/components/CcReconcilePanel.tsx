@@ -7,6 +7,7 @@ import { VerifyTransactionTable } from './VerifyTransactionTable';
 import { VerifyGroupSection, VerifyProgress, VerifySpinner } from './verifyGroups';
 import { ConfirmButton } from './ui/ConfirmButton';
 import { FileDropzone } from './ui/FileDropzone';
+import { OwnerPropertyFields } from './ui/OwnerPropertyFields';
 import { formatDate } from './ui/States';
 import { getUserErrorMessage } from '../utils/errors';
 import {
@@ -36,6 +37,8 @@ export function CcReconcilePanel() {
   const [selectedCardLast4, setSelectedCardLast4] = useState<string>('');
   const [pendingRowId, setPendingRowId] = useState<string | null>(null);
   const [pendingBulk, setPendingBulk] = useState<string | null>(null);
+  const [createOwnerId, setCreateOwnerId] = useState('');
+  const [createPropertyId, setCreatePropertyId] = useState('');
 
   // Follow the URL when it names a session. Do not clear state when the nav
   // link drops ?cc_session= — an in-progress card period still lives on the workspace.
@@ -75,6 +78,14 @@ export function CcReconcilePanel() {
     queryKey: ['cc-reconcile-session', sessionId],
     queryFn: () => api.getCcReconcileSession(sessionId!),
     enabled: Boolean(sessionId),
+  });
+  const propertiesQuery = useQuery({
+    queryKey: ['properties'],
+    queryFn: api.getProperties,
+  });
+  const ownersQuery = useQuery({
+    queryKey: ['owners'],
+    queryFn: api.getOwners,
   });
   const completedQuery = useQuery({
     queryKey: ['cc-reconcile-session', lastCompletedId],
@@ -272,10 +283,9 @@ export function CcReconcilePanel() {
   const counts = activeSession?.counts ?? {};
   const totalItems =
     LINE_STATUS_KEYS.reduce((sum, key) => sum + (counts[key] ?? 0), 0) +
-    (counts.app_unmatched ?? 0) +
     (counts.app_ignored ?? 0) +
     (counts.app_included ?? 0);
-  const remainingItems = (counts.unresolved_cc ?? 0) + (counts.unresolved_app ?? 0);
+  const remainingItems = counts.unresolved_cc ?? 0;
   const handledItems = Math.max(0, totalItems - remainingItems);
 
   function runActions(
@@ -317,16 +327,21 @@ export function CcReconcilePanel() {
   }
 
   function addFromCc(fingerprint: string) {
-    runActions(null, fingerprint, [{ action: 'add_from_cc', fingerprint }]);
+    if (!createPropertyId) return;
+    runActions(null, fingerprint, [
+      { action: 'add_from_cc', fingerprint, property_id: createPropertyId },
+    ]);
   }
 
   function createAllFromCc() {
+    if (!createPropertyId) return;
     runActions(
       'create-cc',
       null,
       notInBankLines.map((line) => ({
         action: 'add_from_cc' as const,
         fingerprint: line.fingerprint,
+        property_id: createPropertyId,
       })),
     );
   }
@@ -414,7 +429,7 @@ export function CcReconcilePanel() {
             <button
               type="button"
               className="btn-secondary text-xs"
-              disabled={busy || Boolean(activeSession)}
+              disabled={busy}
               onClick={() => selectCard('__new__')}
             >
               Another card
@@ -487,7 +502,7 @@ export function CcReconcilePanel() {
 
           <VerifyGroupSection
             title="Not for this period"
-            subtitle="In the app, but not on this card statement. Keep in this period if it should count now. Push if the money has not left the bank yet — you can match it to a bank statement next cycle."
+            subtitle="In the app, but not on this card statement. Keep in this period if it should count now. Push if the money has not left the bank yet. Leftover can wait — you can still finish."
             count={notInExcelTxs.length}
             tone="warn"
             defaultOpen
@@ -602,7 +617,7 @@ export function CcReconcilePanel() {
                   <ConfirmButton
                     label={`Create all (${notInBankLines.length})`}
                     confirmLabel={`Create ${notInBankLines.length}`}
-                    disabled={busy}
+                    disabled={busy || !createPropertyId}
                     pending={pendingBulk === 'create-cc'}
                     onConfirm={createAllFromCc}
                   />
@@ -617,6 +632,22 @@ export function CcReconcilePanel() {
               ) : null
             }
           >
+            <div className="mb-3 grid gap-3 sm:grid-cols-2">
+              <OwnerPropertyFields
+                owners={ownersQuery.data ?? []}
+                properties={propertiesQuery.data ?? []}
+                ownerId={createOwnerId}
+                propertyId={createPropertyId}
+                onChange={(next) => {
+                  setCreateOwnerId(next.ownerId);
+                  setCreatePropertyId(next.propertyId);
+                }}
+              />
+            </div>
+            <p className="mb-3 text-xs muted-text">
+              Choose owner and property before Create. Those rows are tagged so you can
+              filter them on Transactions.
+            </p>
             <VerifyTransactionTable
               rows={draftTxs}
               pendingRowId={pendingRowId}
@@ -628,7 +659,7 @@ export function CcReconcilePanel() {
                     <button
                       type="button"
                       className="btn-primary text-xs"
-                      disabled={busy}
+                      disabled={busy || !createPropertyId}
                       onClick={() => addFromCc(line.fingerprint)}
                     >
                       Create
@@ -654,7 +685,9 @@ export function CcReconcilePanel() {
               </p>
             ) : (
               <p className="text-sm text-emerald-700 dark:text-emerald-300">
-                Everything is handled — ready to finish.
+                {pendingMissingCount > 0
+                  ? 'Leftover card charges can wait — ready to finish.'
+                  : 'Everything is handled — ready to finish.'}
               </p>
             )}
             <button

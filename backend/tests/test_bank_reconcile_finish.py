@@ -150,3 +150,37 @@ def test_finish_allowed_within_one_agora(client, db):
     ).json()
     assert Decimal(body["gap_verified"]) == Decimal("0.01")
     assert body["can_complete"] is True
+
+
+def test_finish_auto_defers_leftover_card_charges(client, db):
+    expense = _matched_expense(db)
+    leftover = Expense(
+        property_id=PROPERTY_ROTHSCHILD_ID,
+        transaction_date=date(2026, 7, 20),
+        amount=Decimal("80.00"),
+        category="utilities",
+        source="credit_card",
+        payment_method="credit_card",
+        vendor_name="Partial card cycle",
+        description="Partial card cycle",
+        cc_verified_at=datetime.now(timezone.utc),
+    )
+    db.add(leftover)
+    db.commit()
+    db.refresh(leftover)
+    session = _session(db, expense=expense, closing="50.00")
+
+    body = client.get(
+        f"/api/v1/bank-settings/reconcile/sessions/{session.id}"
+    ).json()
+    leftover_ids = {str(row["id"]) for row in body.get("leftover_cc_txs") or []}
+    assert str(leftover.id) in leftover_ids
+    assert body["can_complete"] is True
+
+    completed = client.post(
+        f"/api/v1/bank-settings/reconcile/sessions/{session.id}/complete"
+    )
+    assert completed.status_code == 200, completed.text
+    db.refresh(leftover)
+    assert leftover.cc_deferred_until == date(2026, 7, 31)
+    assert leftover.cc_bank_confirmed_at is None

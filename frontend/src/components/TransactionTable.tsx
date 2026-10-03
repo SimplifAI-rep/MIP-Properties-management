@@ -66,6 +66,11 @@ export function TransactionTypeBadges({
           <span className="badge-payback">Payback</span>
         </Tooltip>
       ) : null}
+      {row.client_prop_id === 'AWAITING' ? (
+        <Tooltip content="Parked until the money comes back or you write it off to Buffer.">
+          <span className="badge-neutral">Awaiting return</span>
+        </Tooltip>
+      ) : null}
       {row.bank_verified_at ? (
         <Tooltip
           content={
@@ -118,6 +123,14 @@ export function TransactionTypeBadges({
       {row.from_bank_statement ? (
         <Tooltip content="Imported from the company bank statement.">
           <span className="badge-bank-statement">Bank statement</span>
+        </Tooltip>
+      ) : null}
+      {(row.review_reasons || '')
+        .split(',')
+        .map((part) => part.trim())
+        .includes('created_from_verification') ? (
+        <Tooltip content="Created from a bank or card statement during verification.">
+          <span className="badge-neutral">From verification</span>
         </Tooltip>
       ) : null}
     </div>

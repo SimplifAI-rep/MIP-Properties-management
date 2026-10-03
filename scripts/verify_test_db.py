@@ -177,12 +177,14 @@ def main() -> int:
         check("gap is zero", after["gap_verified"] in ("0", "0.00", "0.0"), True)
         check("can finish bank lists", after["can_complete"], True)
 
-        print("5. Card 3848 has no pending charges in its window")
+        print("5. Card 3848 opens for Create when it has no matching app charges")
         card2 = upload(client, CC_URL, CARD2_XLSX)
-        check("card2 upload status", card2.status_code, 400)
+        check("card2 upload status", card2.status_code, 200)
+        card2_session = card2.json()
+        check("card2 last4", card2_session.get("card_last4"), "3848")
         check(
-            "card2 ignored",
-            "No transactions for that period" in str(card2.json().get("detail", "")),
+            "card2 is statement-only",
+            all(row["status"] == "unmatched" for row in card2_session.get("lines") or []),
             True,
         )
 

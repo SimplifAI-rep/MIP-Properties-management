@@ -24,6 +24,7 @@ import {
 } from '../components/ui/TransactionFilterFields';
 import { Tooltip } from '../components/ui/Tooltip';
 import { OwnerPropertyFields } from '../components/ui/OwnerPropertyFields';
+import { ConfirmButton } from '../components/ui/ConfirmButton';
 import { TransactionAttachmentsField } from '../components/ui/TransactionAttachmentsField';
 import { PaidWithSelect } from '../components/ui/PaidWithSelect';
 import { TransactionUploadPanel } from '../components/TransactionUploadPanel';
@@ -64,7 +65,8 @@ type TypeFilterKind =
   | 'he_she_paid'
   | 'owner_paid'
   | 'bank_statement'
-  | 'nearly_cc';
+  | 'nearly_cc'
+  | 'created_from_verification';
 type AlertFilterKind = 'incomplete_import';
 type PropertyStatusFilter = 'active' | 'inactive';
 
@@ -103,6 +105,12 @@ function rowTypeTags(row: UnifiedTransaction): TypeFilterKind[] {
   }
   if (row.from_bank_statement) tags.push('bank_statement');
   if (row.ledger_column === 'nearly_cc') tags.push('nearly_cc');
+  if ((row.review_reasons || '')
+    .split(',')
+    .map((part) => part.trim())
+    .includes('created_from_verification')) {
+    tags.push('created_from_verification');
+  }
   return tags;
 }
 
@@ -338,6 +346,7 @@ export function TransactionsPage() {
     kinds.includes('deposit') ||
     kinds.includes('rental_income') ||
     kinds.includes('bank_statement') ||
+    kinds.includes('created_from_verification') ||
     alertFilters.includes('incomplete_import');
   const includeExpenses =
     kinds.length === 0 ||
@@ -346,10 +355,15 @@ export function TransactionsPage() {
     kinds.includes('owner_paid') ||
     kinds.includes('bank_statement') ||
     kinds.includes('nearly_cc') ||
+    kinds.includes('created_from_verification') ||
     alertFilters.includes('incomplete_import');
 
   const singleSourceFile = sourceFiles.length === 1 ? sourceFiles[0] : undefined;
   const needsReviewOnly = alertFilters.includes('incomplete_import') ? true : undefined;
+  const reviewReasonFilter =
+    kinds.length === 1 && kinds[0] === 'created_from_verification'
+      ? 'created_from_verification'
+      : undefined;
 
   // Server-page when only one stream is needed and multi-value client-only filters are idle.
   const useServerPaging =
@@ -382,6 +396,7 @@ export function TransactionsPage() {
     ...sharedFilters,
     source_file: singleSourceFile,
     needs_review: needsReviewOnly,
+    review_reason: reviewReasonFilter,
   });
 
   const {
@@ -602,6 +617,25 @@ export function TransactionsPage() {
     onError: (error: Error) => setEditError(error),
   });
 
+  const writeOffAwaitingMutation = useMutation({
+    mutationFn: async (row: UnifiedTransaction) => {
+      if (row.kind === 'expense') return api.writeOffExpenseToBuffer(row.id);
+      return api.writeOffDepositToBuffer(row.id);
+    },
+    onSuccess: () => {
+      invalidateTransactionData(queryClient);
+    },
+    onError: (error: Error) => setEditError(error),
+  });
+
+  const recordAwaitingReturnMutation = useMutation({
+    mutationFn: (id: string) => api.recordExpenseReturn(id),
+    onSuccess: () => {
+      invalidateTransactionData(queryClient);
+    },
+    onError: (error: Error) => setEditError(error),
+  });
+
   const typeOptions = useMemo(
     () => [
       { value: 'deposit', label: 'Deposit (Inflow)' },
@@ -611,6 +645,7 @@ export function TransactionsPage() {
       { value: 'owner_paid', label: 'Owner paid' },
       { value: 'bank_statement', label: 'Bank statement' },
       { value: 'nearly_cc', label: 'Nearly CC' },
+      { value: 'created_from_verification', label: 'Created from verification' },
     ],
     [],
   );
@@ -1679,7 +1714,7 @@ export function TransactionsPage() {
               />
               <SearchableMultiSelect
                 label="Type"
-                tip="Deposit/Expense match Excel Inflow/Amount. Rental, He/She, Owner paid, Bank statement, and Nearly CC are separate lanes you can filter."
+                tip="Deposit/Expense match Excel Inflow/Amount. Rental, He/She, Owner paid, Bank statement, Nearly CC, and Created from verification are separate lanes you can filter."
                 options={typeOptions}
                 selected={kinds}
                 onChange={(next) => {
@@ -1749,7 +1784,7 @@ export function TransactionsPage() {
       <section className="panel overflow-hidden">
         <div className="w-full min-w-0">
           <table className="table-shell">
-            <TransactionTableColgroup />
+            <TransactionTableColgroup actionsColWidth="w-[12%]" />
             <TransactionTableHeader />
             <tbody>
               {items.map((row) => {
@@ -1791,24 +1826,60 @@ export function TransactionsPage() {
                                 </button>
                               </Tooltip>
                             ) : (
-                              <Tooltip content="Edit" hideHint>
-                                <button
-                                  type="button"
-                                  className="btn-icon"
-                                  onClick={() => openEdit(row)}
-                                  aria-label="Edit transaction"
-                                >
-                                  <svg
-                                    xmlns="http://www.w3.org/2000/svg"
-                                    viewBox="0 0 20 20"
-                                    fill="currentColor"
-                                    className="h-4 w-4"
-                                    aria-hidden="true"
+                              <>
+                                <Tooltip content="Edit" hideHint>
+                                  <button
+                                    type="button"
+                                    className="btn-icon"
+                                    onClick={() => openEdit(row)}
+                                    aria-label="Edit transaction"
                                   >
-                                    <path d="m2.695 14.762-1.262 3.155a.5.5 0 0 0 .65.65l3.155-1.262a4 4 0 0 0 1.343-.886L17.5 5.501a2.121 2.121 0 0 0-3-3L3.58 13.419a4 4 0 0 0-.885 1.343Z" />
-                                  </svg>
-                                </button>
-                              </Tooltip>
+                                    <svg
+                                      xmlns="http://www.w3.org/2000/svg"
+                                      viewBox="0 0 20 20"
+                                      fill="currentColor"
+                                      className="h-4 w-4"
+                                      aria-hidden="true"
+                                    >
+                                      <path d="m2.695 14.762-1.262 3.155a.5.5 0 0 0 .65.65l3.155-1.262a4 4 0 0 0 1.343-.886L17.5 5.501a2.121 2.121 0 0 0-3-3L3.58 13.419a4 4 0 0 0-.885 1.343Z" />
+                                    </svg>
+                                  </button>
+                                </Tooltip>
+                                {row.client_prop_id === 'AWAITING' ? (
+                                  <>
+                                    <ConfirmButton
+                                      label="Write off to Buffer"
+                                      confirmLabel="Write off"
+                                      disabled={
+                                        writeOffAwaitingMutation.isPending ||
+                                        recordAwaitingReturnMutation.isPending
+                                      }
+                                      pending={
+                                        writeOffAwaitingMutation.isPending &&
+                                        writeOffAwaitingMutation.variables?.id === row.id
+                                      }
+                                      onConfirm={() => writeOffAwaitingMutation.mutate(row)}
+                                    />
+                                    {row.kind === 'expense' ? (
+                                      <ConfirmButton
+                                        label="Record return"
+                                        confirmLabel="Record"
+                                        disabled={
+                                          writeOffAwaitingMutation.isPending ||
+                                          recordAwaitingReturnMutation.isPending
+                                        }
+                                        pending={
+                                          recordAwaitingReturnMutation.isPending &&
+                                          recordAwaitingReturnMutation.variables === row.id
+                                        }
+                                        onConfirm={() =>
+                                          recordAwaitingReturnMutation.mutate(row.id)
+                                        }
+                                      />
+                                    ) : null}
+                                  </>
+                                ) : null}
+                              </>
                             )}
                             <Tooltip content="Feedback" hideHint>
                               <button
@@ -1850,7 +1921,6 @@ export function TransactionsPage() {
                                 properties={properties}
                                 ownerId={editForm.owner_id}
                                 propertyId={editForm.property_id}
-                                excludeUnassigned={false}
                                 onChange={(next) =>
                                   patchEdit({
                                     owner_id: next.ownerId,

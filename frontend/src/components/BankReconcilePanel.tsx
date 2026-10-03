@@ -48,16 +48,25 @@ function isCaughtUpMessage(message: string): boolean {
 function mergeCandidateLabel(candidate: BankReconcileNearMiss): string {
   const when = formatDate(candidate.transaction_date);
   const amount = formatCurrency(candidate.amount);
+  const tag = candidate.reasons.find((reason) => reason.includes('mis-tag'));
+  if (tag) {
+    const short = tag.replace(' — possible mis-tag', '');
+    return `${when} ${amount} · ${short}`;
+  }
   return candidate.reasons.length ? `${when} ${amount} · close` : `${when} ${amount}`;
 }
 
-function leftoverHint(row: {
-  leftover_reason?: string | null;
-  near_misses?: BankReconcileNearMiss[];
-}): string | null {
+function leftoverHint(
+  row: {
+    leftover_reason?: string | null;
+    near_misses?: BankReconcileNearMiss[];
+  },
+  lookingAt: 'bank' | 'app' = 'bank',
+): string | null {
   const miss = row.near_misses?.[0];
   if (miss) {
-    return `Close to bank ${formatCurrency(miss.amount)} on ${formatDate(miss.transaction_date)}: ${miss.reasons.join('; ')}`;
+    const target = lookingAt === 'app' ? 'app' : 'bank';
+    return `Close to ${target} ${formatCurrency(miss.amount)} on ${formatDate(miss.transaction_date)}: ${miss.reasons.join('; ')}`;
   }
   return row.leftover_reason ?? null;
 }
@@ -130,6 +139,8 @@ export function BankReconcilePanel() {
   const [editCardLast4, setEditCardLast4] = useState<string | null>(null);
   const [editIsPayback, setEditIsPayback] = useState(false);
   const [editPaybackExpenseId, setEditPaybackExpenseId] = useState('');
+  const [createOwnerId, setCreateOwnerId] = useState('');
+  const [createPropertyId, setCreatePropertyId] = useState('');
 
   // Follow the URL when it names a session. Do not clear state when the nav
   // link drops ?session= — an in-progress period still lives on the workspace.
@@ -530,10 +541,12 @@ export function BankReconcilePanel() {
   }
 
   function addFromBank(fingerprint: string, isPayback = false) {
+    if (!createPropertyId) return;
     runActions(null, fingerprint, [
       {
         action: 'add_from_bank',
         fingerprint,
+        property_id: createPropertyId,
         ...(isPayback ? { is_payback: true } : {}),
       },
     ]);
@@ -555,12 +568,14 @@ export function BankReconcilePanel() {
   }
 
   function createAllFromBank() {
+    if (!createPropertyId) return;
     runActions(
       'create-bank',
       null,
       notInBankLines.map((line) => ({
         action: 'add_from_bank' as const,
         fingerprint: line.fingerprint,
+        property_id: createPropertyId,
       })),
     );
   }
@@ -648,12 +663,6 @@ export function BankReconcilePanel() {
   if (activeSession && !activeSession.can_complete) {
     if (remainingItems > 0) {
       completeBlockers.push(`Still ${remainingItems} to handle`);
-    }
-    const unassigned = activeSession.counts?.unassigned ?? 0;
-    if (unassigned > 0) {
-      completeBlockers.push(
-        `${unassigned} still on Needs assignment — pick a real owner and property`,
-      );
     }
     if (gapOff) {
       completeBlockers.push(finishGapCopy(activeSession.gap_verified));
@@ -764,8 +773,7 @@ export function BankReconcilePanel() {
                 {formatCurrency(editingAdded.amount)}
               </p>
               <p className="mt-1 text-xs muted-text">
-                Bank-created rows start on Needs assignment. Pick the real owner and
-                property, then fill the rest before finishing.
+                Change the owner or property if this landed on the wrong one, then fill the rest.
               </p>
               <div className="mt-3 grid gap-3 sm:grid-cols-2">
                 <OwnerPropertyFields
@@ -773,7 +781,6 @@ export function BankReconcilePanel() {
                   properties={propertiesQuery.data ?? []}
                   ownerId={editOwnerId}
                   propertyId={editPropertyId}
-                  excludeUnassigned={false}
                   onChange={(next) => {
                     setEditOwnerId(next.ownerId);
                     setEditPropertyId(next.propertyId);
@@ -930,7 +937,7 @@ export function BankReconcilePanel() {
 
           <VerifyGroupSection
             title="On the statement, not in the app"
-            subtitle="Create, Merge, or Ignore"
+            subtitle="Create, Merge, or Ignore. Merge also searches He/She, rental, owner-paid, and card tags in case the row was tagged wrong."
             count={draftTxs.length}
             tone="warn"
             defaultOpen
@@ -941,7 +948,7 @@ export function BankReconcilePanel() {
                   <ConfirmButton
                     label={`Create all (${notInBankLines.length})`}
                     confirmLabel={`Create ${notInBankLines.length}`}
-                    disabled={busy}
+                    disabled={busy || !createPropertyId}
                     pending={pendingBulk === 'create-bank'}
                     onConfirm={createAllFromBank}
                   />
@@ -956,6 +963,22 @@ export function BankReconcilePanel() {
               ) : null
             }
           >
+            <div className="mb-3 grid gap-3 sm:grid-cols-2">
+              <OwnerPropertyFields
+                owners={ownersQuery.data ?? []}
+                properties={propertiesQuery.data ?? []}
+                ownerId={createOwnerId}
+                propertyId={createPropertyId}
+                onChange={(next) => {
+                  setCreateOwnerId(next.ownerId);
+                  setCreatePropertyId(next.propertyId);
+                }}
+              />
+            </div>
+            <p className="mb-3 text-xs muted-text">
+              Choose owner and property before Create. Those rows are tagged so you can
+              filter them on Transactions.
+            </p>
             <VerifyTransactionTable
               rows={draftTxs}
               pendingRowId={pendingRowId}
@@ -976,12 +999,13 @@ export function BankReconcilePanel() {
                         ]
                       : [],
                 );
+                const tagHint = leftoverHint(line, 'app');
                 return (
                   <>
                     <button
                       type="button"
                       className="btn-primary text-xs"
-                      disabled={busy}
+                      disabled={busy || !createPropertyId}
                       onClick={() => addFromBank(line.fingerprint)}
                     >
                       Create
@@ -990,7 +1014,7 @@ export function BankReconcilePanel() {
                       <button
                         type="button"
                         className="btn-secondary text-xs"
-                        disabled={busy}
+                        disabled={busy || !createPropertyId}
                         onClick={() => addFromBank(line.fingerprint, true)}
                       >
                         Create payback
@@ -1017,6 +1041,11 @@ export function BankReconcilePanel() {
                     >
                       Ignore
                     </button>
+                    {tagHint ? (
+                      <span className="block max-w-[16rem] text-[11px] leading-snug muted-text">
+                        {tagHint}
+                      </span>
+                    ) : null}
                   </>
                 );
               }}
@@ -1112,7 +1141,7 @@ export function BankReconcilePanel() {
           {leftoverCcTxs.length > 0 ? (
             <VerifyGroupSection
               title="Card charges not in this payment"
-              subtitle="In the app, but the money has not left the bank as a card payment this period. Keep in this period if it should count now. Push to wait and match it to a bank statement next time."
+              subtitle="In the app, but the money has not left the bank as a card payment this period. Keep in this period if it should count now. Push to wait and match it to a bank statement next time. Leftover can wait — you can still finish."
               count={leftoverCcTxs.length}
               tone="warn"
               defaultOpen
@@ -1248,7 +1277,9 @@ export function BankReconcilePanel() {
               </p>
             ) : (
               <p className="text-sm text-emerald-700 dark:text-emerald-300">
-                Everything is handled — ready to finish.
+                {pendingLeftoverCcTxs.length > 0
+                  ? 'Leftover card charges can wait — ready to finish.'
+                  : 'Everything is handled — ready to finish.'}
               </p>
             )}
             <button

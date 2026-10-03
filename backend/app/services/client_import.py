@@ -352,9 +352,6 @@ class ClientDataImportService:
     ) -> ImportStats:
         self._load_existing_keys()
         self._ensure_company_owner_and_buffer()
-        from app.services.holding import ensure_unassigned_holding
-
-        ensure_unassigned_holding(self.db)
         self._report("Importing client list…")
         self._import_client_list()
         self._checkpoint()
@@ -375,12 +372,15 @@ class ClientDataImportService:
         return self.stats
 
     def _apply_property_active_status(self) -> None:
-        """Mark current-client properties active; everything else inactive (except BUFFER)."""
+        """Mark current-client properties active; everything else inactive (except BUFFER and Awaiting return)."""
         active_ids: list[str] = []
         inactive_ids: list[str] = []
+        from app.services.holding import AWAITING_RETURN_PROP_ID, BUFFER_PROP_ID as HOLDING_BUFFER
+
+        holding_ids = {HOLDING_BUFFER, AWAITING_RETURN_PROP_ID}
         for prop in self.db.scalars(select(Property).order_by(Property.client_prop_id)).all():
             previous = (prop.status or "").strip().lower()
-            if prop.client_prop_id == BUFFER_PROP_ID or prop.client_prop_id in self.current_client_ids:
+            if prop.client_prop_id in holding_ids or prop.client_prop_id in self.current_client_ids:
                 next_status = "active"
             else:
                 next_status = "inactive"
@@ -676,35 +676,16 @@ class ClientDataImportService:
         )
 
     def _ensure_company_owner_and_buffer(self) -> None:
-        owner = self.db.scalars(
-            select(Owner).where(Owner.name == COMPANY_OWNER_NAME)
-        ).first()
-        if not owner:
-            owner = Owner(name=COMPANY_OWNER_NAME)
-            self.db.add(owner)
-            self.db.flush()
-            self.stats.owners_created += 1
+        from app.services.holding import (
+            AWAITING_RETURN_PROP_ID,
+            ensure_company_holdings,
+        )
 
-        buffer = self.properties_by_id.get(BUFFER_PROP_ID)
-        if not buffer:
-            buffer = self.db.scalars(
-                select(Property).where(Property.client_prop_id == BUFFER_PROP_ID)
-            ).first()
-        if not buffer:
-            buffer = Property(
-                owner_id=owner.id,
-                client_prop_id=BUFFER_PROP_ID,
-                name="MIP Company Buffer",
-                address="Company float / unallocated",
-                city=None,
-                status="active",
-            )
-            self.db.add(buffer)
-            self.db.flush()
-            self.stats.properties_created += 1
-
+        buffer, awaiting = ensure_company_holdings(self.db)
         self.properties_by_id[BUFFER_PROP_ID] = buffer
         self.alias_to_prop[BUFFER_PROP_ID] = BUFFER_PROP_ID
+        self.properties_by_id[AWAITING_RETURN_PROP_ID] = awaiting
+        self.alias_to_prop[AWAITING_RETURN_PROP_ID] = AWAITING_RETURN_PROP_ID
 
         account = self.db.scalars(
             select(BankAccount).where(BankAccount.account_number == COMPANY_ACCOUNT_NUMBER)

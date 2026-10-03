@@ -393,6 +393,11 @@ class ExpenseRead(BaseModel):
     cc_deferred_until: date | None = None
 
 
+class AwaitingReturnRead(BaseModel):
+    expense: ExpenseRead
+    return_deposit: DepositRead
+
+
 class ExpenseCreate(BaseModel):
     property_id: UUID
     transaction_date: date
@@ -526,6 +531,7 @@ class AlertRead(BaseModel):
         "bank_gap",
         "cc_unmatched",
         "cc_app_unmatched",
+        "unverified_stale",
     ]
     severity: Literal["error", "warning", "info"]
     title: str

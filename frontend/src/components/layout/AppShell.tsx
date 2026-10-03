@@ -8,7 +8,6 @@ import { FeedbackProvider, useFeedback } from '../../context/FeedbackContext';
 import { useTheme } from '../../context/ThemeContext';
 import { Tooltip } from '../ui/Tooltip';
 import { prefetchTransactionsData } from '../../utils/prefetchTransactions';
-import { UNASSIGNED_CLIENT_PROP_ID } from '../ui/OwnerPropertyFields';
 
 const navItems = [
   { to: '/', label: 'Dashboard', end: true },
@@ -17,7 +16,6 @@ const navItems = [
   { to: '/transactions', label: 'Transactions' },
   { to: '/verification', label: 'Verification', showOpenVerification: true },
   { to: '/next-cycle', label: 'Next cycle' },
-  { to: '/unassigned', label: 'Unassigned', showUnassignedCount: true },
   { to: '/credit-cards', label: 'Credit cards' },
   { to: '/alerts', label: 'Alerts', showCount: true },
   { to: '/reports', label: 'Reports' },
@@ -39,28 +37,6 @@ function AppShellInner() {
     refetchInterval: 60_000,
   });
   const openAlerts = alertSummaryQuery.data?.open_count ?? 0;
-  const unassignedCountQuery = useQuery({
-    queryKey: ['unassigned-count'],
-    queryFn: async () => {
-      const [expenses, deposits] = await Promise.all([
-        api.getExpenses({
-          client_prop_id: UNASSIGNED_CLIENT_PROP_ID,
-          include_running_balance: false,
-          page: 1,
-          page_size: 1,
-        }),
-        api.getDeposits({
-          client_prop_id: UNASSIGNED_CLIENT_PROP_ID,
-          include_running_balance: false,
-          page: 1,
-          page_size: 1,
-        }),
-      ]);
-      return (expenses.total ?? 0) + (deposits.total ?? 0);
-    },
-    refetchInterval: 60_000,
-  });
-  const unassignedCount = unassignedCountQuery.data ?? 0;
   const workspaceQuery = useQuery({
     queryKey: ['verification-workspace'],
     queryFn: () => api.getVerificationWorkspace(),
@@ -106,11 +82,6 @@ function AppShellInner() {
               {item.showCount && openAlerts > 0 ? (
                 <span className="ml-2 rounded-full bg-rose-500 px-2 py-0.5 text-xs text-white dark:bg-rose-600">
                   {openAlerts}
-                </span>
-              ) : null}
-              {item.showUnassignedCount && unassignedCount > 0 ? (
-                <span className="ml-2 rounded-full bg-amber-500 px-2 py-0.5 text-xs text-white dark:bg-amber-600">
-                  {unassignedCount}
                 </span>
               ) : null}
               {item.showOpenVerification && periodOpen ? (

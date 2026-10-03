@@ -11,24 +11,24 @@ Agreed list from the Oct 2026 meeting. Check a box when that piece is done.
 
 ## Phase 2 — Remove Unassigned; create + tag; re-match
 
-- [ ] 5. Remove Unassigned property and tab
-- [ ] 5. Create-from-verification requires a real owner/property and a filterable tag
-- [ ] 5. Manual add on Transactions is picked up when returning to Verification
-- [ ] 3. Finish stays blocked while unmatched suggestions remain
+- [x] 5. Remove Unassigned property and tab
+- [x] 5. Create-from-verification requires a real owner/property and a filterable tag
+- [x] 5. Manual add on Transactions is picked up when returning to Verification
+- [x] 3. Finish stays blocked while unmatched suggestions remain
 
 ## Phase 3 — Wrong-tag near-miss
 
-- [ ] 1. Unmatched bank lines search He/She, rental, owner-paid, card, and other excluded tags
+- [x] 1. Unmatched bank lines search He/She, rental, owner-paid, card, and other excluded tags
 
 ## Phase 4 — Partial card cycle
 
-- [ ] 2. Audit leftover / Keep / Push / other-card empty window; fix gaps only
+- [x] 2. Audit leftover / Keep / Push / other-card empty window; fix gaps only
 
 ## Phase 5 — Awaiting-return property
 
-- [ ] 4+6. Seed Awaiting return property; does not lock finish; later Buffer or return record
+- [x] 4+6. Seed Awaiting return property; does not lock finish; later Buffer or return record
 
 ## Phase 6 — Alerts and go-live
 
-- [ ] 8. Alert when unverified longer than one month
-- [ ] 7. Go-live mark-all-verified from current Excel
+- [x] 8. Alert when unverified longer than one month
+- [x] 7. Go-live mark-all-verified from current Excel

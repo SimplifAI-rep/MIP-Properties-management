@@ -94,6 +94,7 @@ def list_deposits(
     max_amount: Decimal | None = None,
     source_file: str | None = None,
     needs_review: bool | None = None,
+    review_reason: str | None = None,
     is_rental_income: bool | None = None,
     page: int = 1,
     page_size: int = 50,
@@ -130,6 +131,7 @@ def list_deposits(
         max_amount=max_amount,
         source_file=source_file,
         needs_review=needs_review,
+        review_reason=review_reason,
         is_rental_income=is_rental_income,
     )
 
@@ -465,7 +467,11 @@ def update_deposit(db: Session, deposit_id: UUID, payload: DepositUpdate) -> Dep
             payback_of_expense_id=next_link,
         )
 
-    from app.services.holding import UNASSIGNED_PROP_ID, clear_unassigned_review
+    from app.services.holding import (
+        UNASSIGNED_PROP_ID,
+        clear_unassigned_review,
+        keep_created_from_verification,
+    )
 
     clear_unassigned_review(deposit, property_row)
     if (
@@ -477,7 +483,7 @@ def update_deposit(db: Session, deposit_id: UUID, payload: DepositUpdate) -> Dep
         and not (deposit.review_reasons or "")
     ):
         deposit.needs_review = False
-        deposit.review_reasons = None
+        deposit.review_reasons = keep_created_from_verification(deposit.review_reasons)
 
     db.commit()
     db.refresh(deposit)

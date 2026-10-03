@@ -45,6 +45,7 @@ OWNER_HOUSE = uuid.UUID("a1000000-0000-4000-8000-000000000003")
 PROP_ROTHSCHILD = uuid.UUID("b1000000-0000-4000-8000-000000000001")
 PROP_DIZENGOFF = uuid.UUID("b1000000-0000-4000-8000-000000000002")
 PROP_HERZL = uuid.UUID("b1000000-0000-4000-8000-000000000003")
+# BUFFER / AWAITING are seeded by init_db; this placeholder is remapped at runtime.
 PROP_BUFFER = uuid.UUID("b1000000-0000-4000-8000-0000000000ff")
 
 # Last verification cut-off: the May period below ends here, so uploading the
@@ -294,18 +295,22 @@ def main() -> int:
                     city="Haifa",
                     status="active",
                 ),
-                Property(
-                    id=PROP_BUFFER,
-                    owner_id=OWNER_HOUSE,
-                    client_prop_id="BUFFER",
-                    name="Buffer (unassigned)",
-                    address="-",
-                    city="-",
-                    status="active",
-                ),
             ]
         )
         db.flush()
+        from sqlalchemy import select as sa_select
+        from app.services.holding import AWAITING_RETURN_PROP_ID, BUFFER_PROP_ID
+
+        buffer = db.scalars(
+            sa_select(Property).where(Property.client_prop_id == BUFFER_PROP_ID)
+        ).one()
+        awaiting = db.scalars(
+            sa_select(Property).where(Property.client_prop_id == AWAITING_RETURN_PROP_ID)
+        ).one()
+        assert awaiting.client_prop_id == AWAITING_RETURN_PROP_ID
+
+        def resolve_prop(uid: uuid.UUID) -> uuid.UUID:
+            return buffer.id if uid == PROP_BUFFER else uid
 
         ops = BankAccount(
             property_id=None,
@@ -342,7 +347,7 @@ def main() -> int:
             ("2026-05-21", "230.00", "Fuel", PROP_BUFFER),
         ):
             row = Expense(
-                property_id=prop,
+                property_id=resolve_prop(prop),
                 transaction_date=date.fromisoformat(when),
                 amount=Decimal(amount),
                 category="maintenance",
@@ -410,7 +415,7 @@ def main() -> int:
             if side == "credit":
                 row: Deposit | Expense = Deposit(
                     bank_account_id=ops.id,
-                    property_id=prop,
+                    property_id=resolve_prop(prop),
                     transaction_date=date.fromisoformat(when),
                     amount=Decimal(amount),
                     reference=asmachta,
@@ -422,7 +427,7 @@ def main() -> int:
                 kind = "deposit"
             else:
                 row = Expense(
-                    property_id=prop,
+                    property_id=resolve_prop(prop),
                     transaction_date=date.fromisoformat(when),
                     amount=Decimal(amount),
                     category="maintenance",
@@ -552,7 +557,7 @@ def main() -> int:
                 db.add(
                     Deposit(
                         bank_account_id=ops.id,
-                        property_id=prop,
+                        property_id=resolve_prop(prop),
                         transaction_date=when,
                         amount=value,
                         reference=asmachta,
@@ -563,7 +568,7 @@ def main() -> int:
             else:
                 db.add(
                     Expense(
-                        property_id=prop,
+                        property_id=resolve_prop(prop),
                         transaction_date=when,
                         amount=value,
                         category="maintenance",
@@ -580,7 +585,7 @@ def main() -> int:
                 db.add(
                     Deposit(
                         bank_account_id=ops.id,
-                        property_id=prop,
+                        property_id=resolve_prop(prop),
                         transaction_date=date.fromisoformat(when),
                         amount=Decimal(amount),
                         description=label,
@@ -590,7 +595,7 @@ def main() -> int:
             else:
                 db.add(
                     Expense(
-                        property_id=prop,
+                        property_id=resolve_prop(prop),
                         transaction_date=date.fromisoformat(when),
                         amount=Decimal(amount),
                         category="maintenance",
@@ -605,7 +610,7 @@ def main() -> int:
             line = pick_card_line(cards[last4]["lines"], when, amount)
             db.add(
                 Expense(
-                    property_id=prop,
+                    property_id=resolve_prop(prop),
                     transaction_date=date.fromisoformat(when),
                     amount=Decimal(str(line["amount"])),
                     category="maintenance",
@@ -620,7 +625,7 @@ def main() -> int:
         for last4, when, amount, prop, label in CARD_APP_ONLY:
             db.add(
                 Expense(
-                    property_id=prop,
+                    property_id=resolve_prop(prop),
                     transaction_date=date.fromisoformat(when),
                     amount=Decimal(amount),
                     category="maintenance",
@@ -703,8 +708,8 @@ def main() -> int:
     print(f"  In the app, not on statement: {len(CARD_APP_ONLY)}")
     print()
     print("Expected result when you upload 'credit card 2 example.xlsx' (\u2022\u20223848):")
-    print("  No transactions for that period")
-    print("  (card exists; nothing on this card matches the statement window)")
+    print("  On the statement, not in the app: statement lines to Create or Ignore")
+    print("  (this card has no matching app charges in that window)")
     print()
     print("=" * 72)
     print("PRESENTER WALKTHROUGH")
@@ -719,7 +724,7 @@ def main() -> int:
     print("   Do NOT Create from statement (that would put rows on Unassigned")
     print("   and the gap would no longer be 0).")
     print("3. Card step: upload credit card 2 example.xlsx (card 3848) first")
-    print("   -> 'No transactions for that period'  (this card is ignored)")
+    print("   -> statement-only lines; Create or Ignore. Leftover can wait.")
     print("4. Upload credit card 1 example.xlsx (card 6947)")
     print(f"   - Found: {card_match_count}  -> Confirm all found")
     print(f"   - On the statement, not in app: {card1_only}  -> Ignore")

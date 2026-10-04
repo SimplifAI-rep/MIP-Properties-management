@@ -238,6 +238,10 @@
     @apply inline-flex whitespace-nowrap rounded-full bg-sky-100 px-2.5 py-0.5 text-xs font-medium text-sky-900 dark:bg-sky-900/40 dark:text-sky-200;
   }
 
+  .badge-payback {
+    @apply inline-flex whitespace-nowrap rounded-full bg-violet-100 px-2.5 py-0.5 text-xs font-medium text-violet-900 dark:bg-violet-900/40 dark:text-violet-200;
+  }
+
   .badge-mip-paid {
     @apply inline-flex whitespace-nowrap rounded-full bg-teal-100 px-2.5 py-0.5 text-xs font-medium text-teal-900 dark:bg-teal-900/40 dark:text-teal-200;
   }

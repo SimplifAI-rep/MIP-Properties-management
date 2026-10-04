@@ -306,6 +306,7 @@ export const api = {
         max_amount: filters.max_amount,
         source_file: filters.source_file,
         needs_review: filters.needs_review,
+        review_reason: filters.review_reason,
         is_rental_income: filters.is_rental_income,
         include_running_balance:
           filters.include_running_balance === false ? false : undefined,
@@ -404,11 +405,13 @@ export const api = {
         max_amount: filters.max_amount,
         source_file: filters.source_file,
         needs_review: filters.needs_review,
+        review_reason: filters.review_reason,
         paid_by_resident: filters.paid_by_resident,
         paid_by_owner: filters.paid_by_owner,
         paid_by_company: filters.paid_by_company,
         include_running_balance:
           filters.include_running_balance === false ? false : undefined,
+        deferred_only: filters.deferred_only ? true : undefined,
         page: filters.page,
         page_size: filters.page_size,
       })}`,
@@ -484,7 +487,9 @@ export const api = {
       reference: payload.vendor_name?.trim() || payload.reference || null,
       description: notes ? `${section} | ${notes}` : section,
       source: payload.source || 'manual_entry',
-      is_rental_income: Boolean(payload.is_rental_income),
+      is_rental_income: Boolean(payload.is_rental_income) && !payload.is_payback,
+      is_payback: Boolean(payload.is_payback),
+      payback_of_expense_id: payload.payback_of_expense_id || null,
     };
     return request<import('../types').Deposit>('/deposits', {
       method: 'POST',
@@ -503,6 +508,19 @@ export const api = {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
+    }),
+  writeOffExpenseToBuffer: (id: string) =>
+    request<import('../types').Expense>(`/expenses/${id}/write-off-to-buffer`, {
+      method: 'POST',
+    }),
+  recordExpenseReturn: (id: string) =>
+    request<{
+      expense: import('../types').Expense;
+      return_deposit: import('../types').Deposit;
+    }>(`/expenses/${id}/record-return`, { method: 'POST' }),
+  writeOffDepositToBuffer: (id: string) =>
+    request<import('../types').Deposit>(`/deposits/${id}/write-off-to-buffer`, {
+      method: 'POST',
     }),
   deleteExpense: (id: string) =>
     request<void>(`/expenses/${id}`, {
@@ -536,6 +554,21 @@ export const api = {
       body: form,
     });
   },
+  listAttachments: (kind: 'deposit' | 'expense', id: string) =>
+    request<import('../types').Attachment[]>(`/${kind === 'expense' ? 'expenses' : 'deposits'}/${id}/attachments`),
+  addAttachment: (kind: 'deposit' | 'expense', id: string, file: File) => {
+    const form = new FormData();
+    form.append('file', file);
+    return request<import('../types').Attachment[]>(
+      `/${kind === 'expense' ? 'expenses' : 'deposits'}/${id}/attachments`,
+      { method: 'POST', body: form },
+    );
+  },
+  removeAttachment: (kind: 'deposit' | 'expense', id: string, attachmentId: string) =>
+    request<import('../types').Attachment[]>(
+      `/${kind === 'expense' ? 'expenses' : 'deposits'}/${id}/attachments/${encodeURIComponent(attachmentId)}`,
+      { method: 'DELETE' },
+    ),
   getUploadFileUrl: (uploadId: string, options?: { download?: boolean }) => {
     const base = `${API_BASE}/uploads/${uploadId}/file`;
     return options?.download ? `${base}?download=1` : base;

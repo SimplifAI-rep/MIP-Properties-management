@@ -164,6 +164,7 @@ def common_transaction_clauses(
     source_file: str | None = None,
     source_file_match: SourceFileMatch = "exact",
     needs_review: bool | None = None,
+    review_reason: str | None = None,
 ) -> list[ColumnElement[bool]]:
     clauses: list[ColumnElement[bool]] = []
     if date_from:
@@ -182,6 +183,8 @@ def common_transaction_clauses(
             clauses.append(model.source_file == cleaned)
     if needs_review is not None:
         clauses.append(model.needs_review.is_(needs_review))
+    if review_reason and review_reason.strip():
+        clauses.append(model.review_reasons.contains(review_reason.strip()))
     return clauses
 
 
@@ -227,6 +230,7 @@ def apply_common_transaction_filters(
     source_file: str | None = None,
     source_file_match: SourceFileMatch = "exact",
     needs_review: bool | None = None,
+    review_reason: str | None = None,
 ) -> Select[Any]:
     return apply_clauses(
         stmt,
@@ -239,6 +243,7 @@ def apply_common_transaction_filters(
             source_file=source_file,
             source_file_match=source_file_match,
             needs_review=needs_review,
+            review_reason=review_reason,
         ),
     )
 
@@ -259,6 +264,7 @@ def apply_deposit_list_filters(
     max_amount: Decimal | None = None,
     source_file: str | None = None,
     needs_review: bool | None = None,
+    review_reason: str | None = None,
     is_rental_income: bool | None = None,
     source: str | None = None,
     source_file_match: SourceFileMatch = "exact",
@@ -285,6 +291,7 @@ def apply_deposit_list_filters(
         source_file=source_file,
         source_file_match=source_file_match,
         needs_review=needs_review,
+        review_reason=review_reason,
     )
     float_clauses = deposit_float_filter_clauses(
         is_rental_income=is_rental_income,
@@ -319,12 +326,14 @@ def apply_expense_list_filters(
     max_amount: Decimal | None = None,
     source_file: str | None = None,
     needs_review: bool | None = None,
+    review_reason: str | None = None,
     paid_by_resident: bool | None = None,
     paid_by_owner: bool | None = None,
     paid_by_company: bool | None = None,
     ledger_column: str | None = None,
     source_file_match: SourceFileMatch = "exact",
     apply_company_float_default: bool = False,
+    deferred_only: bool = False,
 ) -> Select[Any]:
     stmt = apply_property_scope(
         stmt,
@@ -347,6 +356,7 @@ def apply_expense_list_filters(
         source_file=source_file,
         source_file_match=source_file_match,
         needs_review=needs_review,
+        review_reason=review_reason,
     )
     if category:
         stmt = stmt.where(Expense.category == category)
@@ -380,6 +390,8 @@ def apply_expense_list_filters(
         )
     if ledger_column:
         stmt = stmt.where(Expense.ledger_column == ledger_column)
+    if deferred_only:
+        stmt = stmt.where(Expense.cc_deferred_until.is_not(None))
     return stmt
 
 

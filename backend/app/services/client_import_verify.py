@@ -535,10 +535,10 @@ def verify_against_excel(db: Session, data_dir: Path) -> dict[str, Any]:
             f"Rental income: excel={mgmt['mgmt_rental_income_rows']} db={mgmt_rental_db}"
         )
 
-    # Properties: at least current client list + BUFFER
-    if db_props < client_props + 1:
+    # Properties: at least current client list + BUFFER + Awaiting return
+    if db_props < client_props + 2:
         mismatches.append(
-            f"Properties: expected at least {client_props + 1} (clients+BUFFER), db={db_props}"
+            f"Properties: expected at least {client_props + 2} (clients+BUFFER+AWAITING), db={db_props}"
         )
 
     ok = len(mismatches) == 0

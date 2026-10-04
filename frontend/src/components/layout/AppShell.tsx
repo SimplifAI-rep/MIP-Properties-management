@@ -14,7 +14,8 @@ const navItems = [
   { to: '/properties', label: 'Properties' },
   { to: '/owners', label: 'Owners' },
   { to: '/transactions', label: 'Transactions' },
-  { to: '/verification', label: 'Verification' },
+  { to: '/verification', label: 'Verification', showOpenVerification: true },
+  { to: '/next-cycle', label: 'Next cycle' },
   { to: '/credit-cards', label: 'Credit cards' },
   { to: '/alerts', label: 'Alerts', showCount: true },
   { to: '/reports', label: 'Reports' },
@@ -36,6 +37,12 @@ function AppShellInner() {
     refetchInterval: 60_000,
   });
   const openAlerts = alertSummaryQuery.data?.open_count ?? 0;
+  const workspaceQuery = useQuery({
+    queryKey: ['verification-workspace'],
+    queryFn: () => api.getVerificationWorkspace(),
+    refetchInterval: 60_000,
+  });
+  const periodOpen = Boolean(workspaceQuery.data?.headline?.period_open);
   const visibleNav = navItems.filter((item) => !item.adminOnly || isAdmin);
 
   useEffect(() => {
@@ -75,6 +82,11 @@ function AppShellInner() {
               {item.showCount && openAlerts > 0 ? (
                 <span className="ml-2 rounded-full bg-rose-500 px-2 py-0.5 text-xs text-white dark:bg-rose-600">
                   {openAlerts}
+                </span>
+              ) : null}
+              {item.showOpenVerification && periodOpen ? (
+                <span className="ml-2 rounded-full bg-amber-500 px-2 py-0.5 text-xs text-white dark:bg-amber-600">
+                  Open
                 </span>
               ) : null}
             </NavLink>

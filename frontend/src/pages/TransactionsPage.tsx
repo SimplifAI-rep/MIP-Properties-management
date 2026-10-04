@@ -2,7 +2,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
-import type { CreditCard, DepositCreate, ExpenseCreate } from '../types';
+import type { DepositCreate, ExpenseCreate } from '../types';
 import {
   TransactionDisplayCells,
   TransactionTableColgroup,
@@ -23,6 +23,10 @@ import {
   type TransactionEntityFilters,
 } from '../components/ui/TransactionFilterFields';
 import { Tooltip } from '../components/ui/Tooltip';
+import { OwnerPropertyFields } from '../components/ui/OwnerPropertyFields';
+import { ConfirmButton } from '../components/ui/ConfirmButton';
+import { TransactionAttachmentsField } from '../components/ui/TransactionAttachmentsField';
+import { PaidWithSelect } from '../components/ui/PaidWithSelect';
 import { TransactionUploadPanel } from '../components/TransactionUploadPanel';
 import { useFeedback } from '../context/FeedbackContext';
 import {
@@ -41,7 +45,6 @@ import {
 } from '../utils/unifiedTransaction';
 import {
   EXPENSE_SOURCES as SOURCES,
-  PAYMENT_METHODS as METHODS,
   SECTION_SUGGESTIONS,
 } from '../constants/expenseOptions';
 import { todayISO } from '../utils/dateFormat';
@@ -62,7 +65,8 @@ type TypeFilterKind =
   | 'he_she_paid'
   | 'owner_paid'
   | 'bank_statement'
-  | 'nearly_cc';
+  | 'nearly_cc'
+  | 'created_from_verification';
 type AlertFilterKind = 'incomplete_import';
 type PropertyStatusFilter = 'active' | 'inactive';
 
@@ -73,6 +77,7 @@ function label(value: string) {
 interface TransactionEditForm {
   kind: TransactionKind;
   id: string;
+  owner_id: string;
   property_id: string;
   transaction_date?: string;
   amount: string;
@@ -83,90 +88,9 @@ interface TransactionEditForm {
   card_last4: string | null;
   source: string;
   is_rental_income: boolean;
+  is_payback: boolean;
+  payback_of_expense_id: string | null;
 }
-
-function PaidWithSelect({
-  cards,
-  paymentMethod,
-  cardLast4,
-  onChange,
-  showCardOption = true,
-}: {
-  cards: CreditCard[];
-  paymentMethod: string;
-  cardLast4?: string | null;
-  onChange: (next: { payment_method: string; card_last4: string | null }) => void;
-  showCardOption?: boolean;
-}) {
-  const activeCards = cards.filter((card) => card.is_active);
-  const methodValue =
-    paymentMethod === 'credit_card' && showCardOption
-      ? 'credit_card'
-      : paymentMethod || 'company_account';
-  const extraMethods = METHODS.filter(
-    (method) => method !== 'cash' && method !== 'credit_card' && method !== 'company_account',
-  );
-  const knownCard =
-    Boolean(cardLast4) &&
-    (activeCards.some((card) => card.card_last4 === cardLast4) ||
-      Boolean(cardLast4 && !activeCards.some((card) => card.card_last4 === cardLast4)));
-
-  return (
-    <div className="space-y-2">
-      <select
-        className="field"
-        value={methodValue}
-        onChange={(event) => {
-          const next = event.target.value;
-          if (next === 'credit_card') {
-            const keep = knownCard ? cardLast4 ?? null : null;
-            onChange({
-              payment_method: 'credit_card',
-              card_last4:
-                keep ?? (activeCards.length === 1 ? activeCards[0].card_last4 : null),
-            });
-            return;
-          }
-          onChange({ payment_method: next, card_last4: null });
-        }}
-      >
-        <option value="company_account">{label('company_account')}</option>
-        <option value="cash">Cash</option>
-        {showCardOption ? <option value="credit_card">Credit card</option> : null}
-        {extraMethods.map((method) => (
-          <option key={method} value={method}>
-            {label(method)}
-          </option>
-        ))}
-      </select>
-      {showCardOption && paymentMethod === 'credit_card' ? (
-        <select
-          className="field"
-          required
-          aria-label="Select a card"
-          value={cardLast4 ?? ''}
-          onChange={(event) =>
-            onChange({
-              payment_method: 'credit_card',
-              card_last4: event.target.value || null,
-            })
-          }
-        >
-          <option value="">Select a card</option>
-          {activeCards.map((card) => (
-            <option key={card.id} value={card.card_last4}>
-              {card.label}
-            </option>
-          ))}
-          {cardLast4 && !activeCards.some((card) => card.card_last4 === cardLast4) ? (
-            <option value={cardLast4}>Card ••{cardLast4}</option>
-          ) : null}
-        </select>
-      ) : null}
-    </div>
-  );
-}
-
 
 function rowTypeTags(row: UnifiedTransaction): TypeFilterKind[] {
   const tags: TypeFilterKind[] = [];
@@ -181,6 +105,12 @@ function rowTypeTags(row: UnifiedTransaction): TypeFilterKind[] {
   }
   if (row.from_bank_statement) tags.push('bank_statement');
   if (row.ledger_column === 'nearly_cc') tags.push('nearly_cc');
+  if ((row.review_reasons || '')
+    .split(',')
+    .map((part) => part.trim())
+    .includes('created_from_verification')) {
+    tags.push('created_from_verification');
+  }
   return tags;
 }
 
@@ -212,13 +142,16 @@ function makeEmptyDepositForm(): DepositCreate {
     vendor_name: '',
     description: '',
     is_rental_income: false,
+    is_payback: false,
+    payback_of_expense_id: null,
   };
 }
 
-function rowToEditForm(row: UnifiedTransaction): TransactionEditForm {
+function rowToEditForm(row: UnifiedTransaction, ownerId = ''): TransactionEditForm {
   return {
     kind: row.kind,
     id: row.id,
+    owner_id: ownerId,
     property_id: row.property_id,
     transaction_date: row.transaction_date ?? undefined,
     amount: Number(row.amount) > 0 ? row.amount : '',
@@ -229,6 +162,8 @@ function rowToEditForm(row: UnifiedTransaction): TransactionEditForm {
     card_last4: row.card_last4 ?? null,
     source: row.source || (row.kind === 'deposit' ? 'management_ledger' : 'manual_company'),
     is_rental_income: Boolean(row.is_rental_income),
+    is_payback: Boolean(row.is_payback),
+    payback_of_expense_id: row.payback_of_expense_id ?? null,
   };
 }
 
@@ -281,16 +216,32 @@ export function TransactionsPage() {
   const [sourceFiles, setSourceFiles] = useState<string[]>([]);
   const [alertFilters, setAlertFilters] = useState<AlertFilterKind[]>([]);
   const [showForm, setShowForm] = useState(false);
+  const [formOwnerId, setFormOwnerId] = useState('');
   const [showDepositForm, setShowDepositForm] = useState(false);
+  const [depositOwnerId, setDepositOwnerId] = useState('');
   const [showUpload, setShowUpload] = useState(false);
   const [form, setForm] = useState<ExpenseCreate>(() => makeEmptyForm());
   const [depositForm, setDepositForm] = useState<DepositCreate>(() => makeEmptyDepositForm());
+  const [expenseFiles, setExpenseFiles] = useState<File[]>([]);
+  const [depositFiles, setDepositFiles] = useState<File[]>([]);
   const [formError, setFormError] = useState<unknown>(null);
   const [editForm, setEditForm] = useState<TransactionEditForm | null>(null);
   const [editError, setEditError] = useState<unknown>(null);
   const [highlightId, setHighlightId] = useState<string | undefined>();
   const [highlightKind, setHighlightKind] = useState<string | undefined>();
   const highlightClearRef = useRef<number | null>(null);
+  const paybackLinkQuery = useQuery({
+    queryKey: ['expenses', 'payback-link-options'],
+    queryFn: () =>
+      api.getExpenses({
+        page_size: 100,
+        include_running_balance: false,
+        property_status: 'active',
+      }),
+    enabled:
+      showDepositForm || (Boolean(editForm) && editForm?.kind === 'deposit'),
+  });
+  const paybackExpenses = paybackLinkQuery.data?.items ?? [];
 
   useEffect(() => {
     const state = parseTransactionsLocationState(location.state);
@@ -395,6 +346,7 @@ export function TransactionsPage() {
     kinds.includes('deposit') ||
     kinds.includes('rental_income') ||
     kinds.includes('bank_statement') ||
+    kinds.includes('created_from_verification') ||
     alertFilters.includes('incomplete_import');
   const includeExpenses =
     kinds.length === 0 ||
@@ -403,10 +355,15 @@ export function TransactionsPage() {
     kinds.includes('owner_paid') ||
     kinds.includes('bank_statement') ||
     kinds.includes('nearly_cc') ||
+    kinds.includes('created_from_verification') ||
     alertFilters.includes('incomplete_import');
 
   const singleSourceFile = sourceFiles.length === 1 ? sourceFiles[0] : undefined;
   const needsReviewOnly = alertFilters.includes('incomplete_import') ? true : undefined;
+  const reviewReasonFilter =
+    kinds.length === 1 && kinds[0] === 'created_from_verification'
+      ? 'created_from_verification'
+      : undefined;
 
   // Server-page when only one stream is needed and multi-value client-only filters are idle.
   const useServerPaging =
@@ -439,9 +396,11 @@ export function TransactionsPage() {
     ...sharedFilters,
     source_file: singleSourceFile,
     needs_review: needsReviewOnly,
+    review_reason: reviewReasonFilter,
   });
 
   const {
+    owners,
     properties,
     ownerOptions,
     propertyOptions,
@@ -563,10 +522,18 @@ export function TransactionsPage() {
   });
 
   const createMutation = useMutation({
-    mutationFn: api.createExpense,
+    mutationFn: async (payload: ExpenseCreate) => {
+      const created = await api.createExpense(payload);
+      for (const file of expenseFiles) {
+        await api.addAttachment('expense', created.id, file);
+      }
+      return created;
+    },
     onSuccess: () => {
       invalidateTransactionData(queryClient);
       setForm(makeEmptyForm());
+      setExpenseFiles([]);
+      setFormOwnerId('');
       setShowForm(false);
       setFormError(null);
     },
@@ -576,10 +543,18 @@ export function TransactionsPage() {
   });
 
   const createDepositMutation = useMutation({
-    mutationFn: api.createDeposit,
+    mutationFn: async (payload: DepositCreate) => {
+      const created = await api.createDeposit(payload);
+      for (const file of depositFiles) {
+        await api.addAttachment('deposit', created.id, file);
+      }
+      return created;
+    },
     onSuccess: () => {
       invalidateTransactionData(queryClient);
       setDepositForm(makeEmptyDepositForm());
+      setDepositFiles([]);
+      setDepositOwnerId('');
       setShowDepositForm(false);
       setFormError(null);
     },
@@ -612,7 +587,11 @@ export function TransactionsPage() {
         transaction_date: payload.transaction_date || null,
         amount: payload.amount || '0',
         description: payload.notes.trim() || null,
-        is_rental_income: payload.is_rental_income,
+        is_rental_income: payload.is_payback ? false : payload.is_rental_income,
+        is_payback: payload.is_payback,
+        payback_of_expense_id: payload.is_payback
+          ? payload.payback_of_expense_id
+          : null,
       });
     },
     onSuccess: () => {
@@ -638,6 +617,25 @@ export function TransactionsPage() {
     onError: (error: Error) => setEditError(error),
   });
 
+  const writeOffAwaitingMutation = useMutation({
+    mutationFn: async (row: UnifiedTransaction) => {
+      if (row.kind === 'expense') return api.writeOffExpenseToBuffer(row.id);
+      return api.writeOffDepositToBuffer(row.id);
+    },
+    onSuccess: () => {
+      invalidateTransactionData(queryClient);
+    },
+    onError: (error: Error) => setEditError(error),
+  });
+
+  const recordAwaitingReturnMutation = useMutation({
+    mutationFn: (id: string) => api.recordExpenseReturn(id),
+    onSuccess: () => {
+      invalidateTransactionData(queryClient);
+    },
+    onError: (error: Error) => setEditError(error),
+  });
+
   const typeOptions = useMemo(
     () => [
       { value: 'deposit', label: 'Deposit (Inflow)' },
@@ -647,6 +645,7 @@ export function TransactionsPage() {
       { value: 'owner_paid', label: 'Owner paid' },
       { value: 'bank_statement', label: 'Bank statement' },
       { value: 'nearly_cc', label: 'Nearly CC' },
+      { value: 'created_from_verification', label: 'Created from verification' },
     ],
     [],
   );
@@ -994,7 +993,9 @@ export function TransactionsPage() {
   }
 
   function openEdit(row: UnifiedTransaction) {
-    setEditForm(rowToEditForm(row));
+    const ownerId =
+      properties.find((property) => property.id === row.property_id)?.owner_id ?? '';
+    setEditForm(rowToEditForm(row, ownerId));
     setEditError(null);
     setShowForm(false);
     setShowDepositForm(false);
@@ -1008,8 +1009,8 @@ export function TransactionsPage() {
 
   function saveEdit() {
     if (!editForm) return;
-    if (!editForm.property_id) {
-      setEditError(validationError('Please choose a property (Prop ID).'));
+    if (!editForm.owner_id || !editForm.property_id) {
+      setEditError(validationError('Please choose an owner and a property.'));
       return;
     }
     if (!editForm.transaction_date || !editForm.amount || Number(editForm.amount) <= 0) {
@@ -1101,6 +1102,7 @@ export function TransactionsPage() {
                 const next = !current;
                 if (next) {
                   setDepositForm(makeEmptyDepositForm());
+                  setDepositOwnerId('');
                   setFormError(null);
                   setShowForm(false);
                   setShowUpload(false);
@@ -1119,6 +1121,7 @@ export function TransactionsPage() {
                 const next = !current;
                 if (next) {
                   setForm(makeEmptyForm());
+                  setFormOwnerId('');
                   setFormError(null);
                   setShowDepositForm(false);
                   setShowUpload(false);
@@ -1212,12 +1215,13 @@ export function TransactionsPage() {
             onSubmit={(event) => {
               event.preventDefault();
               if (
+                !depositOwnerId ||
                 !depositForm.property_id ||
                 !depositForm.transaction_date ||
                 !depositForm.amount
               ) {
                 setFormError(
-                  validationError('Please choose a property, date, and amount.'),
+                  validationError('Please choose an owner, property, date, and amount.'),
                 );
                 return;
               }
@@ -1231,31 +1235,19 @@ export function TransactionsPage() {
               });
             }}
           >
-            <label className="text-sm">
-              <span className="label-text">
-                <Tooltip content="Same as Prop ID in Excel — pick the property sheet.">
-                  Prop ID / Property
-                </Tooltip>
-              </span>
-              <select
-                required
-                className="field"
-                value={depositForm.property_id}
-                onChange={(event) =>
-                  setDepositForm((current) => ({
-                    ...current,
-                    property_id: event.target.value,
-                  }))
-                }
-              >
-                <option value="">Select property</option>
-                {(propertiesQuery.data ?? []).map((property) => (
-                  <option key={property.id} value={property.id}>
-                    {property.client_prop_id} — {property.name}
-                  </option>
-                ))}
-              </select>
-            </label>
+            <OwnerPropertyFields
+              owners={owners}
+              properties={properties}
+              ownerId={depositOwnerId}
+              propertyId={depositForm.property_id}
+              onChange={(next) => {
+                setDepositOwnerId(next.ownerId);
+                setDepositForm((current) => ({
+                  ...current,
+                  property_id: next.propertyId,
+                }));
+              }}
+            />
             <DateInputDMY
               label="Date"
               required
@@ -1379,6 +1371,7 @@ export function TransactionsPage() {
                   setDepositForm((current) => ({
                     ...current,
                     is_rental_income: event.target.checked,
+                    is_payback: event.target.checked ? false : current.is_payback,
                   }))
                 }
               />
@@ -1388,6 +1381,52 @@ export function TransactionsPage() {
                 </Tooltip>
               </span>
             </label>
+            <label className="text-sm flex items-end gap-2 pb-2">
+              <input
+                type="checkbox"
+                checked={Boolean(depositForm.is_payback)}
+                onChange={(event) =>
+                  setDepositForm((current) => ({
+                    ...current,
+                    is_payback: event.target.checked,
+                    is_rental_income: event.target.checked
+                      ? false
+                      : current.is_rental_income,
+                    payback_of_expense_id: event.target.checked
+                      ? current.payback_of_expense_id
+                      : null,
+                  }))
+                }
+              />
+              <span className="label-text mb-0">
+                <Tooltip content="Bank refund or partial return. Kept as its own deposit.">
+                  Payback
+                </Tooltip>
+              </span>
+            </label>
+            {depositForm.is_payback ? (
+            <label className="text-sm">
+                <span className="label-text">Original expense (optional)</span>
+                <select
+                  className="field"
+                  value={depositForm.payback_of_expense_id ?? ''}
+                  onChange={(event) =>
+                    setDepositForm((current) => ({
+                      ...current,
+                      payback_of_expense_id: event.target.value || null,
+                    }))
+                  }
+                >
+                  <option value="">Not linked</option>
+                  {paybackExpenses.map((expense) => (
+                    <option key={expense.id} value={expense.id}>
+                      {formatCurrency(expense.amount)} · {expense.transaction_date ?? '—'} ·{' '}
+                      {expense.property_name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
             <label className="text-sm md:col-span-2 xl:col-span-3">
               <span className="label-text">
                 <Tooltip content="Excel Notes — free text about the row.">Notes</Tooltip>
@@ -1405,6 +1444,13 @@ export function TransactionsPage() {
                 }
               />
             </label>
+            <div className="md:col-span-2 xl:col-span-3">
+              <TransactionAttachmentsField
+                kind="deposit"
+                pendingFiles={depositFiles}
+                onPendingFilesChange={setDepositFiles}
+              />
+            </div>
             {formError && showDepositForm ? (
               <div className="md:col-span-2 xl:col-span-3">
                 <InlineError error={formError} />
@@ -1433,9 +1479,9 @@ export function TransactionsPage() {
             className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3"
             onSubmit={(event) => {
               event.preventDefault();
-              if (!form.property_id || !form.transaction_date || !form.amount) {
+              if (!formOwnerId || !form.property_id || !form.transaction_date || !form.amount) {
                 setFormError(
-                  validationError('Please choose a property, date, and amount.'),
+                  validationError('Please choose an owner, property, date, and amount.'),
                 );
                 return;
               }
@@ -1461,28 +1507,16 @@ export function TransactionsPage() {
               });
             }}
       >
-        <label className="text-sm">
-              <span className="label-text">
-                <Tooltip content="Same as Prop ID in Excel — pick the property sheet.">
-                  Prop ID / Property
-                </Tooltip>
-              </span>
-          <select
-                required
-            className="field"
-                value={form.property_id}
-                onChange={(event) =>
-                  setForm((current) => ({ ...current, property_id: event.target.value }))
-                }
-              >
-                <option value="">Select property</option>
-            {(propertiesQuery.data ?? []).map((property) => (
-                  <option key={property.id} value={property.id}>
-                    {property.client_prop_id} — {property.name}
-              </option>
-            ))}
-          </select>
-        </label>
+            <OwnerPropertyFields
+              owners={owners}
+              properties={properties}
+              ownerId={formOwnerId}
+              propertyId={form.property_id}
+              onChange={(next) => {
+                setFormOwnerId(next.ownerId);
+                setForm((current) => ({ ...current, property_id: next.propertyId }));
+              }}
+            />
             <DateInputDMY
               label="Date"
               required
@@ -1559,14 +1593,14 @@ export function TransactionsPage() {
                 </p>
               ) : null}
             </div>
-        <label className="text-sm">
+            <label className="text-sm">
               <span className="label-text">
                 <Tooltip content="How this expense was recorded (e.g. standing order).">
                   Source
                 </Tooltip>
               </span>
-          <select
-            className="field"
+              <select
+                className="field"
                 value={form.source}
                 onChange={(event) =>
                   setForm((current) => ({ ...current, source: event.target.value }))
@@ -1575,31 +1609,31 @@ export function TransactionsPage() {
                 {SOURCES.map((item) => (
                   <option key={item} value={item}>
                     {label(item)}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="text-sm">
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="text-sm">
               <span className="label-text">
                 <Tooltip content="Excel Company — vendor or payee name.">Company</Tooltip>
               </span>
           <input
                 type="text"
-            className="field"
+                className="field"
                 placeholder="Vendor / company name"
                 value={form.vendor_name ?? ''}
                 onChange={(event) =>
                   setForm((current) => ({ ...current, vendor_name: event.target.value }))
                 }
           />
-        </label>
+            </label>
             <label className="text-sm md:col-span-2 xl:col-span-3">
               <span className="label-text">
                 <Tooltip content="Excel Notes — free text about the row.">Notes</Tooltip>
               </span>
-          <input
+              <input
                 type="text"
-            className="field"
+                className="field"
                 placeholder="Optional notes"
                 value={form.description ?? ''}
                 onChange={(event) =>
@@ -1607,6 +1641,13 @@ export function TransactionsPage() {
                 }
               />
             </label>
+            <div className="md:col-span-2 xl:col-span-3">
+              <TransactionAttachmentsField
+                kind="expense"
+                pendingFiles={expenseFiles}
+                onPendingFilesChange={setExpenseFiles}
+              />
+            </div>
             {formError && showForm ? (
               <div className="md:col-span-2 xl:col-span-3">
                 <InlineError error={formError} />
@@ -1673,7 +1714,7 @@ export function TransactionsPage() {
               />
               <SearchableMultiSelect
                 label="Type"
-                tip="Deposit/Expense match Excel Inflow/Amount. Rental, He/She, Owner paid, Bank statement, and Nearly CC are separate lanes you can filter."
+                tip="Deposit/Expense match Excel Inflow/Amount. Rental, He/She, Owner paid, Bank statement, Nearly CC, and Created from verification are separate lanes you can filter."
                 options={typeOptions}
                 selected={kinds}
                 onChange={(next) => {
@@ -1706,8 +1747,8 @@ export function TransactionsPage() {
                 selected={sections}
                 onChange={(next) => {
                   setSections(next);
-                  resetPage();
-                }}
+              resetPage();
+            }}
                 placeholder="All sections"
                 searchPlaceholder="Search section…"
               />
@@ -1718,8 +1759,8 @@ export function TransactionsPage() {
                 selected={sources}
                 onChange={(next) => {
                   setSources(next);
-                  resetPage();
-                }}
+              resetPage();
+            }}
                 placeholder="All sources"
                 searchPlaceholder="Search source…"
               />
@@ -1743,7 +1784,7 @@ export function TransactionsPage() {
       <section className="panel overflow-hidden">
         <div className="w-full min-w-0">
           <table className="table-shell">
-            <TransactionTableColgroup />
+            <TransactionTableColgroup actionsColWidth="w-[12%]" />
             <TransactionTableHeader />
             <tbody>
               {items.map((row) => {
@@ -1785,24 +1826,60 @@ export function TransactionsPage() {
                                 </button>
                               </Tooltip>
                             ) : (
-                              <Tooltip content="Edit" hideHint>
-                                <button
-                                  type="button"
-                                  className="btn-icon"
-                                  onClick={() => openEdit(row)}
-                                  aria-label="Edit transaction"
-                                >
-                                  <svg
-                                    xmlns="http://www.w3.org/2000/svg"
-                                    viewBox="0 0 20 20"
-                                    fill="currentColor"
-                                    className="h-4 w-4"
-                                    aria-hidden="true"
+                              <>
+                                <Tooltip content="Edit" hideHint>
+                                  <button
+                                    type="button"
+                                    className="btn-icon"
+                                    onClick={() => openEdit(row)}
+                                    aria-label="Edit transaction"
                                   >
-                                    <path d="m2.695 14.762-1.262 3.155a.5.5 0 0 0 .65.65l3.155-1.262a4 4 0 0 0 1.343-.886L17.5 5.501a2.121 2.121 0 0 0-3-3L3.58 13.419a4 4 0 0 0-.885 1.343Z" />
-                                  </svg>
-                                </button>
-                              </Tooltip>
+                                    <svg
+                                      xmlns="http://www.w3.org/2000/svg"
+                                      viewBox="0 0 20 20"
+                                      fill="currentColor"
+                                      className="h-4 w-4"
+                                      aria-hidden="true"
+                                    >
+                                      <path d="m2.695 14.762-1.262 3.155a.5.5 0 0 0 .65.65l3.155-1.262a4 4 0 0 0 1.343-.886L17.5 5.501a2.121 2.121 0 0 0-3-3L3.58 13.419a4 4 0 0 0-.885 1.343Z" />
+                                    </svg>
+                                  </button>
+                                </Tooltip>
+                                {row.client_prop_id === 'AWAITING' ? (
+                                  <>
+                                    <ConfirmButton
+                                      label="Write off to Buffer"
+                                      confirmLabel="Write off"
+                                      disabled={
+                                        writeOffAwaitingMutation.isPending ||
+                                        recordAwaitingReturnMutation.isPending
+                                      }
+                                      pending={
+                                        writeOffAwaitingMutation.isPending &&
+                                        writeOffAwaitingMutation.variables?.id === row.id
+                                      }
+                                      onConfirm={() => writeOffAwaitingMutation.mutate(row)}
+                                    />
+                                    {row.kind === 'expense' ? (
+                                      <ConfirmButton
+                                        label="Record return"
+                                        confirmLabel="Record"
+                                        disabled={
+                                          writeOffAwaitingMutation.isPending ||
+                                          recordAwaitingReturnMutation.isPending
+                                        }
+                                        pending={
+                                          recordAwaitingReturnMutation.isPending &&
+                                          recordAwaitingReturnMutation.variables === row.id
+                                        }
+                                        onConfirm={() =>
+                                          recordAwaitingReturnMutation.mutate(row.id)
+                                        }
+                                      />
+                                    ) : null}
+                                  </>
+                                ) : null}
+                              </>
                             )}
                             <Tooltip content="Feedback" hideHint>
                               <button
@@ -1839,22 +1916,18 @@ export function TransactionsPage() {
                         <td colSpan={13} className="p-0">
                           <div className="box-border max-w-full px-4 py-4">
                             <div className="grid max-w-full gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                              <label className="text-sm min-w-0">
-                                <span className="label-text">Prop ID / Property</span>
-                                <select
-                                  className="field"
-                                  value={editForm.property_id}
-                                  onChange={(event) =>
-                                    patchEdit({ property_id: event.target.value })
-                                  }
-                                >
-                                  {(propertiesQuery.data ?? []).map((property) => (
-                                    <option key={property.id} value={property.id}>
-                                      {property.client_prop_id} — {property.name}
-                                    </option>
-                                  ))}
-                                </select>
-        </label>
+                              <OwnerPropertyFields
+                                owners={owners}
+                                properties={properties}
+                                ownerId={editForm.owner_id}
+                                propertyId={editForm.property_id}
+                                onChange={(next) =>
+                                  patchEdit({
+                                    owner_id: next.ownerId,
+                                    property_id: next.propertyId,
+                                  })
+                                }
+                              />
                               <DateInputDMY
                                 label="Date"
                                 value={editForm.transaction_date}
@@ -1871,21 +1944,21 @@ export function TransactionsPage() {
                                   value={editForm.amount}
                                   onChange={(event) => patchEdit({ amount: event.target.value })}
                                 />
-                              </label>
+        </label>
                               {row.kind === 'expense' ? (
                                 <>
                                   <label className="text-sm min-w-0">
                                     <span className="label-text">Section</span>
-                                    <input
+          <input
                                       list="inline-section-suggestions"
                                       type="text"
-                                      className="field"
+            className="field"
                                       value={editForm.section}
                                       onChange={(event) =>
                                         patchEdit({ section: event.target.value })
                                       }
-                                    />
-                                  </label>
+          />
+        </label>
                                   <div className="text-sm min-w-0">
                                     <span className="label-text">Paid with</span>
                                     <PaidWithSelect
@@ -1906,15 +1979,15 @@ export function TransactionsPage() {
                                   </div>
                                   <label className="text-sm min-w-0">
                                     <span className="label-text">Company</span>
-                                    <input
+          <input
                                       type="text"
-                                      className="field"
+            className="field"
                                       value={editForm.company}
                                       onChange={(event) =>
                                         patchEdit({ company: event.target.value })
                                       }
-                                    />
-                                  </label>
+          />
+        </label>
                                   <label className="text-sm min-w-0">
               <span className="label-text">Source</span>
               <select
@@ -1939,16 +2012,65 @@ export function TransactionsPage() {
             </label>
           </>
                               ) : (
-                                <label className="text-sm flex items-end gap-2 pb-2 min-w-0">
-                                  <input
-                                    type="checkbox"
-                                    checked={editForm.is_rental_income}
-                                    onChange={(event) =>
-                                      patchEdit({ is_rental_income: event.target.checked })
-                                    }
-                                  />
-                                  <span className="label-text mb-0">Rental income</span>
-                                </label>
+                                <>
+                                  <label className="text-sm flex items-end gap-2 pb-2 min-w-0">
+                                    <input
+                                      type="checkbox"
+                                      checked={editForm.is_rental_income}
+                                      onChange={(event) =>
+                                        patchEdit({
+                                          is_rental_income: event.target.checked,
+                                          is_payback: event.target.checked
+                                            ? false
+                                            : editForm.is_payback,
+                                        })
+                                      }
+                                    />
+                                    <span className="label-text mb-0">Rental income</span>
+                                  </label>
+                                  <label className="text-sm flex items-end gap-2 pb-2 min-w-0">
+                                    <input
+                                      type="checkbox"
+                                      checked={editForm.is_payback}
+                                      onChange={(event) =>
+                                        patchEdit({
+                                          is_payback: event.target.checked,
+                                          is_rental_income: event.target.checked
+                                            ? false
+                                            : editForm.is_rental_income,
+                                          payback_of_expense_id: event.target.checked
+                                            ? editForm.payback_of_expense_id
+                                            : null,
+                                        })
+                                      }
+                                    />
+                                    <span className="label-text mb-0">Payback</span>
+                                  </label>
+                                  {editForm.is_payback ? (
+                                    <label className="text-sm min-w-0">
+                                      <span className="label-text">Original expense</span>
+              <select
+                className="field"
+                                        value={editForm.payback_of_expense_id ?? ''}
+                                        onChange={(event) =>
+                                          patchEdit({
+                                            payback_of_expense_id:
+                                              event.target.value || null,
+                                          })
+                                        }
+                                      >
+                                        <option value="">Not linked</option>
+                                        {paybackExpenses.map((expense) => (
+                                          <option key={expense.id} value={expense.id}>
+                                            {formatCurrency(expense.amount)} ·{' '}
+                                            {expense.transaction_date ?? '—'} ·{' '}
+                                            {expense.property_name}
+                  </option>
+                ))}
+              </select>
+            </label>
+                                  ) : null}
+                                </>
                               )}
                               <label className="text-sm min-w-0 sm:col-span-2 lg:col-span-3 xl:col-span-4">
                                 <span className="label-text">Notes</span>
@@ -1959,6 +2081,12 @@ export function TransactionsPage() {
                                   onChange={(event) => patchEdit({ notes: event.target.value })}
                                 />
                               </label>
+                              <div className="sm:col-span-2 lg:col-span-3 xl:col-span-4">
+                                <TransactionAttachmentsField
+                                  kind={editForm.kind}
+                                  transactionId={editForm.id}
+                                />
+                              </div>
                               {editError ? (
                                 <div className="sm:col-span-2 lg:col-span-3 xl:col-span-4">
                                   <InlineError error={editError} />

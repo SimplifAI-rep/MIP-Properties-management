@@ -88,7 +88,10 @@ def go_live_cutover(
     db: Session = Depends(get_db),
     _admin: str = Depends(require_admin),
 ) -> BankCutoverResponse:
-    """Go-live: set opening balance + as-of, mark txs ≤ as-of Verified."""
+    """Go-live: set opening + as-of, stamp bank and card txs ≤ as-of as verified.
+
+    The next in-app verification period starts the day after as-of.
+    """
     try:
         account, _company, deposits_marked, expenses_marked = (
             bank_settings_service.run_go_live_cutover(
@@ -262,10 +265,6 @@ async def create_cc_reconcile_session(
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(
-            status_code=400, detail=f"Could not start CC reconcile: {exc}"
-        ) from exc
     return CcReconcileSessionResponse(**cc_reconcile_service.session_summary(db, session))
 
 

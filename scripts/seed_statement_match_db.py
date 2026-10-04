@@ -1,4 +1,4 @@
-"""Reset the database to statement-only rows for a clean verification gap test.
+"""Reset the database to statement-only rows for manual verification testing.
 
 Imports owners/properties, then only:
 
@@ -6,11 +6,11 @@ Imports owners/properties, then only:
 * credit card 1 example.xlsx
 * credit card 2 example.xlsx
 
-The management ledger is skipped so there are no extra/missing app rows
-against those three files. Mastercard bank-settlement lines are not imported
-as expenses: they wait for the card step and would otherwise show as
-"in the app, not on the statement". Opening is set so that after you confirm
-every remaining bank match, closing − opening − app net = 0.
+Then adds labelled TEST rows so every verification list has an example:
+in app and in excel, in excel not in app, in app not in excel, card for this
+period, card not for this period, and charges already pushed to the next cycle.
+
+Opening is set from the imported matches only (TEST extras are added after).
 
 Usage (from the repo root):
 
@@ -22,7 +22,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-from datetime import timedelta
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 
@@ -35,6 +35,142 @@ sys.path.insert(0, str(BACKEND))
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from seed_test_db import backup_and_reset, resolve_db_path  # noqa: E402
+
+
+def _add_verification_scenarios(db, *, start: date | None, end: date | None) -> None:
+    """Add labelled extras after opening is set so identity still matches the Excel."""
+    from sqlalchemy import select
+
+    from app.models.deposit import Deposit
+    from app.models.expense import Expense
+    from app.models.property import Property
+    from app.services.bank_reconcile import _is_cc_settlement_line
+    from app.services.holding import UNASSIGNED_PROP_ID
+
+    if start is None or end is None:
+        print("Skipped verification scenarios (no statement dates)")
+        return
+    prop = db.scalars(
+        select(Property).where(Property.client_prop_id != UNASSIGNED_PROP_ID)
+    ).first()
+    if prop is None:
+        print("Skipped verification scenarios (no property)")
+        return
+
+    last4 = db.scalars(
+        select(Expense.card_last4).where(
+            Expense.payment_method == "credit_card",
+            Expense.card_last4.is_not(None),
+        )
+    ).first() or "3848"
+    mid = start + timedelta(days=max(1, (end - start).days // 2))
+    now = datetime.now(timezone.utc)
+
+    bank_rows = [
+        row
+        for row in db.scalars(select(Expense).where(Expense.source == "bank_statement"))
+        if not _is_cc_settlement_line(row.description or "")
+        and row.transaction_date is not None
+        and start <= row.transaction_date <= end
+    ]
+    if bank_rows:
+        victim = bank_rows[0]
+        label = (victim.vendor_name or victim.description or "").encode("ascii", "replace").decode("ascii")
+        print(f"Scenario excel-not-in-app (bank): removed {label} {victim.amount}")
+        db.delete(victim)
+
+    cc_rows = [
+        row
+        for row in db.scalars(select(Expense).where(Expense.source == "credit_card"))
+        if row.transaction_date is not None
+        and start <= row.transaction_date <= end
+        and row.cc_deferred_until is None
+    ]
+    if cc_rows:
+        victim = cc_rows[0]
+        label = (victim.vendor_name or victim.description or "").encode("ascii", "replace").decode("ascii")
+        print(f"Scenario excel-not-in-app (card): removed {label} {victim.amount}")
+        db.delete(victim)
+
+    extras = [
+        Expense(
+            property_id=prop.id,
+            transaction_date=mid,
+            amount=Decimal("12.34"),
+            category="utilities",
+            source="bank_statement",
+            payment_method="bank_transfer",
+            vendor_name="TEST Bank in app only",
+            description="TEST Bank in app only",
+        ),
+        Expense(
+            property_id=prop.id,
+            transaction_date=mid,
+            amount=Decimal("23.45"),
+            category="utilities",
+            source="credit_card",
+            payment_method="credit_card",
+            vendor_name="TEST Card in app only",
+            description="TEST Card in app only",
+            card_last4=last4,
+        ),
+        Expense(
+            property_id=prop.id,
+            transaction_date=mid,
+            amount=Decimal("99991.13"),
+            category="utilities",
+            source="credit_card",
+            payment_method="credit_card",
+            vendor_name="TEST Card leftover this payment",
+            description="TEST Card leftover this payment",
+            card_last4=last4,
+            cc_verified_at=now,
+        ),
+        Expense(
+            property_id=prop.id,
+            transaction_date=start - timedelta(days=10),
+            amount=Decimal("66.66"),
+            category="utilities",
+            source="credit_card",
+            payment_method="credit_card",
+            vendor_name="TEST Card from last cycle",
+            description="TEST Card from last cycle",
+            card_last4=last4,
+            cc_deferred_until=start - timedelta(days=1),
+        ),
+        Expense(
+            property_id=prop.id,
+            transaction_date=end + timedelta(days=5),
+            amount=Decimal("55.55"),
+            category="utilities",
+            source="credit_card",
+            payment_method="credit_card",
+            vendor_name="TEST Card waiting next cycle",
+            description="TEST Card waiting next cycle",
+            card_last4=last4,
+            cc_deferred_until=end,
+        ),
+    ]
+    db.add_all(extras)
+    db.add(
+        Deposit(
+            property_id=prop.id,
+            transaction_date=mid,
+            amount=Decimal("18.18"),
+            source="bank_statement",
+            description="TEST Bank deposit in app only",
+            is_rental_income=False,
+        )
+    )
+    db.commit()
+    print("Verification test scenarios:")
+    print("  In app and in excel  - remaining imported matches")
+    print("  In excel not in app  - one bank line and one card line removed")
+    print("  In app not in excel  - TEST Bank in app only / Card in app only / deposit")
+    print("  Card for the period  - imported card charges that still match the Excel")
+    print("  Card not this period - TEST Card leftover this payment (top of bank upload)")
+    print("  Pushed last cycle    - TEST Card from last cycle (top of bank upload + Next cycle)")
+    print("  Waiting next cycle   - TEST Card waiting next cycle (Next cycle page only)")
 
 
 def main() -> int:
@@ -141,13 +277,18 @@ def main() -> int:
             db.add(account)
         db.commit()
 
-        print(f"Statement {start} → {end}")
+        print(f"Statement {start} -> {end}")
         print(f"Bank closing      {closing}")
-        print(f"App net (bank)    {all_net}  (in {deposits_sum} − out {expenses_sum})")
+        print(f"App net (bank)    {all_net}  (in {deposits_sum} - out {expenses_sum})")
         print(f"Opening set to    {opening}")
         print(f"Expected gap      {closing - (opening + all_net)}")
+        _add_verification_scenarios(db, start=start, end=end)
         print(f"Database: {db_path}")
-        print("Upload the same three Excel files on Verification. After confirming every match, the balance check should read 0.")
+        print(
+            "Upload Bank Account example.xlsx first - Not for this period is at the top. "
+            "Then the two credit-card files. TEST rows are labelled. "
+            "Next cycle lists charges already pushed forward."
+        )
     finally:
         db.close()
     return 0

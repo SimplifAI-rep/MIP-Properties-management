@@ -44,7 +44,9 @@ def test_list_owners_with_summaries(client):
     response = client.get("/api/v1/owners")
     assert response.status_code == 200
     body = response.json()
-    assert len(body) == 2
+    assert len(body) == 3
+    names = {row["name"] for row in body}
+    assert "Needs assignment" in names
     david = next(row for row in body if row["id"] == str(OWNER_DAVID_ID))
     assert david["property_count"] == 2
     assert david["expense_count"] >= 2

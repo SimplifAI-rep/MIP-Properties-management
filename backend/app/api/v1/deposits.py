@@ -2,11 +2,12 @@ from datetime import date
 from decimal import Decimal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db
 from app.schemas import (
+    AttachmentRead,
     DepositCreate,
     DepositGap,
     DepositListResponse,
@@ -14,14 +15,19 @@ from app.schemas import (
     DepositSummary,
     DepositUpdate,
 )
+from app.services.attachments import add_attachment, list_attachments, remove_attachment
 from app.services.deposit_query import (
     create_deposit,
     delete_deposit,
+    deposit_to_read,
     find_deposit_gaps,
     get_deposit_summary,
     list_deposits,
     update_deposit,
 )
+from app.services.holding import write_off_awaiting_to_buffer
+from app.models.deposit import Deposit
+from app.models.owner import Owner
 
 router = APIRouter(prefix="/deposits", tags=["deposits"])
 
@@ -43,6 +49,7 @@ def get_deposits(
     max_amount: Decimal | None = None,
     source_file: str | None = None,
     needs_review: bool | None = None,
+    review_reason: str | None = None,
     is_rental_income: bool | None = None,
     include_running_balance: bool = Query(True),
     page: int = Query(1, ge=1),
@@ -64,6 +71,7 @@ def get_deposits(
         max_amount=max_amount,
         source_file=source_file,
         needs_review=needs_review,
+        review_reason=review_reason,
         is_rental_income=is_rental_income,
         page=page,
         page_size=page_size,
@@ -135,6 +143,40 @@ def deposit_gaps(
     )
 
 
+@router.get("/{deposit_id}/attachments", response_model=list[AttachmentRead])
+def get_deposit_attachments(
+    deposit_id: UUID,
+    db: Session = Depends(get_db),
+) -> list[AttachmentRead]:
+    return list_attachments(db, "deposit", deposit_id)
+
+
+@router.post("/{deposit_id}/attachments", response_model=list[AttachmentRead])
+async def post_deposit_attachment(
+    deposit_id: UUID,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+) -> list[AttachmentRead]:
+    content = await file.read()
+    return add_attachment(
+        db,
+        "deposit",
+        deposit_id,
+        filename=file.filename or "attachment",
+        content=content,
+        content_type=file.content_type,
+    )
+
+
+@router.delete("/{deposit_id}/attachments/{attachment_id}", response_model=list[AttachmentRead])
+def delete_deposit_attachment(
+    deposit_id: UUID,
+    attachment_id: str,
+    db: Session = Depends(get_db),
+) -> list[AttachmentRead]:
+    return remove_attachment(db, "deposit", deposit_id, attachment_id)
+
+
 @router.patch("/{deposit_id}", response_model=DepositRead)
 def patch_deposit(
     deposit_id: UUID,
@@ -142,6 +184,30 @@ def patch_deposit(
     db: Session = Depends(get_db),
 ) -> DepositRead:
     return update_deposit(db, deposit_id, payload)
+
+
+@router.post("/{deposit_id}/write-off-to-buffer", response_model=DepositRead)
+def write_off_deposit_to_buffer(
+    deposit_id: UUID,
+    db: Session = Depends(get_db),
+) -> DepositRead:
+    deposit = db.get(Deposit, deposit_id)
+    if deposit is None:
+        raise HTTPException(status_code=404, detail="Deposit not found")
+    try:
+        buffer = write_off_awaiting_to_buffer(db, deposit)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    db.commit()
+    db.refresh(deposit)
+    owner = db.get(Owner, buffer.owner_id)
+    return deposit_to_read(
+        deposit,
+        buffer.name,
+        owner.name if owner else "",
+        None,
+        buffer.client_prop_id,
+    )
 
 
 @router.delete("/{deposit_id}", status_code=204)

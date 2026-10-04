@@ -60,6 +60,14 @@ class BankAccountRead(BaseModel):
     property_id: UUID | None = None
 
 
+class AttachmentRead(BaseModel):
+    id: str
+    upload_id: UUID
+    filename: str
+    sort: int
+    is_legacy: bool = False
+
+
 class DepositRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -77,7 +85,10 @@ class DepositRead(BaseModel):
     description: str | None = None
     source: str
     is_rental_income: bool = False
+    is_payback: bool = False
+    payback_of_expense_id: UUID | None = None
     receipt_ref: str | None = None
+    attachments: list[AttachmentRead] = Field(default_factory=list)
     source_file: str | None = None
     balance_after: Decimal | None = None
     needs_review: bool = False
@@ -153,6 +164,8 @@ class DepositCreate(BaseModel):
     description: str | None = None
     source: str = "manual_entry"
     is_rental_income: bool = False
+    is_payback: bool = False
+    payback_of_expense_id: UUID | None = None
 
 
 class DepositUpdate(BaseModel):
@@ -165,6 +178,8 @@ class DepositUpdate(BaseModel):
     description: str | None = None
     source: str | None = None
     is_rental_income: bool | None = None
+    is_payback: bool | None = None
+    payback_of_expense_id: UUID | None = None
 
 
 class ClientDataImportCounts(BaseModel):
@@ -314,11 +329,14 @@ class TransactionRead(BaseModel):
     payment_method: str | None = None
     source: str | None = None
     receipt_ref: str | None = None
+    attachments: list[AttachmentRead] = Field(default_factory=list)
     source_file: str | None = None
     balance_after: Decimal | None = None
     needs_review: bool = False
     review_reasons: str | None = None
     is_rental_income: bool | None = None
+    is_payback: bool | None = None
+    payback_of_expense_id: UUID | None = None
     paid_by_resident: bool | None = None
     paid_by_owner: bool | None = None
     paid_by_company: bool | None = None
@@ -354,6 +372,7 @@ class ExpenseRead(BaseModel):
     description: str | None = None
     notes: str | None = None
     receipt_ref: str | None = None
+    attachments: list[AttachmentRead] = Field(default_factory=list)
     source_file: str | None = None
     balance_after: Decimal | None = None
     reconciled: bool = False
@@ -372,6 +391,11 @@ class ExpenseRead(BaseModel):
     cc_settlement_group_id: UUID | None = None
     card_last4: str | None = None
     cc_deferred_until: date | None = None
+
+
+class AwaitingReturnRead(BaseModel):
+    expense: ExpenseRead
+    return_deposit: DepositRead
 
 
 class ExpenseCreate(BaseModel):
@@ -500,12 +524,14 @@ class AlertRead(BaseModel):
         "upload_pending",
         "duplicate_deposit",
         "incomplete_import",
+        "unassigned_transaction",
         "low_balance",
         "bank_unmatched",
         "app_unmatched",
         "bank_gap",
         "cc_unmatched",
         "cc_app_unmatched",
+        "unverified_stale",
     ]
     severity: Literal["error", "warning", "info"]
     title: str
@@ -665,6 +691,9 @@ class BankReconcileAction(BaseModel):
         "ignore_app",
         "add_from_bank",
         "defer_cc_to_next",
+        "include_cc_in_period",
+        "merge",
+        "link_to_app",
     ]
     fingerprint: str | None = None
     kind: Literal["deposit", "expense"] | None = None
@@ -672,6 +701,8 @@ class BankReconcileAction(BaseModel):
     reason: str | None = None
     property_id: UUID | None = None
     member_ids: list[UUID] | None = None
+    is_payback: bool | None = None
+    payback_of_expense_id: UUID | None = None
 
 
 class BankReconcileActionsRequest(BaseModel):
@@ -715,6 +746,7 @@ class CcReconcileAction(BaseModel):
         "ignore_app",
         "add_from_cc",
         "defer_cc_to_next",
+        "include_cc_in_period",
     ]
     fingerprint: str | None = None
     tx_id: UUID | None = None
@@ -832,6 +864,14 @@ class CreditCardUpdate(BaseModel):
     is_active: bool | None = None
 
 
+class VerificationHeadline(BaseModel):
+    period_open: bool = False
+    bank_balance: Decimal | None = None
+    bank_balance_date: str | None = None
+    verification_offset: Decimal = Decimal("0")
+    open_session_id: str | None = None
+
+
 class VerificationWorkspaceResponse(BaseModel):
     last_verification_date: str | None = None
     last_cc_verification_date: str | None = None
@@ -842,6 +882,7 @@ class VerificationWorkspaceResponse(BaseModel):
     operating_accounts: list[VerificationOperatingAccount] = []
     credit_cards: list[VerificationCreditCard] = []
     cc_pool: VerificationCcPoolSummary
+    headline: VerificationHeadline = VerificationHeadline()
 
 
 class VerificationTransactionsResponse(BaseModel):

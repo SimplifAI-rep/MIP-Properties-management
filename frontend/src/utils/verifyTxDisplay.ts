@@ -61,7 +61,9 @@ export function ccDraftToUnified(line: CcReconcileLine): UnifiedTransaction {
     bank_verified_at: null,
     bank_asmachta: null,
     bank_reconcile_exclude: false,
-    cc_verified_at: line.status === 'added' ? new Date().toISOString() : null,
+    cc_verified_at: line.status === 'added' || line.status === 'matched'
+      ? new Date().toISOString()
+      : null,
     section: draftSection(line.status),
     notes: line.details || line.merchant || null,
     company: line.merchant ?? null,
@@ -75,3 +77,34 @@ export function ccDraftToUnified(line: CcReconcileLine): UnifiedTransaction {
     review_reasons: line.status === 'unmatched' ? 'Unmatched' : null,
   };
 }
+
+/** Confirmed or created card charges for the Found / history lists. */
+export function ccFoundTxs(session: {
+  lines?: CcReconcileLine[];
+  able_txs?: Record<string, unknown>[];
+} | null | undefined): UnifiedTransaction[] {
+  const ableTxs = txsFromApi(session?.able_txs);
+  const ableById = new Map(ableTxs.map((tx) => [tx.id, tx]));
+  const found: UnifiedTransaction[] = [];
+  const seen = new Set<string>();
+  for (const line of session?.lines ?? []) {
+    if (
+      line.status !== 'proposed_match' &&
+      line.status !== 'matched' &&
+      line.status !== 'added'
+    ) {
+      continue;
+    }
+    const id = line.proposed_tx_id;
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    found.push(ableById.get(id) ?? { ...ccDraftToUnified(line), id });
+  }
+  for (const tx of ableTxs) {
+    if (seen.has(tx.id)) continue;
+    seen.add(tx.id);
+    found.push(tx);
+  }
+  return found;
+}
+

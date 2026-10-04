@@ -1,4 +1,4 @@
-import type { Deposit, Expense, TransactionKind, UnifiedTransaction } from '../types';
+import type { Attachment, Deposit, Expense, TransactionKind, UnifiedTransaction } from '../types';
 import { formatLabel } from './formatLabel';
 
 export type { TransactionKind, UnifiedTransaction };
@@ -43,9 +43,12 @@ function depositToUnified(deposit: Deposit): UnifiedTransaction {
     company: null,
     source: deposit.source,
     receipt_ref: deposit.receipt_ref ?? null,
+    attachments: deposit.attachments ?? [],
     source_file: deposit.source_file ?? null,
     balance_after: deposit.balance_after ?? null,
     is_rental_income: Boolean(deposit.is_rental_income),
+    is_payback: Boolean(deposit.is_payback),
+    payback_of_expense_id: deposit.payback_of_expense_id ?? null,
     from_bank_statement: deposit.source === 'bank_statement',
     needs_review: Boolean(deposit.needs_review),
     review_reasons: deposit.review_reasons ?? null,
@@ -78,6 +81,7 @@ function expenseToUnified(expense: Expense): UnifiedTransaction {
     payment_method: expense.payment_method,
     source: expense.source,
     receipt_ref: expense.receipt_ref ?? null,
+    attachments: expense.attachments ?? [],
     source_file: expense.source_file ?? null,
     balance_after: expense.balance_after ?? null,
     paid_by_resident: Boolean(expense.paid_by_resident),
@@ -102,6 +106,25 @@ function asNullableString(value: unknown): string | null {
 
 function asBool(value: unknown): boolean {
   return Boolean(value);
+}
+
+function asAttachments(value: unknown): Attachment[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    if (!item || typeof item !== 'object') return [];
+    const row = item as Record<string, unknown>;
+    const uploadId = asNullableString(row.upload_id);
+    if (!uploadId) return [];
+    return [
+      {
+        id: asString(row.id, uploadId),
+        upload_id: uploadId,
+        filename: asString(row.filename, 'File'),
+        sort: Number(row.sort ?? 0),
+        is_legacy: asBool(row.is_legacy),
+      },
+    ];
+  });
 }
 
 /** True when the row is already in the shared TransactionRead / UnifiedTransaction shape. */
@@ -145,6 +168,7 @@ export function unifiedFromRecord(row: Record<string, unknown>): UnifiedTransact
     payment_method: asNullableString(row.payment_method),
     source,
     receipt_ref: asNullableString(row.receipt_ref),
+    attachments: asAttachments(row.attachments),
     source_file: asNullableString(row.source_file),
     balance_after: asNullableString(row.balance_after),
     paid_by_resident: asBool(row.paid_by_resident),
@@ -152,6 +176,8 @@ export function unifiedFromRecord(row: Record<string, unknown>): UnifiedTransact
     paid_by_owner: asBool(row.paid_by_owner),
     ledger_column: asNullableString(row.ledger_column),
     is_rental_income: asBool(row.is_rental_income),
+    is_payback: asBool(row.is_payback),
+    payback_of_expense_id: asNullableString(row.payback_of_expense_id),
     from_bank_statement:
       asBool(row.from_bank_statement) || source === 'bank_statement',
     needs_review: asBool(row.needs_review),
@@ -219,6 +245,7 @@ export function recordToUnified(
     payment_method: asNullableString(row.payment_method),
     source,
     receipt_ref: asNullableString(row.receipt_ref),
+    attachments: asAttachments(row.attachments),
     source_file: asNullableString(row.source_file),
     balance_after: asNullableString(row.balance_after),
     paid_by_resident: asBool(row.paid_by_resident),
@@ -226,6 +253,8 @@ export function recordToUnified(
     paid_by_owner: asBool(row.paid_by_owner),
     ledger_column: asNullableString(row.ledger_column),
     is_rental_income: asBool(row.is_rental_income),
+    is_payback: asBool(row.is_payback),
+    payback_of_expense_id: asNullableString(row.payback_of_expense_id),
     from_bank_statement:
       asBool(row.from_bank_statement) || source === 'bank_statement',
     needs_review: asBool(row.needs_review),
@@ -316,16 +345,9 @@ export function transactionRowClassName(row: UnifiedTransaction): string {
   return 'row-expense';
 }
 
-export function transactionAmountClassName(row: UnifiedTransaction): string {
-  if (row.paid_by_resident) return 'amount-resident-paid';
-  if (row.paid_by_owner) return 'amount-owner-paid';
-  if (row.paid_by_company) return 'amount-mip-paid';
-  if (row.ledger_column === 'nearly_cc') return 'amount-nearly-cc';
-  if (row.ledger_column === 'cash') return 'amount-cash-paid';
-  if (row.ledger_column === 'other') return 'amount-other-paid';
-  if (row.is_rental_income) return 'amount-rental-income';
-  if (row.kind === 'deposit') return 'amount-deposit';
-  return 'amount-expense';
+/** Amount stays uncolored; Balance (not Amount) uses red/green by sign. */
+export function transactionAmountClassName(_row: UnifiedTransaction): string {
+  return '';
 }
 
 export function formatTransactionFeedback(row: UnifiedTransaction): string {

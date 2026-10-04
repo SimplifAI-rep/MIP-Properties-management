@@ -16,6 +16,7 @@ type TxnSharedFilters = {
 type TxnListFilters = TxnSharedFilters & {
   source_file?: string;
   needs_review?: boolean;
+  review_reason?: string;
 };
 
 /** Build the shared filter object used in Transactions query keys. */
@@ -38,6 +39,7 @@ export function buildTxnListFilters(partial: TxnListFilters = {}): TxnListFilter
     ...buildTxnSharedFilters(partial),
     source_file: partial.source_file,
     needs_review: partial.needs_review,
+    review_reason: partial.review_reason,
   };
 }
 

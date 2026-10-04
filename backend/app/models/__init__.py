@@ -11,6 +11,7 @@ from app.models.expense import Expense
 from app.models.import_batch import ImportBatch
 from app.models.owner import Owner
 from app.models.property import Property
+from app.models.transaction_attachment import TransactionAttachment
 from app.models.uploaded_document import UploadedDocument
 from app.services.transaction_ref import register_transaction_ref_listeners
 
@@ -29,6 +30,7 @@ __all__ = [
     "Expense",
     "ImportBatch",
     "UploadedDocument",
+    "TransactionAttachment",
     "AlertAction",
     "AlertRule",
 ]

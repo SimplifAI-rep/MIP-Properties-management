@@ -47,6 +47,16 @@ def load_batch_filenames(db: Session, batch_ids: list[UUID | None]) -> dict[str,
     return {str(batch_id): filename for batch_id, filename in rows}
 
 
+_ORIGIN_LABELS = {
+    "management_ledger": "Management expenses sheet.xlsx",
+    "rental_income": "Management expenses sheet.xlsx",
+    "bank_statement": "Bank Account example.xlsx",
+    "credit_card": "credit card statement.xlsx",
+    "excel_import": "Excel import",
+    "file_upload": "Uploaded file",
+}
+
+
 def resolve_source_file(
     *,
     source_file: str | None,
@@ -56,33 +66,22 @@ def resolve_source_file(
     upload_names: dict[str, str] | None = None,
     batch_names: dict[str, str] | None = None,
 ) -> str | None:
-    """Prefer stored source_file, then upload/batch lookup, then source label."""
+    """Return the import/verification filename that created the row.
+
+    Receipts and later attachments are supporting files, not the origin.
+    A receipt filename is used only for older file-upload rows that never
+    stored source_file.
+    """
     if source_file:
         return source_file
-    if receipt_ref and upload_names:
-        name = upload_names.get(str(receipt_ref))
-        if name:
-            return name
     if import_batch_id and batch_names:
         name = batch_names.get(str(import_batch_id))
         if name:
             return name
-    if source in {
-        "management_ledger",
-        "rental_income",
-        "bank_statement",
-        "credit_card",
-        "excel_import",
-        "file_upload",
-    }:
-        # Fallback label when filename was not stored (older rows)
-        labels = {
-            "management_ledger": "Management expenses sheet.xlsx",
-            "rental_income": "Management expenses sheet.xlsx",
-            "bank_statement": "Bank Account example.xlsx",
-            "credit_card": "credit card statement.xlsx",
-            "excel_import": "Excel import",
-            "file_upload": "Uploaded file",
-        }
-        return labels.get(source)
+    if source == "file_upload" and receipt_ref and upload_names:
+        name = upload_names.get(str(receipt_ref))
+        if name:
+            return name
+    if source in _ORIGIN_LABELS:
+        return _ORIGIN_LABELS.get(source)
     return None

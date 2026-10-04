@@ -185,26 +185,26 @@ def test_cc_reconcile_match_confirm_no_duplicate(client, db):
 
 
 @pytest.mark.skipif(not SAMPLE_CC.exists(), reason="sample CC Excel not present")
-def test_cc_upload_other_card_has_no_period_transactions(client, db):
+def test_cc_upload_other_card_opens_for_create(client, db):
     parsed = parse_cc_statement_lines(SAMPLE_CC.read_bytes())
     statement_last4 = parsed["card_last4"]
     assert statement_last4 and statement_last4 != "unknown"
     other_last4 = "0000" if statement_last4 != "0000" else "1111"
     line = parsed["lines"][0]
-    db.add(
-        Expense(
-            property_id=PROPERTY_ROTHSCHILD_ID,
-            transaction_date=date.fromisoformat(line["transaction_date"]),
-            amount=Decimal(line["amount"]),
-            category="maintenance",
-            source="credit_card",
-            payment_method="credit_card",
-            vendor_name=line.get("merchant"),
-            description=line.get("merchant"),
-            card_last4=other_last4,
-        )
+    other = Expense(
+        property_id=PROPERTY_ROTHSCHILD_ID,
+        transaction_date=date.fromisoformat(line["transaction_date"]),
+        amount=Decimal(line["amount"]),
+        category="maintenance",
+        source="credit_card",
+        payment_method="credit_card",
+        vendor_name=line.get("merchant"),
+        description=line.get("merchant"),
+        card_last4=other_last4,
     )
+    db.add(other)
     db.commit()
+    db.refresh(other)
 
     with SAMPLE_CC.open("rb") as handle:
         created = client.post(
@@ -217,26 +217,133 @@ def test_cc_upload_other_card_has_no_period_transactions(client, db):
                 )
             },
         )
-    assert created.status_code == 400, created.text
-    assert created.json()["detail"] == "No transactions for that period"
+    assert created.status_code == 200, created.text
+    session = created.json()
+    proposed_ids = {row.get("proposed_tx_id") for row in session["lines"]}
+    app_ids = {str(row["id"]) for row in session.get("unmatched_app") or []}
+    assert str(other.id) not in proposed_ids
+    assert str(other.id) not in app_ids
+    assert any(row["status"] == "unmatched" for row in session["lines"])
 
 
 @pytest.mark.skipif(not SAMPLE_CC.exists(), reason="sample CC Excel not present")
 def test_cc_upload_unassigned_card_does_not_match(client, db):
     parsed = parse_cc_statement_lines(SAMPLE_CC.read_bytes())
     line = parsed["lines"][0]
-    db.add(
-        Expense(
-            property_id=PROPERTY_ROTHSCHILD_ID,
-            transaction_date=date.fromisoformat(line["transaction_date"]),
-            amount=Decimal(line["amount"]),
-            category="maintenance",
-            source="credit_card",
-            payment_method="credit_card",
-            vendor_name=line.get("merchant"),
-            description=line.get("merchant"),
-        )
+    unassigned = Expense(
+        property_id=PROPERTY_ROTHSCHILD_ID,
+        transaction_date=date.fromisoformat(line["transaction_date"]),
+        amount=Decimal(line["amount"]),
+        category="maintenance",
+        source="credit_card",
+        payment_method="credit_card",
+        vendor_name=line.get("merchant"),
+        description=line.get("merchant"),
     )
+    db.add(unassigned)
+    db.commit()
+    db.refresh(unassigned)
+
+    with SAMPLE_CC.open("rb") as handle:
+        created = client.post(
+            "/api/v1/bank-settings/cc-reconcile/sessions",
+            files={
+                "file": (
+                    "credit card 1 example.xlsx",
+                    handle,
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                )
+            },
+        )
+    assert created.status_code == 200, created.text
+    session = created.json()
+    proposed_ids = {row.get("proposed_tx_id") for row in session["lines"]}
+    app_ids = {str(row["id"]) for row in session.get("unmatched_app") or []}
+    assert str(unassigned.id) not in proposed_ids
+    assert str(unassigned.id) not in app_ids
+
+
+@pytest.mark.skipif(not SAMPLE_CC.exists(), reason="sample CC Excel not present")
+def test_cc_confirm_match_stays_in_able_txs(client, db):
+    parsed = parse_cc_statement_lines(SAMPLE_CC.read_bytes())
+    line = parsed["lines"][0]
+    expense = Expense(
+        property_id=PROPERTY_ROTHSCHILD_ID,
+        transaction_date=date.fromisoformat(line["transaction_date"]),
+        amount=Decimal(line["amount"]),
+        category="maintenance",
+        source="credit_card",
+        payment_method="credit_card",
+        vendor_name=line.get("merchant"),
+        description=line.get("merchant"),
+        card_last4=parsed["card_last4"],
+    )
+    db.add(expense)
+    db.commit()
+    db.refresh(expense)
+    expense_id = str(expense.id)
+
+    with SAMPLE_CC.open("rb") as handle:
+        created = client.post(
+            "/api/v1/bank-settings/cc-reconcile/sessions",
+            files={
+                "file": (
+                    "credit card 1 example.xlsx",
+                    handle,
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                )
+            },
+        )
+    assert created.status_code == 200, created.text
+    session = created.json()
+    match = next(
+        row
+        for row in session["lines"]
+        if row.get("proposed_tx_id") == expense_id and row["status"] == "proposed_match"
+    )
+    before_ids = {str(row["id"]) for row in session.get("able_txs") or []}
+    assert expense_id in before_ids
+
+    applied = client.post(
+        f"/api/v1/bank-settings/cc-reconcile/sessions/{session['id']}/actions",
+        json={
+            "actions": [
+                {
+                    "action": "confirm_match",
+                    "fingerprint": match["fingerprint"],
+                    "tx_id": expense_id,
+                }
+            ]
+        },
+    )
+    assert applied.status_code == 200, applied.text
+    body = applied.json()
+    after_ids = {str(row["id"]) for row in body.get("able_txs") or []}
+    assert expense_id in after_ids
+    confirmed = next(row for row in body["able_txs"] if str(row["id"]) == expense_id)
+    assert confirmed.get("cc_verified_at")
+    matched_line = next(
+        row for row in body["lines"] if row["fingerprint"] == match["fingerprint"]
+    )
+    assert matched_line["status"] == "matched"
+
+
+@pytest.mark.skipif(not SAMPLE_CC.exists(), reason="sample CC Excel not present")
+def test_cc_add_from_cc_stays_in_able_txs(client, db):
+    parsed = parse_cc_statement_lines(SAMPLE_CC.read_bytes())
+    line = parsed["lines"][0]
+    expense = Expense(
+        property_id=PROPERTY_ROTHSCHILD_ID,
+        transaction_date=date.fromisoformat(line["transaction_date"]),
+        amount=Decimal(line["amount"]),
+        category="maintenance",
+        source="credit_card",
+        payment_method="credit_card",
+        vendor_name=line.get("merchant"),
+        description=line.get("merchant"),
+        card_last4=parsed["card_last4"],
+    )
+    db.add(expense)
     db.commit()
 
     with SAMPLE_CC.open("rb") as handle:
@@ -250,8 +357,180 @@ def test_cc_upload_unassigned_card_does_not_match(client, db):
                 )
             },
         )
-    assert created.status_code == 400, created.text
-    assert created.json()["detail"] == "No transactions for that period"
+    assert created.status_code == 200, created.text
+    session = created.json()
+    unmatched = [row for row in session["lines"] if row["status"] == "unmatched"]
+    assert unmatched, "need a statement line to create from"
+    target = unmatched[0]
+
+    added = client.post(
+        f"/api/v1/bank-settings/cc-reconcile/sessions/{session['id']}/actions",
+        json={
+            "actions": [
+                {
+                    "action": "add_from_cc",
+                    "fingerprint": target["fingerprint"],
+                    "property_id": str(PROPERTY_ROTHSCHILD_ID),
+                }
+            ]
+        },
+    )
+    assert added.status_code == 200, added.text
+    body = added.json()
+    created_line = next(
+        row for row in body["lines"] if row["fingerprint"] == target["fingerprint"]
+    )
+    assert created_line["status"] == "added"
+    created_id = created_line["proposed_tx_id"]
+    assert created_id
+    able_ids = {str(row["id"]) for row in body.get("able_txs") or []}
+    assert created_id in able_ids
+    loaded = next(row for row in body["able_txs"] if str(row["id"]) == created_id)
+    assert loaded.get("cc_verified_at")
+    assert loaded.get("client_prop_id") != "UNASSIGNED"
+
+
+@pytest.mark.skipif(not SAMPLE_CC.exists(), reason="sample CC Excel not present")
+def test_cc_include_in_period_stays_visible(client, db):
+    parsed = parse_cc_statement_lines(SAMPLE_CC.read_bytes())
+    line = parsed["lines"][0]
+    matched = Expense(
+        property_id=PROPERTY_ROTHSCHILD_ID,
+        transaction_date=date.fromisoformat(line["transaction_date"]),
+        amount=Decimal(line["amount"]),
+        category="maintenance",
+        source="credit_card",
+        payment_method="credit_card",
+        vendor_name=line.get("merchant"),
+        description=line.get("merchant"),
+        card_last4=parsed["card_last4"],
+    )
+    leftover = Expense(
+        property_id=PROPERTY_ROTHSCHILD_ID,
+        transaction_date=date.fromisoformat(line["transaction_date"]),
+        amount=Decimal("99991.13"),
+        category="utilities",
+        source="credit_card",
+        payment_method="credit_card",
+        vendor_name="Keep this period",
+        description="Keep this period",
+        card_last4=parsed["card_last4"],
+    )
+    db.add_all([matched, leftover])
+    db.commit()
+    leftover_id = str(leftover.id)
+
+    with SAMPLE_CC.open("rb") as handle:
+        created = client.post(
+            "/api/v1/bank-settings/cc-reconcile/sessions",
+            files={
+                "file": (
+                    "credit card 1 example.xlsx",
+                    handle,
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                )
+            },
+        )
+    assert created.status_code == 200, created.text
+    session = created.json()
+    unmatched_ids = {str(row["id"]) for row in session.get("not_in_excel_txs") or []}
+    assert leftover_id in unmatched_ids
+
+    kept = client.post(
+        f"/api/v1/bank-settings/cc-reconcile/sessions/{session['id']}/actions",
+        json={"actions": [{"action": "include_cc_in_period", "tx_id": leftover_id}]},
+    )
+    assert kept.status_code == 200, kept.text
+    body = kept.json()
+    after_ids = {str(row["id"]) for row in body.get("not_in_excel_txs") or []}
+    assert leftover_id in after_ids
+    app = next(row for row in body["unmatched_app"] if str(row["id"]) == leftover_id)
+    assert app["status"] == "included"
+    db.refresh(leftover)
+    assert leftover.cc_verified_at is not None
+    assert leftover.cc_deferred_until is None
+
+
+@pytest.mark.skipif(not SAMPLE_CC.exists(), reason="sample CC Excel not present")
+def test_cc_leftover_does_not_block_finish_and_waits(client, db):
+    parsed = parse_cc_statement_lines(SAMPLE_CC.read_bytes())
+    line = parsed["lines"][0]
+    matched = Expense(
+        property_id=PROPERTY_ROTHSCHILD_ID,
+        transaction_date=date.fromisoformat(line["transaction_date"]),
+        amount=Decimal(line["amount"]),
+        category="maintenance",
+        source="credit_card",
+        payment_method="credit_card",
+        vendor_name=line.get("merchant"),
+        description=line.get("merchant"),
+        card_last4=parsed["card_last4"],
+    )
+    leftover = Expense(
+        property_id=PROPERTY_ROTHSCHILD_ID,
+        transaction_date=date.fromisoformat(line["transaction_date"]),
+        amount=Decimal("99991.13"),
+        category="utilities",
+        source="credit_card",
+        payment_method="credit_card",
+        vendor_name="Wait until next cycle",
+        description="Wait until next cycle",
+        card_last4=parsed["card_last4"],
+    )
+    db.add_all([matched, leftover])
+    db.commit()
+    db.refresh(leftover)
+    leftover_id = str(leftover.id)
+
+    with SAMPLE_CC.open("rb") as handle:
+        created = client.post(
+            "/api/v1/bank-settings/cc-reconcile/sessions",
+            files={
+                "file": (
+                    "credit card 1 example.xlsx",
+                    handle,
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                )
+            },
+        )
+    assert created.status_code == 200, created.text
+    session = created.json()
+    unmatched_ids = {str(row["id"]) for row in session.get("not_in_excel_txs") or []}
+    assert leftover_id in unmatched_ids
+
+    actions = [
+        {
+            "action": "confirm_match",
+            "fingerprint": row["fingerprint"],
+            "tx_id": row["proposed_tx_id"],
+        }
+        for row in session["lines"]
+        if row["status"] == "proposed_match"
+    ]
+    actions += [
+        {"action": "ignore_cc", "fingerprint": row["fingerprint"], "reason": "test"}
+        for row in session["lines"]
+        if row["status"] == "unmatched"
+    ]
+    applied = client.post(
+        f"/api/v1/bank-settings/cc-reconcile/sessions/{session['id']}/actions",
+        json={"actions": actions},
+    )
+    assert applied.status_code == 200, applied.text
+    body = applied.json()
+    assert body["can_complete"] is True
+    leftover_app = next(
+        row for row in body["unmatched_app"] if str(row["id"]) == leftover_id
+    )
+    assert leftover_app["status"] == "unmatched"
+
+    completed = client.post(
+        f"/api/v1/bank-settings/cc-reconcile/sessions/{session['id']}/complete"
+    )
+    assert completed.status_code == 200, completed.text
+    db.refresh(leftover)
+    assert leftover.cc_verified_at is None
+    assert leftover.cc_deferred_until == date.fromisoformat(session["statement_end_date"])
 
 
 def test_list_expenses_filters_by_card_last4(client, db):

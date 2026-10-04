@@ -46,6 +46,8 @@ export interface BankAccount {
   property_id?: string | null;
 }
 
+export type { Attachment } from './transaction';
+
 export interface Deposit {
   id: string;
   property_id: string;
@@ -61,7 +63,10 @@ export interface Deposit {
   description: string | null;
   source: string;
   is_rental_income?: boolean;
+  is_payback?: boolean;
+  payback_of_expense_id?: string | null;
   receipt_ref?: string | null;
+  attachments?: Attachment[];
   source_file?: string | null;
   balance_after?: string | null;
   needs_review?: boolean;
@@ -199,6 +204,7 @@ export interface DepositFilters {
   max_amount?: string;
   source_file?: string;
   needs_review?: boolean;
+  review_reason?: string;
   is_rental_income?: boolean;
   include_running_balance?: boolean;
   page?: number;
@@ -222,6 +228,7 @@ export interface Expense {
   description: string | null;
   notes?: string | null;
   receipt_ref?: string | null;
+  attachments?: Attachment[];
   source_file?: string | null;
   balance_after?: string | null;
   reconciled?: boolean;
@@ -280,10 +287,12 @@ export interface ExpenseFilters {
   max_amount?: string;
   source_file?: string;
   needs_review?: boolean;
+  review_reason?: string;
   paid_by_resident?: boolean;
   paid_by_owner?: boolean;
   paid_by_company?: boolean;
   include_running_balance?: boolean;
+  deferred_only?: boolean;
   page?: number;
   page_size?: number;
 }
@@ -326,6 +335,8 @@ export interface DepositUpdate {
   reference?: string | null;
   description?: string | null;
   is_rental_income?: boolean;
+  is_payback?: boolean;
+  payback_of_expense_id?: string | null;
 }
 
 export interface FieldWarning {
@@ -465,6 +476,8 @@ export interface DepositCreate {
   description?: string;
   source?: string;
   is_rental_income?: boolean;
+  is_payback?: boolean;
+  payback_of_expense_id?: string | null;
   /** UI-only helpers mapped into description/reference on save */
   category?: string;
   payment_method?: string;
@@ -478,12 +491,14 @@ export interface AlertItem {
     | 'upload_pending'
     | 'duplicate_deposit'
     | 'incomplete_import'
+    | 'unassigned_transaction'
     | 'low_balance'
     | 'bank_unmatched'
     | 'app_unmatched'
     | 'bank_gap'
     | 'cc_unmatched'
-    | 'cc_app_unmatched';
+    | 'cc_app_unmatched'
+    | 'unverified_stale';
   severity: 'error' | 'warning' | 'info';
   title: string;
   message: string;
@@ -639,6 +654,17 @@ export interface BankGapResponse {
   within_tolerance_verified: boolean | null;
 }
 
+export interface BankReconcileNearMiss {
+  fingerprint?: string;
+  kind?: 'deposit' | 'expense';
+  id?: string;
+  transaction_date: string | null;
+  amount: string;
+  description?: string | null;
+  asmachta?: string | null;
+  reasons: string[];
+}
+
 export interface BankReconcileAction {
   action:
     | 'confirm_match'
@@ -646,13 +672,18 @@ export interface BankReconcileAction {
     | 'ignore_bank'
     | 'ignore_app'
     | 'add_from_bank'
-    | 'defer_cc_to_next';
+    | 'defer_cc_to_next'
+    | 'include_cc_in_period'
+    | 'merge'
+    | 'link_to_app';
   fingerprint?: string;
   kind?: 'deposit' | 'expense';
   tx_id?: string;
   reason?: string;
   property_id?: string;
   member_ids?: string[];
+  is_payback?: boolean;
+  payback_of_expense_id?: string;
 }
 
 export interface BankReconcileLine {
@@ -664,6 +695,8 @@ export interface BankReconcileLine {
   asmachta: string | null;
   description: string | null;
   status: string;
+  near_misses?: BankReconcileNearMiss[];
+  merge_candidates?: BankReconcileNearMiss[];
   proposed_kind?: string | null;
   proposed_tx_id?: string | null;
   proposed_tx_ref?: string | null;
@@ -686,6 +719,9 @@ export interface BankReconcileAppRow {
   description?: string | null;
   status: string;
   ignore_reason?: string | null;
+  leftover_reason?: string | null;
+  near_misses?: BankReconcileNearMiss[];
+  merge_candidates?: BankReconcileNearMiss[];
 }
 
 export interface BankReconcileSession {
@@ -724,7 +760,8 @@ export interface CcReconcileAction {
     | 'ignore_cc'
     | 'ignore_app'
     | 'add_from_cc'
-    | 'defer_cc_to_next';
+    | 'defer_cc_to_next'
+    | 'include_cc_in_period';
   fingerprint?: string;
   tx_id?: string;
   reason?: string;
@@ -834,6 +871,14 @@ export interface CreditCard {
   open_session_id: string | null;
 }
 
+export interface VerificationHeadline {
+  period_open: boolean;
+  bank_balance: string | null;
+  bank_balance_date: string | null;
+  verification_offset: string;
+  open_session_id: string | null;
+}
+
 export interface VerificationWorkspace {
   last_verification_date: string | null;
   last_cc_verification_date?: string | null;
@@ -847,6 +892,7 @@ export interface VerificationWorkspace {
     pending_count: number;
     cc_verified_count: number;
   };
+  headline?: VerificationHeadline;
 }
 
 export interface VerificationTransactionsResponse {

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import calendar
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from uuid import UUID
@@ -78,11 +79,21 @@ def effective_last_verification(
     return company.last_verification_date
 
 
+def month_ago(today: date | None = None) -> date:
+    """Calendar month before ``today`` (clamped to the last valid day)."""
+    today = today or date.today()
+    month = today.month - 1 or 12
+    year = today.year if today.month > 1 else today.year - 1
+    day = min(today.day, calendar.monthrange(year, month)[1])
+    return date(year, month, day)
+
+
 def count_unverified_since(
     db: Session,
     *,
     last_verification_date: date | None,
     bank_account_id: UUID | None = None,
+    date_to: date | None = None,
 ) -> int:
     """Bank-scoped txs still unverified after the last verification date."""
     from app.services.account_scope import (
@@ -126,6 +137,19 @@ def count_unverified_since(
             or_(
                 Expense.transaction_date.is_(None),
                 Expense.transaction_date > last_verification_date,
+            )
+        )
+    if date_to is not None:
+        deposit_filters.append(
+            or_(
+                Deposit.transaction_date.is_(None),
+                Deposit.transaction_date <= date_to,
+            )
+        )
+        expense_filters.append(
+            or_(
+                Expense.transaction_date.is_(None),
+                Expense.transaction_date <= date_to,
             )
         )
 
@@ -196,7 +220,10 @@ def run_go_live_cutover(
     gap_tolerance_amount: Decimal | None = None,
     bank_account_id: UUID | str | None = None,
 ) -> tuple[BankAccount | None, CompanyBankSettings, int, int]:
-    """Set O + as-of, mark txs with transaction_date ≤ as-of as bank-verified."""
+    """Go live: set O + as-of, stamp in-scope bank and card txs as verified.
+
+    Next in-app verification period starts the day after ``as_of_date``.
+    """
     if opening_balance is None:
         raise ValueError("opening_balance is required")
     now = datetime.now(timezone.utc)
@@ -230,6 +257,19 @@ def run_go_live_cutover(
             .values(bank_verified_at=now)
         )
         expenses_marked = int(exp_result.rowcount or 0)
+        db.execute(
+            update(Expense)
+            .where(
+                Expense.transaction_date.is_not(None),
+                Expense.transaction_date <= as_of_date,
+                Expense.payment_method == "credit_card",
+            )
+            .values(
+                cc_verified_at=now,
+                cc_bank_confirmed_at=now,
+                cc_deferred_until=None,
+            )
+        )
 
     if gap_tolerance_amount is not None:
         if gap_tolerance_amount < 0:

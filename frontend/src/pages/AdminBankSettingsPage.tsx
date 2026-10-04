@@ -14,7 +14,7 @@ function todayISO(): string {
   return `${y}-${m}-${day}`;
 }
 
-/** Admin-only bank verification settings and historical cutover. */
+/** Admin-only bank verification settings and go-live from the current Excel. */
 export function AdminBankSettingsPage() {
   const queryClient = useQueryClient();
   const [bankAccountId, setBankAccountId] = useState<string>('');
@@ -76,8 +76,9 @@ export function AdminBankSettingsPage() {
       void queryClient.invalidateQueries({ queryKey: ['expenses'] });
       void queryClient.invalidateQueries({ queryKey: ['transactions'] });
       void queryClient.invalidateQueries({ queryKey: ['verification-workspace'] });
+      void queryClient.invalidateQueries({ queryKey: ['alerts'] });
       setMessage(
-        `Cutover complete. Marked ${result.deposits_marked} deposits and ${result.expenses_marked} expenses as verified through ${formatDate(result.settings.last_verification_date!)}.`,
+        `Go-live complete. Marked ${result.deposits_marked} deposits and ${result.expenses_marked} expenses as verified through ${formatDate(result.settings.last_verification_date!)}. The next in-app period starts the day after that date.`,
       );
       setError(null);
     },
@@ -112,14 +113,16 @@ export function AdminBankSettingsPage() {
   function runCutover() {
     const amount = openingBalance.trim();
     if (!amount || Number(amount) < 0 || !asOfDate) {
-      setError('Enter an opening balance and effective date before cutover.');
+      setError('Enter an opening balance and effective date before go-live.');
       return;
     }
     const ok = window.confirm(
-      `This will:\n` +
+      `Go live from the current Excel?\n` +
+        `This will:\n` +
         `• Set opening balance to ${amount} as of ${asOfDate}\n` +
-        `• Mark all transactions on or before ${asOfDate} as verified\n` +
-        `• Set bank verified through to ${asOfDate}\n\n` +
+        `• Mark all bank and card transactions on or before ${asOfDate} as already verified\n` +
+        `• Set bank verified through to ${asOfDate}\n` +
+        `• Start the next in-app period the day after ${asOfDate}\n\n` +
         `Continue?`,
     );
     if (!ok) return;
@@ -136,8 +139,8 @@ export function AdminBankSettingsPage() {
       <div>
         <h2 className="page-heading">Bank settings</h2>
         <p className="page-desc">
-          Configure opening balance per operating account, gap tolerance, and historical
-          cutover.
+          Configure opening balance per operating account, gap tolerance, and go-live
+          from the current Excel (those rows are already verified there).
         </p>
       </div>
 
@@ -251,13 +254,13 @@ export function AdminBankSettingsPage() {
               disabled={busy}
               onClick={runCutover}
             >
-              {cutoverMutation.isPending ? 'Running…' : 'Apply cutover'}
+              {cutoverMutation.isPending ? 'Running…' : 'Go live'}
             </button>
           </div>
           <p className="sm:col-span-2 lg:col-span-4 text-xs muted-text">
-            Save updates settings only. Cutover sets the opening balance and effective date,
-            marks transactions on or before that date as verified, and updates bank verified
-            through.
+            Save updates settings only. Go live sets the opening balance and effective date,
+            marks bank and card transactions on or before that date as verified (already
+            checked in Excel), and starts the next in-app period the day after.
           </p>
         </div>
 

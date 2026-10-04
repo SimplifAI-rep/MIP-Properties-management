@@ -12,6 +12,7 @@ import { DashboardPage } from './pages/DashboardPage';
 import { DataImportPage } from './pages/DataImportPage';
 import { TransactionsPage } from './pages/TransactionsPage';
 import { CreditCardsPage } from './pages/CreditCardsPage';
+import { NextCyclePage } from './pages/NextCyclePage';
 import { VerificationPage } from './pages/VerificationPage';
 import { OwnersPage } from './pages/OwnersPage';
 import { PropertiesPage } from './pages/PropertiesPage';
@@ -39,6 +40,8 @@ export default function App() {
                 <Route path="owners" element={<OwnersPage />} />
                 <Route path="transactions" element={<TransactionsPage />} />
                 <Route path="verification" element={<VerificationPage />} />
+                <Route path="next-cycle" element={<NextCyclePage />} />
+                <Route path="unassigned" element={<Navigate to="/transactions" replace />} />
                 <Route path="credit-cards" element={<CreditCardsPage />} />
                 <Route path="alerts" element={<AlertsPage />} />
                 <Route path="reports" element={<ReportsPage />} />

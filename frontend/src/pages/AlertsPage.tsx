@@ -51,11 +51,13 @@ const ALERT_TYPE_OPTIONS: { value: AlertTypeFilter; label: string }[] = [
   { value: 'needs_review', label: 'Needs review' },
   { value: 'duplicate_deposit', label: 'Possible duplicate' },
   { value: 'upload_pending', label: 'Upload review' },
+  { value: 'unassigned_transaction', label: 'Needs assignment' },
   { value: 'bank_unmatched', label: 'Unmatched bank' },
   { value: 'app_unmatched', label: 'Unmatched app' },
   { value: 'bank_gap', label: 'Bank Gap' },
   { value: 'cc_unmatched', label: 'Unmatched CC' },
   { value: 'cc_app_unmatched', label: 'Unmatched paid-by-card' },
+  { value: 'unverified_stale', label: 'Unverified for more than a month' },
 ];
 
 const RECONCILE_ALERT_TYPES = new Set<AlertItem['alert_type']>([
@@ -130,6 +132,7 @@ function typeLabel(alert: AlertItem): string {
   if (alert.alert_type === 'incomplete_import') {
     return incompleteReasonKeys(alert).map(reasonLabel).join(' · ');
   }
+  if (alert.alert_type === 'unassigned_transaction') return 'Needs assignment';
   if (alert.alert_type === 'missing_deposit') return 'Missing deposit';
   if (alert.alert_type === 'low_balance') return 'Low balance';
   if (alert.alert_type === 'duplicate_deposit') return 'Possible duplicate';
@@ -138,6 +141,7 @@ function typeLabel(alert: AlertItem): string {
   if (alert.alert_type === 'bank_gap') return 'Bank Gap';
   if (alert.alert_type === 'cc_unmatched') return 'Unmatched CC';
   if (alert.alert_type === 'cc_app_unmatched') return 'Unmatched paid-by-card';
+  if (alert.alert_type === 'unverified_stale') return 'Unverified for more than a month';
   return 'Upload review';
 }
 
@@ -763,6 +767,88 @@ export function AlertsPage() {
                     </button>
                   </div>
                 </div>
+              ) : selectedAlert.alert_type === 'unassigned_transaction' ? (
+                <div className="space-y-4">
+                  <dl className="grid gap-2 text-sm sm:grid-cols-2">
+                    <div>
+                      <dt className="label-text">Owner / Property</dt>
+                      <dd>
+                        {selectedAlert.owner_name ?? 'Needs assignment'} ·{' '}
+                        {selectedAlert.property_name ?? 'UNASSIGNED'}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="label-text">Type</dt>
+                      <dd className="capitalize">{selectedAlert.transaction_type ?? '—'}</dd>
+                    </div>
+                    <div>
+                      <dt className="label-text">Date</dt>
+                      <dd>
+                        {selectedAlert.transaction_date
+                          ? formatDate(selectedAlert.transaction_date)
+                          : '—'}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="label-text">Amount</dt>
+                      <dd>
+                        {selectedAlert.amount
+                          ? formatCurrency(selectedAlert.amount)
+                          : '—'}
+                      </dd>
+                    </div>
+                  </dl>
+                  <p className="text-sm text-muted">
+                    Assign a real owner and property on Transactions, or edit the row
+                    in an open verification period.
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    <Link to="/transactions" className="btn-primary">
+                      Open Transactions
+                    </Link>
+                    {selectedAlert.link_path?.startsWith('/verification') ? (
+                      <Link to={selectedAlert.link_path} className="btn-secondary">
+                        Open Verification
+                      </Link>
+                    ) : null}
+                    <button
+                      type="button"
+                      className="btn-secondary"
+                      disabled={dismissMutation.isPending}
+                      onClick={() =>
+                        dismissMutation.mutate({ alertId: selectedAlert.id })
+                      }
+                    >
+                      Dismiss
+                    </button>
+                  </div>
+                </div>
+              ) : selectedAlert.alert_type === 'unverified_stale' ? (
+                <div className="space-y-4">
+                  <p className="text-sm text-muted">
+                    Catch up on Verification. The next in-app period starts the day after
+                    bank verified through. Dismiss hides this until the lag clears and
+                    then returns later.
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    <Link
+                      to={selectedAlert.link_path || '/verification'}
+                      className="btn-primary"
+                    >
+                      Open Verification
+                    </Link>
+                    <button
+                      type="button"
+                      className="btn-secondary"
+                      disabled={dismissMutation.isPending}
+                      onClick={() =>
+                        dismissMutation.mutate({ alertId: selectedAlert.id })
+                      }
+                    >
+                      Dismiss
+                    </button>
+                  </div>
+                </div>
               ) : selectedAlert.alert_type === 'low_balance' ? (
                 <div className="space-y-4">
                   <dl className="grid gap-2 text-sm sm:grid-cols-2">
@@ -1161,7 +1247,9 @@ export function AlertsPage() {
                   </div>
                 </div>
               ) : selectedAlert.alert_type !== 'incomplete_import' &&
-                selectedAlert.alert_type !== 'missing_deposit' ? (
+                selectedAlert.alert_type !== 'missing_deposit' &&
+                selectedAlert.alert_type !== 'unassigned_transaction' &&
+                selectedAlert.alert_type !== 'unverified_stale' ? (
                 <button
                   type="button"
                   className="btn-secondary"

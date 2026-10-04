@@ -332,6 +332,8 @@ def _ensure_sqlite_bank_reconcile_columns() -> None:
         "bank_verified_at": "DATETIME",
         "bank_asmachta": "VARCHAR(100)",
         "bank_reconcile_exclude": "BOOLEAN NOT NULL DEFAULT 0",
+        "is_payback": "BOOLEAN NOT NULL DEFAULT 0",
+        "payback_of_expense_id": "CHAR(36)",
     }
     expense_cols = {
         **deposit_cols,
@@ -392,6 +394,10 @@ def _backfill_transaction_refs_and_settings() -> None:
     try:
         backfill_missing_transaction_refs(db)
         ensure_company_bank_settings_row(db)
+        from app.services.holding import ensure_company_holdings
+
+        ensure_company_holdings(db)
+        db.commit()
     finally:
         db.close()
 

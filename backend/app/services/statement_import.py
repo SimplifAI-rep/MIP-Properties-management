@@ -184,37 +184,15 @@ class StatementImportService:
         return drafts, parser, message
 
     def _ensure_buffer_property(self) -> Property:
-        buffer = self.db.scalars(
-            select(Property)
-            .options(joinedload(Property.owner))
-            .where(Property.client_prop_id == BUFFER_PROP_ID)
-        ).first()
-        if buffer:
-            return buffer
+        from app.services.holding import ensure_company_holdings
 
-        owner = self.db.scalars(
-            select(Owner).where(Owner.name == COMPANY_OWNER_NAME)
-        ).first()
-        if not owner:
-            owner = Owner(name=COMPANY_OWNER_NAME)
-            self.db.add(owner)
-            self.db.flush()
-
-        buffer = Property(
-            owner_id=owner.id,
-            client_prop_id=BUFFER_PROP_ID,
-            name="MIP Company Buffer",
-            address="Company float / unallocated",
-            city=None,
-            status="active",
-        )
-        self.db.add(buffer)
-        self.db.flush()
-        return self.db.scalars(
+        buffer, _awaiting = ensure_company_holdings(self.db)
+        loaded = self.db.scalars(
             select(Property)
             .options(joinedload(Property.owner))
             .where(Property.id == buffer.id)
-        ).one()
+        ).first()
+        return loaded or buffer
 
     def _ensure_company_bank_account(self) -> BankAccount:
         account = self.db.scalars(

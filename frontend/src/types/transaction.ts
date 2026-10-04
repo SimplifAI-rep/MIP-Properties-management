@@ -2,6 +2,14 @@
 
 export type TransactionKind = 'deposit' | 'expense';
 
+export interface Attachment {
+  id: string;
+  upload_id: string;
+  filename: string;
+  sort: number;
+  is_legacy?: boolean;
+}
+
 export interface UnifiedTransaction {
   id: string;
   kind: TransactionKind;
@@ -34,6 +42,7 @@ export interface UnifiedTransaction {
   payment_method?: string | null;
   source?: string | null;
   receipt_ref?: string | null;
+  attachments?: Attachment[];
   source_file?: string | null;
   balance_after?: string | null;
   paid_by_resident?: boolean;
@@ -41,6 +50,8 @@ export interface UnifiedTransaction {
   paid_by_owner?: boolean;
   ledger_column?: string | null;
   is_rental_income?: boolean;
+  is_payback?: boolean;
+  payback_of_expense_id?: string | null;
   from_bank_statement?: boolean;
   needs_review?: boolean;
   review_reasons?: string | null;

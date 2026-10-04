@@ -6,7 +6,7 @@ import { VerifyTransactionTable } from './VerifyTransactionTable';
 import { VerifyGroupSection } from './verifyGroups';
 import { PeriodBalanceCheck } from './PeriodBalanceCheck';
 import { MoneyValue } from './ui/MoneyValue';
-import { bankDraftToUnified, ccDraftToUnified, txsFromApi } from '../utils/verifyTxDisplay';
+import { bankDraftToUnified, ccDraftToUnified, ccFoundTxs, txsFromApi } from '../utils/verifyTxDisplay';
 import type { UnifiedTransaction } from '../utils/unifiedTransaction';
 
 /** Read-only view of a finished bank or card period, verified transactions first. */
@@ -141,9 +141,12 @@ function VerifiedTransactions({ rows }: { rows: UnifiedTransaction[] }) {
 export function HistorySessionGroups({
   kind,
   sessionId,
+  relatedCcSessionIds = [],
 }: {
   kind: 'bank' | 'cc';
   sessionId: string;
+  /** Finished card periods that belong with this bank period. */
+  relatedCcSessionIds?: string[];
 }) {
   const bankQuery = useQuery({
     queryKey: ['bank-reconcile-session', sessionId],
@@ -155,13 +158,34 @@ export function HistorySessionGroups({
     queryFn: () => api.getCcReconcileSession(sessionId),
     enabled: kind === 'cc',
   });
+  const relatedCcQuery = useQuery({
+    queryKey: ['cc-history-txs', relatedCcSessionIds],
+    queryFn: async () => {
+      const sessions = await Promise.all(
+        relatedCcSessionIds.map((id) => api.getCcReconcileSession(id)),
+      );
+      const byId = new Map<string, UnifiedTransaction>();
+      for (const session of sessions) {
+        for (const tx of ccFoundTxs(session)) {
+          byId.set(tx.id, tx);
+        }
+      }
+      return [...byId.values()];
+    },
+    enabled: kind === 'bank' && relatedCcSessionIds.length > 0,
+  });
 
   if (kind === 'bank') {
     if (bankQuery.isLoading) return <p className="px-1 text-sm muted-text">Loading…</p>;
     if (bankQuery.isError || !bankQuery.data) {
       return <p className="px-1 text-sm text-red-600">Could not load this period.</p>;
     }
-    return <BankHistoryGroups session={bankQuery.data} />;
+    return (
+      <BankHistoryGroups
+        session={bankQuery.data}
+        cardTxs={relatedCcQuery.data ?? []}
+      />
+    );
   }
 
   if (ccQuery.isLoading) return <p className="px-1 text-sm muted-text">Loading…</p>;
@@ -171,8 +195,23 @@ export function HistorySessionGroups({
   return <CcHistoryGroups session={ccQuery.data} />;
 }
 
-function BankHistoryGroups({ session }: { session: BankReconcileSession }) {
-  const verified = txsFromApi(session.able_txs as Record<string, unknown>[] | undefined);
+function BankHistoryGroups({
+  session,
+  cardTxs,
+}: {
+  session: BankReconcileSession;
+  cardTxs: UnifiedTransaction[];
+}) {
+  const bankVerified = txsFromApi(session.able_txs as Record<string, unknown>[] | undefined);
+  const seen = new Set(bankVerified.map((tx) => tx.id));
+  const verified = [
+    ...bankVerified,
+    ...cardTxs.filter((tx) => {
+      if (seen.has(tx.id)) return false;
+      seen.add(tx.id);
+      return true;
+    }),
+  ];
   const notOnStatement = txsFromApi(
     session.not_in_excel_txs as Record<string, unknown>[] | undefined,
   );
@@ -222,7 +261,7 @@ function BankHistoryGroups({ session }: { session: BankReconcileSession }) {
 }
 
 function CcHistoryGroups({ session }: { session: CcReconcileSession }) {
-  const verified = txsFromApi(session.able_txs as Record<string, unknown>[] | undefined);
+  const verified = ccFoundTxs(session);
   const notOnStatement = txsFromApi(
     session.not_in_excel_txs as Record<string, unknown>[] | undefined,
   );

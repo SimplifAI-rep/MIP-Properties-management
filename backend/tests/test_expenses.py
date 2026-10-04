@@ -10,6 +10,7 @@ from sqlalchemy.pool import StaticPool
 from app.api.deps import get_db
 from app.core.database import Base
 from app.main import app
+from app.services.holding import ensure_unassigned_holding
 from app.services.seed import PROPERTY_ROTHSCHILD_ID, seed_reference_data, seed_sample_expenses
 
 
@@ -109,6 +110,24 @@ def test_create_expense_allows_free_text_category(client):
     )
     assert response.status_code == 201
     assert response.json()["category"] == "plumber"
+
+
+def test_create_expense_rejects_unassigned_property(client, db):
+    holding = ensure_unassigned_holding(db)
+    db.commit()
+    response = client.post(
+        "/api/v1/expenses",
+        json={
+            "property_id": str(holding.id),
+            "transaction_date": "2026-03-10",
+            "amount": "10.00",
+            "category": "maintenance",
+            "source": "manual_company",
+            "payment_method": "company_account",
+        },
+    )
+    assert response.status_code == 400
+    assert "UNASSIGNED" in response.json()["detail"]
 
 
 def test_create_expense_rejects_non_positive_amount(client):

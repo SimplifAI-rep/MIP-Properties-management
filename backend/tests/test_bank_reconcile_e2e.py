@@ -146,6 +146,15 @@ def test_step2_opening_cutover_and_settings(client, db):
         payment_method="bank_transfer",
         description="pre-cutover",
     )
+    card = Expense(
+        property_id=PROPERTY_ROTHSCHILD_ID,
+        transaction_date=date(2026, 5, 10),
+        amount=Decimal("88.00"),
+        category="insurance",
+        source="credit_card",
+        payment_method="credit_card",
+        description="pre-cutover-card",
+    )
     new = Expense(
         property_id=PROPERTY_ROTHSCHILD_ID,
         transaction_date=date(2026, 6, 5),
@@ -155,9 +164,10 @@ def test_step2_opening_cutover_and_settings(client, db):
         payment_method="bank_transfer",
         description="post-cutover",
     )
-    db.add_all([old, new])
+    db.add_all([old, card, new])
     db.commit()
     db.refresh(old)
+    db.refresh(card)
     db.refresh(new)
 
     cutover = client.post(
@@ -169,10 +179,15 @@ def test_step2_opening_cutover_and_settings(client, db):
     )
     assert cutover.status_code == 200, cutover.text
     db.refresh(old)
+    db.refresh(card)
     db.refresh(new)
     assert old.bank_verified_at is not None
     assert old.bank_asmachta is None
+    assert card.bank_verified_at is not None
+    assert card.cc_verified_at is not None
+    assert card.cc_bank_confirmed_at is not None
     assert new.bank_verified_at is None
+    assert new.cc_verified_at is None
 
 
 def test_step3_gap_parse_earliest_and_owner_paid(client, db):
@@ -300,7 +315,11 @@ def test_step4_match_confirm_cannot_complete_then_ignore(client, db):
         json={"actions": actions},
     )
     assert applied.status_code == 200
-    assert applied.json()["can_complete"] is True
+    body = applied.json()
+    assert body["counts"]["unresolved_bank"] == 0
+    assert body["counts"]["unresolved_app"] == 0
+    # Ignored leftover bank lines leave a gap — finish stays blocked.
+    assert body["can_complete"] is False
 
     db.refresh(expense)
     assert expense.bank_verified_at is not None
@@ -310,16 +329,8 @@ def test_step4_match_confirm_cannot_complete_then_ignore(client, db):
     completed = client.post(
         f"/api/v1/bank-settings/reconcile/sessions/{session['id']}/complete"
     )
-    assert completed.status_code == 200
-    settings = client.get("/api/v1/bank-settings").json()
-    assert settings["last_verification_date"] == "2026-07-08"
-
-    # Re-upload of the same period creates no new verification group
-    count_before = db.query(Expense).count()
-    again = _upload(client, SAMPLE_BANK, "/api/v1/bank-settings/reconcile/sessions")
-    assert again.status_code == 400
-    assert "No new bank transactions" in again.json()["detail"]
-    assert db.query(Expense).count() == count_before
+    assert completed.status_code == 400
+    assert "off by" in completed.json()["detail"].lower()
 
 
 def test_step4_add_from_bank_creates_verified(client, db):
@@ -366,6 +377,30 @@ def test_step4_add_from_bank_creates_verified(client, db):
     assert expense.bank_verified_at is not None
     assert expense.bank_asmachta == unmatched.get("asmachta")
     assert expense.transaction_ref
+    from app.models.property import Property
+    from app.services.holding import CREATED_FROM_VERIFICATION_REASON
+
+    holding = db.get(Property, expense.property_id)
+    assert holding is not None
+    assert holding.client_prop_id != "UNASSIGNED"
+    assert expense.property_id == PROPERTY_ROTHSCHILD_ID
+    assert expense.needs_review is False
+    assert expense.review_reasons == CREATED_FROM_VERIFICATION_REASON
+    assert expense.source_file == session["filename"]
+    listed_row = next(
+        item
+        for item in client.get("/api/v1/expenses", params={"page_size": 200}).json()["items"]
+        if item["id"] == str(expense.id)
+    )
+    assert listed_row["source_file"] == session["filename"]
+    assert listed_row["review_reasons"] == CREATED_FROM_VERIFICATION_REASON
+    tagged = client.get(
+        "/api/v1/expenses",
+        params={"review_reason": CREATED_FROM_VERIFICATION_REASON, "page_size": 200},
+    )
+    assert tagged.status_code == 200
+    assert str(expense.id) in {item["id"] for item in tagged.json()["items"]}
+    assert added.json()["counts"].get("unassigned", 0) == 0
 
 
 def test_step5_bank_alerts_require_reason_and_clear(client, db):
@@ -574,16 +609,19 @@ def test_frontend_verification_surface_exists():
     assert "Found on statement" in bank_panel
     assert "In the app, not on the statement" in bank_panel
     assert "On the statement, not in the app" in bank_panel
+    assert "He/She, rental, owner-paid, and card tags" in bank_panel
     assert "Finish period" in bank_panel
     assert "Confirm all found" in bank_panel
     assert "Upload bank statement" in bank_panel
     assert "Card payments" in bank_panel
     assert "Push to next cycle" in bank_panel
-    assert "not in this payment" in bank_panel
+    assert "Keep in this period" in bank_panel
+    assert "leftoverHint" in bank_panel
+    assert "Leftover can wait" in bank_panel
     assert "PeriodBalanceCheck" in bank_panel
-    assert "Finish anyway" in bank_panel
+    assert "Finish anyway" not in bank_panel
+    assert "finishGapCopy" in bank_panel
     assert "Restore the in-progress period" in bank_panel
-    assert "balanceMismatchCopy" in bank_panel
     history = (frontend / "components" / "HistorySessionGroups.tsx").read_text(
         encoding="utf-8"
     )
@@ -592,6 +630,9 @@ def test_frontend_verification_surface_exists():
         frontend / "components" / "PeriodBalanceCheck.tsx"
     ).read_text(encoding="utf-8")
     assert "Totals match" in (
+        frontend / "components" / "PeriodBalanceCheck.tsx"
+    ).read_text(encoding="utf-8")
+    assert "create a transaction for that amount" in (
         frontend / "components" / "PeriodBalanceCheck.tsx"
     ).read_text(encoding="utf-8")
     assert "Bank in" in (
@@ -607,8 +648,13 @@ def test_frontend_verification_surface_exists():
         encoding="utf-8"
     )
     assert "Found on statement" in cc_panel
-    assert "In the app, not on the statement" in cc_panel
+    assert "Not for this period" in cc_panel
+    assert "Keep in this period" in cc_panel
     assert "Push to next cycle" in cc_panel
+    assert "Leftover can wait" in cc_panel
+    assert "Another card" in cc_panel
+    assert "disabled={busy || Boolean(activeSession)}" not in cc_panel
+    assert cc_panel.find("Not for this period") < cc_panel.find("Found on statement")
     assert "no transactions for that period" in cc_panel
     assert "On the statement, not in the app" in cc_panel
     assert "Finish period" in cc_panel
@@ -618,14 +664,56 @@ def test_frontend_verification_surface_exists():
     assert "BankVerificationPanel" not in dash
     tx_page = (frontend / "pages" / "TransactionsPage.tsx").read_text(encoding="utf-8")
     assert "Credit card" in tx_page
-    assert "Select a card" in tx_page
+    assert "OwnerPropertyFields" in tx_page
+    assert "Please choose an owner, property, date, and amount." in tx_page
+    assert "Payback" in tx_page
+    paid_with = (frontend / "components" / "ui" / "PaidWithSelect.tsx").read_text(
+        encoding="utf-8"
+    )
+    assert "Select a card" in paid_with
+    bank_panel_text = (frontend / "components" / "BankReconcilePanel.tsx").read_text(
+        encoding="utf-8"
+    )
+    assert "OwnerPropertyFields" in bank_panel_text
+    assert "Choose owner and property" in bank_panel_text
+    assert "Create payback" in bank_panel_text
+    assert "Save" in bank_panel_text
+    assert "Merge" in bank_panel_text
+    assert "Use bank values" in bank_panel_text
+    assert "leftoverHint" in bank_panel_text
     table = (frontend / "components" / "TransactionTable.tsx").read_text(encoding="utf-8")
     assert "Card pending" in table
     assert "Credit card verified" in table
     assert "Credit card postponed" in table
     assert "Bank settled" in table
+    assert "Payback" in table
     cards_page = (frontend / "pages" / "CreditCardsPage.tsx").read_text(encoding="utf-8")
     assert "View transactions" in cards_page
+    next_cycle = (frontend / "pages" / "NextCyclePage.tsx").read_text(encoding="utf-8")
+    assert "Next cycle" in next_cycle
+    assert "deferred_only" in next_cycle
+    shell = (frontend / "components" / "layout" / "AppShell.tsx").read_text(encoding="utf-8")
+    assert "/next-cycle" in shell
+    assert "showOpenVerification" in shell
+    app_routes = (frontend / "App.tsx").read_text(encoding="utf-8")
+    assert 'path="next-cycle"' in app_routes
+    assert "NextCyclePage" in app_routes
     alerts = (frontend / "pages" / "AlertsPage.tsx").read_text(encoding="utf-8")
     assert "cc_unmatched" in alerts
     assert "Open Verification" in alerts
+    assert "unassigned_transaction" in alerts
+    assert "unverified_stale" in alerts
+    assert "Unverified for more than a month" in alerts
+    assert "Open Transactions" in alerts
+    admin_bank = (frontend / "pages" / "AdminBankSettingsPage.tsx").read_text(
+        encoding="utf-8"
+    )
+    assert "Go live" in admin_bank
+    assert "next in-app period" in admin_bank
+    assert "created_from_verification" in tx_page
+    assert "From verification" in table
+    assert "Awaiting return" in table
+    assert "Write off to Buffer" in tx_page
+    assert "Record return" in tx_page
+    assert "/unassigned" not in shell
+    assert "UnassignedPage" not in app_routes

@@ -12,6 +12,11 @@ from app.models.property import Property
 from app.schemas import ExpenseCategoryTotal, ExpenseCreate, ExpenseRead, ExpenseUpdate
 from app.services.running_balance import compute_running_balances
 from app.services.source_file import load_upload_filenames, resolve_source_file
+from app.services.holding import (
+    clear_unassigned_review,
+    keep_created_from_verification,
+    reject_unassigned_for_manual_create,
+)
 from app.services.transaction_filters import (
     apply_expense_list_filters,
     collect_expense_summary_filters,
@@ -111,10 +116,12 @@ def list_expenses(
     max_amount: Decimal | None = None,
     source_file: str | None = None,
     needs_review: bool | None = None,
+    review_reason: str | None = None,
     paid_by_resident: bool | None = None,
     paid_by_owner: bool | None = None,
     paid_by_company: bool | None = None,
     ledger_column: str | None = None,
+    deferred_only: bool = False,
     page: int = 1,
     page_size: int = 50,
     include_running_balance: bool = True,
@@ -126,8 +133,13 @@ def list_expenses(
         select(Expense, Property.name, Owner.name, Property.client_prop_id)
         .join(Property, Expense.property_id == Property.id)
         .join(Owner, Property.owner_id == Owner.id)
-        .order_by(Expense.transaction_date.desc())
     )
+    if deferred_only:
+        stmt = stmt.order_by(
+            Expense.cc_deferred_until.asc(), Expense.transaction_date.desc()
+        )
+    else:
+        stmt = stmt.order_by(Expense.transaction_date.desc())
     stmt = apply_expense_list_filters(
         stmt,
         property_id=property_id,
@@ -148,10 +160,12 @@ def list_expenses(
         max_amount=max_amount,
         source_file=source_file,
         needs_review=needs_review,
+        review_reason=review_reason,
         paid_by_resident=paid_by_resident,
         paid_by_owner=paid_by_owner,
         paid_by_company=paid_by_company,
         ledger_column=ledger_column,
+        deferred_only=deferred_only,
     )
 
     count_stmt = select(func.count()).select_from(stmt.subquery())
@@ -176,6 +190,9 @@ def list_expenses(
         )
         for expense, property_name, owner_name, client_prop_id_val in rows
     ]
+    from app.services.attachments import apply_attachments
+
+    apply_attachments(db, "expense", items, expenses)
     return items, total
 
 
@@ -189,6 +206,12 @@ def create_expense(db: Session, payload: ExpenseCreate) -> ExpenseRead:
     property_row = db.get(Property, payload.property_id)
     if not property_row:
         raise HTTPException(status_code=404, detail="Property not found")
+    reject_unassigned_for_manual_create(property_row)
+
+    if payload.transaction_date is None:
+        raise HTTPException(status_code=400, detail="Date is required.")
+    if payload.amount is None or payload.amount <= 0:
+        raise HTTPException(status_code=400, detail="Amount must be greater than 0.")
 
     owner = db.get(Owner, property_row.owner_id)
     if not owner:
@@ -219,15 +242,20 @@ def create_expense(db: Session, payload: ExpenseCreate) -> ExpenseRead:
     return expense_to_read(expense, property_row.name, owner.name, property_row.client_prop_id)
 
 
-def _clear_review_if_complete(expense: Expense) -> None:
+def _clear_review_if_complete(expense: Expense, prop: Property | None = None) -> None:
+    if prop is not None:
+        clear_unassigned_review(expense, prop)
+        if getattr(expense, "needs_review", False) and expense.review_reasons:
+            return
     if (
         getattr(expense, "needs_review", False)
         and expense.transaction_date is not None
         and expense.amount is not None
         and expense.amount > 0
+        and (prop is None or prop.client_prop_id != "UNASSIGNED")
     ):
         expense.needs_review = False
-        expense.review_reasons = None
+        expense.review_reasons = keep_created_from_verification(expense.review_reasons)
 
 
 def update_expense(db: Session, expense_id: UUID, payload: ExpenseUpdate) -> ExpenseRead:
@@ -278,7 +306,7 @@ def update_expense(db: Session, expense_id: UUID, payload: ExpenseUpdate) -> Exp
             f"{expense.category} | {notes}" if notes else expense.category
         )
 
-    _clear_review_if_complete(expense)
+    _clear_review_if_complete(expense, property_row)
     db.commit()
     db.refresh(expense)
     return expense_to_read(expense, property_row.name, owner.name, property_row.client_prop_id)

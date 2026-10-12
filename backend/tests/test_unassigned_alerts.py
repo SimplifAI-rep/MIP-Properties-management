@@ -1,6 +1,8 @@
 from decimal import Decimal
 from datetime import date
 from uuid import UUID, uuid4
+
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker

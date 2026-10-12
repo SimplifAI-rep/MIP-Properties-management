@@ -201,13 +201,13 @@ def test_step3_gap_parse_earliest_and_owner_paid(client, db):
     )
     parsed = parse_bank_statement_balance(SAMPLE_BANK.read_bytes())
     assert isinstance(parsed["statement_start_date"], date)
-    assert parsed["statement_start_date"] == date(2026, 6, 2)
-    assert parsed["statement_end_date"] == date(2026, 7, 8)
+    assert parsed["statement_start_date"] == date(2026, 7, 2)
+    assert parsed["statement_end_date"] == date(2026, 8, 7)
 
     upload = _upload(client, SAMPLE_BANK, "/api/v1/bank-settings/parse-bank-balance")
     assert upload.status_code == 200
     body = upload.json()
-    assert body["statement_start_date"] == "2026-06-02"
+    assert body["statement_start_date"] == "2026-07-02"
     assert "T" not in body["statement_start_date"]
 
     before = client.get(
@@ -510,9 +510,9 @@ def test_step6_cc_path_and_alerts(client, db):
 def test_step7_settlement_group_no_double_count_in_n(client, db):
     now = datetime.now(timezone.utc)
     members = [
-        ("A", Decimal("1000.00"), date(2026, 6, 15)),
-        ("B", Decimal("1166.50"), date(2026, 6, 20)),
-        ("C", Decimal("1000.00"), date(2026, 6, 28)),
+        ("A", Decimal("1000.00"), date(2026, 7, 15)),
+        ("B", Decimal("1166.50"), date(2026, 7, 20)),
+        ("C", Decimal("1000.00"), date(2026, 7, 28)),
     ]
     for name, amount, tx_date in members:
         db.add(
@@ -536,7 +536,7 @@ def test_step7_settlement_group_no_double_count_in_n(client, db):
         line
         for line in session["lines"]
         if line["status"] == "proposed_settlement"
-        and line.get("transaction_date") == "2026-07-02"
+        and line.get("transaction_date") == "2026-08-01"
     )
     assert Decimal(july["proposed_group_total"]) == Decimal("3166.50")
     confirmed = client.post(

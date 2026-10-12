@@ -1,4 +1,4 @@
-/** Canonical shared transaction row used across list UIs, AI results, and exports. */
+/** Shared display row — the unit every list UI uses. Matches backend TransactionRead. */
 
 export type TransactionKind = 'deposit' | 'expense';
 
@@ -10,7 +10,7 @@ export interface Attachment {
   is_legacy?: boolean;
 }
 
-export interface UnifiedTransaction {
+export interface Transaction {
   id: string;
   kind: TransactionKind;
   property_id: string;

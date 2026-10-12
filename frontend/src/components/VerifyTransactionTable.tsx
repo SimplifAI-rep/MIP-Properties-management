@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { TransactionTable } from './TransactionTable';
 import { VerifySpinner } from './verifyGroups';
-import type { UnifiedTransaction } from '../utils/unifiedTransaction';
+import type { Transaction } from '../types';
 
 /**
  * Transactions in the verification flow look exactly like they do on the
@@ -15,10 +15,10 @@ export function VerifyTransactionTable({
   pendingRowId,
   frameClassName = '',
 }: {
-  rows: UnifiedTransaction[];
+  rows: Transaction[];
   emptyMessage?: string;
   /** Per-row buttons. Omit for read-only lists (finished periods). */
-  renderActions?: (row: UnifiedTransaction) => ReactNode;
+  renderActions?: (row: Transaction) => ReactNode;
   /** Row currently being saved — shows a spinner instead of its buttons. */
   pendingRowId?: string | null;
   /** Lists inside a VerifyGroupSection inherit its frame and pass nothing here. */

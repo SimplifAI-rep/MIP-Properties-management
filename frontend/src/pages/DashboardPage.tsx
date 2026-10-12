@@ -22,7 +22,7 @@ import {
 } from '../utils/transactionsNav';
 import {
   mergeAndSortTransactions,
-} from '../utils/unifiedTransaction';
+} from '../utils/transactionView';
 import {
   buildDashboardPeriod,
   defaultDashboardPeriod,
@@ -695,6 +695,7 @@ export function DashboardPage() {
                           ? 'Expected deposits missing for all months in this period.'
                           : 'Some expected deposits are missing in this period.'
                     }
+                    hideHint
                   >
                     <span className={depositStatusBadge(item.depositStatus)}>
                       {depositStatusLabel(item.depositStatus)}

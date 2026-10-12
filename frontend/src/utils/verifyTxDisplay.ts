@@ -1,9 +1,15 @@
-import type { BankReconcileLine, CcReconcileLine } from '../types';
-import { unifiedFromRecord, type UnifiedTransaction } from '../utils/unifiedTransaction';
+import type {
+  BankReconcileLine,
+  CcReconcileLine,
+  Transaction,
+} from '../types';
+import { toTransaction } from './transactionView';
 
 /** Map API TransactionRead-shaped rows for TransactionTable. */
-export function txsFromApi(items: Record<string, unknown>[] | undefined): UnifiedTransaction[] {
-  return (items ?? []).map((item) => unifiedFromRecord(item));
+export function txsFromApi(
+  items: Transaction[] | Record<string, unknown>[] | undefined,
+): Transaction[] {
+  return (items ?? []).map((item) => toTransaction(item));
 }
 
 /**
@@ -17,7 +23,7 @@ function draftSection(status: string): string {
 }
 
 /** Synthetic row for Excel-only drafts (not yet in the app). */
-export function bankDraftToUnified(line: BankReconcileLine): UnifiedTransaction {
+export function bankDraftToTransaction(line: BankReconcileLine): Transaction {
   return {
     id: line.fingerprint,
     kind: line.side === 'credit' ? 'deposit' : 'expense',
@@ -46,7 +52,7 @@ export function bankDraftToUnified(line: BankReconcileLine): UnifiedTransaction 
   };
 }
 
-export function ccDraftToUnified(line: CcReconcileLine): UnifiedTransaction {
+export function ccDraftToTransaction(line: CcReconcileLine): Transaction {
   return {
     id: line.fingerprint,
     kind: 'expense',
@@ -61,9 +67,10 @@ export function ccDraftToUnified(line: CcReconcileLine): UnifiedTransaction {
     bank_verified_at: null,
     bank_asmachta: null,
     bank_reconcile_exclude: false,
-    cc_verified_at: line.status === 'added' || line.status === 'matched'
-      ? new Date().toISOString()
-      : null,
+    cc_verified_at:
+      line.status === 'added' || line.status === 'matched'
+        ? new Date().toISOString()
+        : null,
     section: draftSection(line.status),
     notes: line.details || line.merchant || null,
     company: line.merchant ?? null,
@@ -81,11 +88,11 @@ export function ccDraftToUnified(line: CcReconcileLine): UnifiedTransaction {
 /** Confirmed or created card charges for the Found / history lists. */
 export function ccFoundTxs(session: {
   lines?: CcReconcileLine[];
-  able_txs?: Record<string, unknown>[];
-} | null | undefined): UnifiedTransaction[] {
+  able_txs?: Transaction[];
+} | null | undefined): Transaction[] {
   const ableTxs = txsFromApi(session?.able_txs);
   const ableById = new Map(ableTxs.map((tx) => [tx.id, tx]));
-  const found: UnifiedTransaction[] = [];
+  const found: Transaction[] = [];
   const seen = new Set<string>();
   for (const line of session?.lines ?? []) {
     if (
@@ -98,7 +105,7 @@ export function ccFoundTxs(session: {
     const id = line.proposed_tx_id;
     if (!id || seen.has(id)) continue;
     seen.add(id);
-    found.push(ableById.get(id) ?? { ...ccDraftToUnified(line), id });
+    found.push(ableById.get(id) ?? { ...ccDraftToTransaction(line), id });
   }
   for (const tx of ableTxs) {
     if (seen.has(tx.id)) continue;
@@ -107,4 +114,3 @@ export function ccFoundTxs(session: {
   }
   return found;
 }
-

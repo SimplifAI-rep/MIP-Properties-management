@@ -97,6 +97,10 @@
     @apply w-full table-fixed text-sm;
   }
 
+  .table-shell-wide {
+    min-width: 70rem;
+  }
+
   .table-shell th,
   .table-shell td {
     @apply overflow-hidden;
@@ -191,15 +195,20 @@
   }
 
   .tooltip {
-    @apply relative inline-flex max-w-full align-baseline;
+    @apply relative inline-flex min-w-0 max-w-full overflow-visible align-baseline;
   }
 
   .tooltip-trigger {
-    @apply inline-flex cursor-help items-center gap-1 text-inherit;
+    @apply inline-flex min-w-0 max-w-full cursor-help items-center gap-0.5 overflow-visible text-inherit;
+  }
+
+  .tooltip-label {
+    @apply min-w-0 truncate;
   }
 
   .tooltip-hint {
-    @apply inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full bg-slate-200 text-[9px] font-bold leading-none text-slate-600 dark:bg-slate-700 dark:text-slate-300;
+    @apply inline-flex size-4 shrink-0 items-center justify-center overflow-visible rounded-full bg-slate-200 pt-px text-[10px] font-bold text-slate-600 dark:bg-slate-700 dark:text-slate-300;
+    line-height: 1;
   }
 
   .tooltip-content {

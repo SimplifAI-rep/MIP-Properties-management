@@ -185,7 +185,7 @@ def test_upload_keeps_only_lines_after_last_verification(client, db):
     settings = get_or_create_settings(db)
     settings.opening_balance = Decimal("174447.63")
     settings.opening_balance_as_of = date(2026, 6, 1)
-    settings.last_verification_date = date(2026, 6, 30)
+    settings.last_verification_date = date(2026, 7, 31)
     settings.gap_tolerance_amount = Decimal("999999.00")
     db.add(settings)
     db.commit()
@@ -194,12 +194,12 @@ def test_upload_keeps_only_lines_after_last_verification(client, db):
     before_or_on = [
         line
         for line in parsed["lines"]
-        if line.get("transaction_date") and line["transaction_date"] <= "2026-06-30"
+        if line.get("transaction_date") and line["transaction_date"] <= "2026-07-31"
     ]
     after = [
         line
         for line in parsed["lines"]
-        if line.get("transaction_date") and line["transaction_date"] > "2026-06-30"
+        if line.get("transaction_date") and line["transaction_date"] > "2026-07-31"
     ]
     assert before_or_on and after
 
@@ -216,10 +216,10 @@ def test_upload_keeps_only_lines_after_last_verification(client, db):
         )
     assert created.status_code == 200, created.text
     session = created.json()
-    assert session["statement_start_date"] >= "2026-07-01"
+    assert session["statement_start_date"] >= "2026-08-01"
     assert len(session["lines"]) == len(after)
     assert all(
-        (line.get("transaction_date") or "") > "2026-06-30" for line in session["lines"]
+        (line.get("transaction_date") or "") > "2026-07-31" for line in session["lines"]
     )
 
 

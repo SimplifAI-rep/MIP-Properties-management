@@ -1,13 +1,17 @@
 import { useQuery } from '@tanstack/react-query';
 import { useMemo, useState, type ReactNode } from 'react';
 import { api } from '../api/client';
-import type { BankReconcileSession, CcReconcileSession } from '../types';
+import type { BankReconcileSession, CcReconcileSession, Transaction } from '../types';
 import { VerifyTransactionTable } from './VerifyTransactionTable';
 import { VerifyGroupSection } from './verifyGroups';
 import { PeriodBalanceCheck } from './PeriodBalanceCheck';
 import { MoneyValue } from './ui/MoneyValue';
-import { bankDraftToUnified, ccDraftToUnified, ccFoundTxs, txsFromApi } from '../utils/verifyTxDisplay';
-import type { UnifiedTransaction } from '../utils/unifiedTransaction';
+import {
+  bankDraftToTransaction,
+  ccDraftToTransaction,
+  ccFoundTxs,
+  txsFromApi,
+} from '../utils/verifyTxDisplay';
 
 /** Read-only view of a finished bank or card period, verified transactions first. */
 
@@ -19,7 +23,7 @@ const FLOW_OPTIONS: { id: Flow; label: string }[] = [
   { id: 'out', label: 'Money out' },
 ];
 
-function matchesQuery(row: UnifiedTransaction, needle: string): boolean {
+function matchesQuery(row: Transaction, needle: string): boolean {
   if (!needle) return true;
   const fields = [
     row.notes,
@@ -38,7 +42,7 @@ function matchesQuery(row: UnifiedTransaction, needle: string): boolean {
   );
 }
 
-function sumBy(rows: UnifiedTransaction[], kind: 'deposit' | 'expense'): number {
+function sumBy(rows: Transaction[], kind: 'deposit' | 'expense'): number {
   return rows
     .filter((row) => row.kind === kind)
     .reduce((total, row) => total + Number(row.amount || 0), 0);
@@ -68,7 +72,7 @@ function Stat({
 }
 
 /** Verified transactions with a search box — the main thing you open a period for. */
-function VerifiedTransactions({ rows }: { rows: UnifiedTransaction[] }) {
+function VerifiedTransactions({ rows }: { rows: Transaction[] }) {
   const [query, setQuery] = useState('');
   const [flow, setFlow] = useState<Flow>('all');
 
@@ -164,7 +168,7 @@ export function HistorySessionGroups({
       const sessions = await Promise.all(
         relatedCcSessionIds.map((id) => api.getCcReconcileSession(id)),
       );
-      const byId = new Map<string, UnifiedTransaction>();
+      const byId = new Map<string, Transaction>();
       for (const session of sessions) {
         for (const tx of ccFoundTxs(session)) {
           byId.set(tx.id, tx);
@@ -200,9 +204,9 @@ function BankHistoryGroups({
   cardTxs,
 }: {
   session: BankReconcileSession;
-  cardTxs: UnifiedTransaction[];
+  cardTxs: Transaction[];
 }) {
-  const bankVerified = txsFromApi(session.able_txs as Record<string, unknown>[] | undefined);
+  const bankVerified = txsFromApi(session.able_txs);
   const seen = new Set(bankVerified.map((tx) => tx.id));
   const verified = [
     ...bankVerified,
@@ -212,12 +216,10 @@ function BankHistoryGroups({
       return true;
     }),
   ];
-  const notOnStatement = txsFromApi(
-    session.not_in_excel_txs as Record<string, unknown>[] | undefined,
-  );
+  const notOnStatement = txsFromApi(session.not_in_excel_txs);
   const skippedLines = session.lines
     .filter((line) => line.status === 'ignored')
-    .map(bankDraftToUnified);
+    .map(bankDraftToTransaction);
 
   return (
     <div className="space-y-3">
@@ -262,12 +264,10 @@ function BankHistoryGroups({
 
 function CcHistoryGroups({ session }: { session: CcReconcileSession }) {
   const verified = ccFoundTxs(session);
-  const notOnStatement = txsFromApi(
-    session.not_in_excel_txs as Record<string, unknown>[] | undefined,
-  );
+  const notOnStatement = txsFromApi(session.not_in_excel_txs);
   const skippedLines = session.lines
     .filter((line) => line.status === 'ignored')
-    .map(ccDraftToUnified);
+    .map(ccDraftToTransaction);
 
   const charged = sumBy(verified, 'expense');
 

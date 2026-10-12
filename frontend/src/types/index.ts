@@ -1,3 +1,7 @@
+import type { Attachment, Transaction } from './transaction';
+
+export type { Attachment, Transaction, TransactionKind } from './transaction';
+
 export interface Owner {
   id: string;
   name: string;
@@ -46,10 +50,7 @@ export interface BankAccount {
   property_id?: string | null;
 }
 
-import type { Attachment } from './transaction';
-
-export type { Attachment };
-
+/** REST row from GET /deposits. List UIs convert this to Transaction. */
 export interface Deposit {
   id: string;
   property_id: string;
@@ -213,6 +214,7 @@ export interface DepositFilters {
   page_size?: number;
 }
 
+/** REST row from GET /expenses. List UIs convert this to Transaction. */
 export interface Expense {
   id: string;
   property_id: string;
@@ -594,9 +596,6 @@ export interface FixIncompleteResponse {
   amount: string;
 }
 
-export type { TransactionKind, UnifiedTransaction } from './transaction';
-
-
 export interface CompanyBankSettings {
   bank_account_id?: string | null;
   bank_account_label?: string | null;
@@ -712,6 +711,7 @@ export interface BankReconcileLine {
   ignore_reason?: string | null;
 }
 
+/** Verification match-list row (not the Transaction display unit). */
 export interface BankReconcileAppRow {
   kind: 'deposit' | 'expense';
   id: string;
@@ -751,9 +751,9 @@ export interface BankReconcileSession {
   cc_deduction_count?: number;
   lines: BankReconcileLine[];
   unmatched_app: BankReconcileAppRow[];
-  able_txs?: Record<string, unknown>[];
-  not_in_excel_txs?: Record<string, unknown>[];
-  leftover_cc_txs?: Record<string, unknown>[];
+  able_txs?: Transaction[];
+  not_in_excel_txs?: Transaction[];
+  leftover_cc_txs?: Transaction[];
 }
 
 export interface CcReconcileAction {
@@ -797,8 +797,8 @@ export interface CcReconcileSession {
   can_complete: boolean;
   lines: CcReconcileLine[];
   unmatched_app: BankReconcileAppRow[];
-  able_txs?: Record<string, unknown>[];
-  not_in_excel_txs?: Record<string, unknown>[];
+  able_txs?: Transaction[];
+  not_in_excel_txs?: Transaction[];
 }
 
 export interface VerificationBankGroup {
@@ -898,6 +898,6 @@ export interface VerificationWorkspace {
 }
 
 export interface VerificationTransactionsResponse {
-  items: Record<string, unknown>[];
+  items: Transaction[];
   total: number;
 }

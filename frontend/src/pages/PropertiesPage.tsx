@@ -18,7 +18,7 @@ import {
   ownerTransactionsState,
   propertyTransactionsState,
 } from '../utils/transactionsNav';
-import { mergeAndSortTransactions } from '../utils/unifiedTransaction';
+import { mergeAndSortTransactions } from '../utils/transactionView';
 import { getUserErrorMessage } from '../utils/errors';
 
 const PROPERTY_COL_COUNT = 8;

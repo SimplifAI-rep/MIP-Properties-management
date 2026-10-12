@@ -8,7 +8,7 @@ import {
   LoadingState,
   formatDate,
 } from '../components/ui/States';
-import { recordToUnified } from '../utils/unifiedTransaction';
+import { toTransaction } from '../utils/transactionView';
 
 export function NextCyclePage() {
   const deferredQuery = useQuery({
@@ -31,7 +31,7 @@ export function NextCyclePage() {
   }
 
   const rows = (deferredQuery.data?.items ?? []).map((row) =>
-    recordToUnified(row as unknown as Record<string, unknown>, 'expense'),
+    toTransaction(row, 'expense'),
   );
 
   return (

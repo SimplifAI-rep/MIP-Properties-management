@@ -1,4 +1,4 @@
-import { useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 
 type TooltipProps = {
@@ -10,6 +10,8 @@ type TooltipProps = {
 };
 
 type Position = { top: number; left: number };
+
+const DISMISS_CONTROL = 'button, a[href], [role="button"], input[type="button"], input[type="submit"]';
 
 export function Tooltip({ content, children, className, hideHint = false }: TooltipProps) {
   const tipId = useId();
@@ -37,12 +39,27 @@ export function Tooltip({ content, children, className, hideHint = false }: Tool
     };
   }, [open]);
 
+  useEffect(() => {
+    if (!open) return;
+    const dismiss = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      if (target.closest(DISMISS_CONTROL)) setOpen(false);
+    };
+    document.addEventListener('pointerdown', dismiss, true);
+    return () => document.removeEventListener('pointerdown', dismiss, true);
+  }, [open]);
+
   return (
     <span
       className={`tooltip${className ? ` ${className}` : ''}`}
       onMouseEnter={() => setOpen(true)}
       onMouseLeave={() => setOpen(false)}
-      onFocus={() => setOpen(true)}
+      onFocus={(event) => {
+        if (event.target instanceof Element && event.target.matches(':focus-visible')) {
+          setOpen(true);
+        }
+      }}
       onBlur={() => setOpen(false)}
     >
       <span
@@ -51,7 +68,7 @@ export function Tooltip({ content, children, className, hideHint = false }: Tool
         tabIndex={0}
         aria-describedby={open ? tipId : undefined}
       >
-        {children}
+        {hideHint ? children : <span className="tooltip-label">{children}</span>}
         {hideHint ? null : (
           <span className="tooltip-hint" aria-hidden="true">
             ?

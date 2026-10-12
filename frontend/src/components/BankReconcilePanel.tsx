@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { api } from '../api/client';
-import type { BankReconcileNearMiss, BankReconcileSession } from '../types';
+import type { BankReconcileNearMiss, BankReconcileSession, Transaction } from '../types';
 import { VerifyTransactionTable } from './VerifyTransactionTable';
 import {
   VerifyGroupSection,
@@ -27,8 +27,7 @@ import {
   invalidateAlertData,
   invalidateVerificationWorkspace,
 } from '../utils/invalidateQueries';
-import { bankDraftToUnified, txsFromApi } from '../utils/verifyTxDisplay';
-import type { UnifiedTransaction } from '../utils/unifiedTransaction';
+import { bankDraftToTransaction, txsFromApi } from '../utils/verifyTxDisplay';
 
 const LINE_STATUS_KEYS = [
   'proposed_match',
@@ -130,7 +129,7 @@ export function BankReconcilePanel() {
   const [bankAccountId, setBankAccountId] = useState<string>('');
   const [pendingRowId, setPendingRowId] = useState<string | null>(null);
   const [pendingBulk, setPendingBulk] = useState<string | null>(null);
-  const [editingAdded, setEditingAdded] = useState<UnifiedTransaction | null>(null);
+  const [editingAdded, setEditingAdded] = useState<Transaction | null>(null);
   const [editOwnerId, setEditOwnerId] = useState('');
   const [editPropertyId, setEditPropertyId] = useState('');
   const [editSection, setEditSection] = useState('');
@@ -458,17 +457,11 @@ export function BankReconcilePanel() {
     onError: (err) => setError(getUserErrorMessage(err)),
   });
 
-  const ableTxs: UnifiedTransaction[] = txsFromApi(
-    activeSession?.able_txs as Record<string, unknown>[] | undefined,
-  );
-  const notInExcelTxs: UnifiedTransaction[] = txsFromApi(
-    activeSession?.not_in_excel_txs as Record<string, unknown>[] | undefined,
-  );
-  const leftoverCcTxs: UnifiedTransaction[] = txsFromApi(
-    activeSession?.leftover_cc_txs as Record<string, unknown>[] | undefined,
-  );
+  const ableTxs = txsFromApi(activeSession?.able_txs);
+  const notInExcelTxs = txsFromApi(activeSession?.not_in_excel_txs);
+  const leftoverCcTxs = txsFromApi(activeSession?.leftover_cc_txs);
   const pendingLeftoverCcTxs = leftoverCcTxs.filter((tx) => !tx.cc_bank_confirmed_at);
-  const draftTxs: UnifiedTransaction[] = notInBankLines.map(bankDraftToUnified);
+  const draftTxs: Transaction[] = notInBankLines.map(bankDraftToTransaction);
 
   const counts = activeSession?.counts ?? {};
   const totalItems =
@@ -552,7 +545,7 @@ export function BankReconcilePanel() {
     ]);
   }
 
-  function openAddedEdit(row: UnifiedTransaction) {
+  function openAddedEdit(row: Transaction) {
     const ownerId =
       (propertiesQuery.data ?? []).find((property) => property.id === row.property_id)
         ?.owner_id ?? '';
@@ -616,7 +609,7 @@ export function BankReconcilePanel() {
     ]);
   }
 
-  function confirmOne(tx: UnifiedTransaction) {
+  function confirmOne(tx: Transaction) {
     const match = fingerprintByTxId.get(tx.id);
     if (!match) return;
     runActions(null, tx.id, [
@@ -639,7 +632,7 @@ export function BankReconcilePanel() {
     ]);
   }
 
-  function mergeFromApp(row: UnifiedTransaction, fingerprint: string) {
+  function mergeFromApp(row: Transaction, fingerprint: string) {
     runActions(null, row.id, [
       {
         action: 'merge',

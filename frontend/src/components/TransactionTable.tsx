@@ -5,19 +5,18 @@ import { useFeedback } from '../context/FeedbackContext';
 import { formatCurrency, formatDate } from './ui/States';
 import { FilePreviewModal, isPreviewableFile } from './ui/FilePreviewModal';
 import { Tooltip } from './ui/Tooltip';
+import type { Transaction } from '../types';
 import {
   formatTransactionFeedback,
   isUploadReceiptRef,
-  transactionAmountClassName,
   transactionRowClassName,
-  type UnifiedTransaction,
-} from '../utils/unifiedTransaction';
+} from '../utils/transactionView';
 
 export function TransactionTypeBadges({
   row,
   reviewMarker,
 }: {
-  row: UnifiedTransaction;
+  row: Transaction;
   reviewMarker?: ReactNode;
 }) {
   return (
@@ -27,47 +26,47 @@ export function TransactionTypeBadges({
         {row.kind === 'deposit' ? 'Deposit' : 'Expense'}
       </span>
       {row.paid_by_resident ? (
-        <Tooltip content="Excel He/She paid — excluded from company float.">
+        <Tooltip content="Excel He/She paid — excluded from company float." hideHint>
           <span className="badge-resident-paid">He/She paid</span>
         </Tooltip>
       ) : null}
       {row.paid_by_owner ? (
-        <Tooltip content="Paid by the owner — excluded from company float.">
+        <Tooltip content="Paid by the owner — excluded from company float." hideHint>
           <span className="badge-owner-paid">Owner paid</span>
         </Tooltip>
       ) : null}
       {row.paid_by_company ? (
-        <Tooltip content="Paid by the company (MIP) — counts in company float.">
+        <Tooltip content="Paid by the company (MIP) — counts in company float." hideHint>
           <span className="badge-mip-paid">MIP paid</span>
         </Tooltip>
       ) : null}
       {row.ledger_column === 'nearly_cc' ? (
-        <Tooltip content="From the Nearly credit-card column.">
+        <Tooltip content="From the Nearly credit-card column." hideHint>
           <span className="badge-nearly-cc">Nearly CC</span>
         </Tooltip>
       ) : null}
       {row.ledger_column === 'cash' || row.payment_method === 'cash' ? (
-        <Tooltip content="Paid in cash.">
+        <Tooltip content="Paid in cash." hideHint>
           <span className="badge-cash-paid">Cash</span>
         </Tooltip>
       ) : null}
       {row.ledger_column === 'other' ? (
-        <Tooltip content="From the Other column in the ledger.">
+        <Tooltip content="From the Other column in the ledger." hideHint>
           <span className="badge-other-paid">Other</span>
         </Tooltip>
       ) : null}
       {row.is_rental_income ? (
-        <Tooltip content="Excel Rental income — tracked separately from company float.">
+        <Tooltip content="Excel Rental income — tracked separately from company float." hideHint>
           <span className="badge-rental-income">Rental income</span>
         </Tooltip>
       ) : null}
       {row.is_payback ? (
-        <Tooltip content="Bank payback — a refund or partial return, kept as its own deposit.">
+        <Tooltip content="Bank payback — a refund or partial return, kept as its own deposit." hideHint>
           <span className="badge-payback">Payback</span>
         </Tooltip>
       ) : null}
       {row.client_prop_id === 'AWAITING' ? (
-        <Tooltip content="Parked until the money comes back or you write it off to Buffer.">
+        <Tooltip content="Parked until the money comes back or you write it off to Buffer." hideHint>
           <span className="badge-neutral">Awaiting return</span>
         </Tooltip>
       ) : null}
@@ -78,22 +77,24 @@ export function TransactionTypeBadges({
               ? `Bank verified — אסמכתא ${row.bank_asmachta}`
               : 'Bank verified — no אסמכתא recorded.'
           }
+          hideHint
         >
           <span className="badge-bank-verified">Verified</span>
         </Tooltip>
       ) : row.payment_method === 'credit_card' ? (
         <>
           {row.cc_bank_confirmed_at ? (
-            <Tooltip content="Card settlement confirmed on the bank statement.">
+            <Tooltip content="Card settlement confirmed on the bank statement." hideHint>
               <span className="badge-cc-bank-confirmed">Bank settled</span>
             </Tooltip>
           ) : row.cc_verified_at ? (
-            <Tooltip content="Matched to a credit-card statement charge.">
+            <Tooltip content="Matched to a credit-card statement charge." hideHint>
               <span className="badge-cc-verified">Credit card verified</span>
             </Tooltip>
           ) : row.cc_deferred_until ? (
             <Tooltip
               content={`Pushed to the next card cycle (after ${row.cc_deferred_until}).`}
+              hideHint
             >
               <span className="badge-cc-postponed">Credit card postponed</span>
             </Tooltip>
@@ -104,6 +105,7 @@ export function TransactionTypeBadges({
                   ? `Paid by card ••${row.card_last4} — awaiting card statement verification.`
                   : 'Paid by card — awaiting card statement verification.'
               }
+              hideHint
             >
               <span className="badge-cc-pending">
                 {row.card_last4 ? `Card ••${row.card_last4}` : 'Card pending'}
@@ -112,16 +114,16 @@ export function TransactionTypeBadges({
           )}
         </>
       ) : row.bank_reconcile_exclude || row.paid_by_owner || row.paid_by_resident ? (
-        <Tooltip content="Excluded from bank reconciliation.">
+        <Tooltip content="Excluded from bank reconciliation." hideHint>
           <span className="badge-neutral">Excluded</span>
         </Tooltip>
       ) : (
-        <Tooltip content="Not yet verified against the bank statement.">
+        <Tooltip content="Not yet verified against the bank statement." hideHint>
           <span className="badge-bank-unverified">Unverified</span>
         </Tooltip>
       )}
       {row.from_bank_statement ? (
-        <Tooltip content="Imported from the company bank statement.">
+        <Tooltip content="Imported from the company bank statement." hideHint>
           <span className="badge-bank-statement">Bank statement</span>
         </Tooltip>
       ) : null}
@@ -129,7 +131,7 @@ export function TransactionTypeBadges({
         .split(',')
         .map((part) => part.trim())
         .includes('created_from_verification') ? (
-        <Tooltip content="Created from a bank or card statement during verification.">
+        <Tooltip content="Created from a bank or card statement during verification." hideHint>
           <span className="badge-neutral">From verification</span>
         </Tooltip>
       ) : null}
@@ -137,9 +139,9 @@ export function TransactionTypeBadges({
   );
 }
 
-function ReviewBangStatic({ row }: { row: UnifiedTransaction }) {
+function ReviewBangStatic({ row }: { row: Transaction }) {
   return (
-    <Tooltip content={row.review_reasons || 'Incomplete import — needs review.'}>
+    <Tooltip content={row.review_reasons || 'Incomplete import — needs review.'} hideHint>
       <span
         className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-base font-bold leading-none text-negative"
         aria-label="Needs review"
@@ -150,7 +152,7 @@ function ReviewBangStatic({ row }: { row: UnifiedTransaction }) {
   );
 }
 
-function FeedbackButton({ row }: { row: UnifiedTransaction }) {
+function FeedbackButton({ row }: { row: Transaction }) {
   const { openFeedback } = useFeedback();
   return (
     <Tooltip content="Feedback" hideHint>
@@ -183,7 +185,7 @@ function FeedbackButton({ row }: { row: UnifiedTransaction }) {
   );
 }
 
-function ReceiptCell({ row }: { row: UnifiedTransaction }) {
+function ReceiptCell({ row }: { row: Transaction }) {
   const [previewIndex, setPreviewIndex] = useState<number | null>(null);
   const files =
     row.attachments && row.attachments.length > 0
@@ -336,7 +338,7 @@ export function TransactionDisplayCells({
   actions,
   showBalance = true,
 }: {
-  row: UnifiedTransaction;
+  row: Transaction;
   reviewMarker?: ReactNode;
   actions?: ReactNode;
   showBalance?: boolean;
@@ -375,7 +377,7 @@ export function TransactionDisplayCells({
       <td className="px-2 py-3 muted-text truncate" title={row.notes || undefined}>
         {row.notes || '—'}
       </td>
-      <td className={`px-2 py-3 tabular-nums truncate ${transactionAmountClassName(row)}`}>
+      <td className="px-2 py-3 tabular-nums truncate">
         {Number(row.amount) <= 0 && row.needs_review ? (
           marker
         ) : (
@@ -424,9 +426,9 @@ export function TransactionDisplayCells({
 }
 
 export interface TransactionTableProps {
-  rows: UnifiedTransaction[];
+  rows: Transaction[];
   emptyMessage?: string;
-  onRowClick?: (row: UnifiedTransaction) => void;
+  onRowClick?: (row: Transaction) => void;
   /** When false, hides the Actions column (default true with feedback). */
   showActions?: boolean;
   /** When false, hides the running-balance column. */
@@ -435,7 +437,7 @@ export interface TransactionTableProps {
   stickyHeader?: boolean;
   /** Widen the Actions column when it holds text buttons instead of icons. */
   actionsColWidth?: string;
-  renderActions?: (row: UnifiedTransaction) => ReactNode;
+  renderActions?: (row: Transaction) => ReactNode;
   className?: string;
 }
 
@@ -456,7 +458,7 @@ export function TransactionTable({
 
   return (
     <div className={className ?? 'overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-700'}>
-      <table className="table-shell">
+      <table className="table-shell table-shell-wide">
         <TransactionTableColgroup
           showActions={showActions}
           showBalance={showBalance}

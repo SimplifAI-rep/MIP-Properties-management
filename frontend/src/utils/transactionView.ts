@@ -1,7 +1,11 @@
-import type { Attachment, Deposit, Expense, TransactionKind, UnifiedTransaction } from '../types';
+import type {
+  Attachment,
+  Deposit,
+  Expense,
+  Transaction,
+  TransactionKind,
+} from '../types';
 import { formatLabel } from './formatLabel';
-
-export type { TransactionKind, UnifiedTransaction };
 
 const UPLOAD_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -21,7 +25,7 @@ function expenseNotes(expense: Expense): string | null {
   return desc;
 }
 
-function depositToUnified(deposit: Deposit): UnifiedTransaction {
+function depositToTransaction(deposit: Deposit): Transaction {
   return {
     id: deposit.id,
     kind: 'deposit',
@@ -55,7 +59,7 @@ function depositToUnified(deposit: Deposit): UnifiedTransaction {
   };
 }
 
-function expenseToUnified(expense: Expense): UnifiedTransaction {
+function expenseToTransaction(expense: Expense): Transaction {
   return {
     id: expense.id,
     kind: 'expense',
@@ -127,10 +131,7 @@ function asAttachments(value: unknown): Attachment[] {
   });
 }
 
-/** True when the row is already in the shared TransactionRead / UnifiedTransaction shape. */
-export function isUnifiedTransactionRow(
-  row: Record<string, unknown>,
-): boolean {
+function isCanonicalTransaction(row: Record<string, unknown>): boolean {
   return (
     (row.kind === 'deposit' || row.kind === 'expense') &&
     row.section != null &&
@@ -139,8 +140,7 @@ export function isUnifiedTransactionRow(
   );
 }
 
-/** Map a backend TransactionRead (or already-unified row) without re-deriving fields. */
-export function unifiedFromRecord(row: Record<string, unknown>): UnifiedTransaction {
+function fromCanonical(row: Record<string, unknown>): Transaction {
   const kind: TransactionKind = row.kind === 'expense' ? 'expense' : 'deposit';
   const source = asNullableString(row.source);
   return {
@@ -185,80 +185,49 @@ export function unifiedFromRecord(row: Record<string, unknown>): UnifiedTransact
   };
 }
 
-/** Map AI / API list rows (normalized or raw deposit/expense dumps) into UnifiedTransaction. */
-export function recordToUnified(
-  row: Record<string, unknown>,
+/** Map a backend TransactionRead, deposit/expense REST row, or AI dump into Transaction. */
+export function toTransaction(
+  row: Record<string, unknown> | Deposit | Expense | Transaction,
   fallbackKind?: TransactionKind,
-): UnifiedTransaction {
-  if (isUnifiedTransactionRow(row)) {
-    return unifiedFromRecord(row);
+): Transaction {
+  const rec = row as Record<string, unknown>;
+  if (isCanonicalTransaction(rec)) {
+    return fromCanonical(rec);
   }
 
-  const explicitKind = row.kind === 'deposit' || row.kind === 'expense' ? row.kind : null;
+  const explicitKind = rec.kind === 'deposit' || rec.kind === 'expense' ? rec.kind : null;
   const kind: TransactionKind =
     explicitKind ??
     fallbackKind ??
-    (row.category != null || row.paid_by_resident != null || row.vendor_name != null
+    (rec.category != null || rec.paid_by_resident != null || rec.vendor_name != null
       ? 'expense'
       : 'deposit');
 
-  if (kind === 'deposit' && row.section == null && row.client_prop_id != null) {
-    return depositToUnified(row as unknown as Deposit);
+  if (kind === 'deposit' && rec.section == null && rec.client_prop_id != null) {
+    return depositToTransaction(row as Deposit);
   }
-  if (kind === 'expense' && row.category != null && row.section == null) {
-    return expenseToUnified(row as unknown as Expense);
+  if (kind === 'expense' && rec.category != null && rec.section == null) {
+    return expenseToTransaction(row as Expense);
   }
 
-  const source = asNullableString(row.source);
+  const source = asNullableString(rec.source);
   const section =
-    asString(row.section) ||
+    asString(rec.section) ||
     (kind === 'expense'
-      ? asString(row.category, 'other')
-      : asBool(row.is_rental_income)
+      ? asString(rec.category, 'other')
+      : asBool(rec.is_rental_income)
         ? 'Rental income'
         : formatLabel(source || 'Inflow'));
 
-  const notes = asNullableString(row.notes) ?? asNullableString(row.description);
-
   return {
-    id: asString(row.id),
-    kind,
-    property_id: asString(row.property_id),
-    transaction_date: asNullableString(row.transaction_date),
-    client_prop_id: asString(row.client_prop_id),
-    property_name: asString(row.property_name),
-    owner_name: asString(row.owner_name),
-    amount: asString(row.amount, '0'),
-    currency: asString(row.currency, 'ILS'),
-    transaction_ref: asNullableString(row.transaction_ref),
-    bank_verified_at: asNullableString(row.bank_verified_at),
-    bank_asmachta: asNullableString(row.bank_asmachta),
-    bank_reconcile_exclude: asBool(row.bank_reconcile_exclude),
-    cc_verified_at: asNullableString(row.cc_verified_at),
-    cc_bank_confirmed_at: asNullableString(row.cc_bank_confirmed_at),
-    cc_settlement_group_id: asNullableString(row.cc_settlement_group_id),
-    card_last4: asNullableString(row.card_last4),
-    cc_deferred_until: asNullableString(row.cc_deferred_until),
-    section,
-    notes,
-    company: asNullableString(row.company) ?? asNullableString(row.vendor_name),
-    payment_method: asNullableString(row.payment_method),
-    source,
-    receipt_ref: asNullableString(row.receipt_ref),
-    attachments: asAttachments(row.attachments),
-    source_file: asNullableString(row.source_file),
-    balance_after: asNullableString(row.balance_after),
-    paid_by_resident: asBool(row.paid_by_resident),
-    paid_by_company: asBool(row.paid_by_company),
-    paid_by_owner: asBool(row.paid_by_owner),
-    ledger_column: asNullableString(row.ledger_column),
-    is_rental_income: asBool(row.is_rental_income),
-    is_payback: asBool(row.is_payback),
-    payback_of_expense_id: asNullableString(row.payback_of_expense_id),
-    from_bank_statement:
-      asBool(row.from_bank_statement) || source === 'bank_statement',
-    needs_review: asBool(row.needs_review),
-    review_reasons: asNullableString(row.review_reasons),
+    ...fromCanonical({
+      ...rec,
+      kind,
+      section,
+      notes: rec.notes ?? rec.description,
+      company: rec.company ?? rec.vendor_name,
+      source,
+    }),
   };
 }
 
@@ -281,35 +250,17 @@ export function looksLikeTransactionList(data: Record<string, unknown>[]): boole
 }
 
 /** Company-float inflow: deposits excluding rental income. */
-export function isCompanyFloatDeposit(row: UnifiedTransaction): boolean {
+export function isCompanyFloatDeposit(row: Transaction): boolean {
   return row.kind === 'deposit' && !row.is_rental_income;
 }
 
 /** Company-float outflow: expenses excluding He/She paid and owner paid. */
-export function isCompanyFloatExpense(row: UnifiedTransaction): boolean {
-  return (
-    row.kind === 'expense' && !row.paid_by_resident && !row.paid_by_owner
-  );
-}
-
-function sumAmounts(rows: UnifiedTransaction[]): number {
-  return rows.reduce((sum, row) => sum + Number(row.amount || 0), 0);
-}
-
-export function companyFloatTotals(rows: UnifiedTransaction[]): {
-  inflow: number;
-  expenses: number;
-  balance: number;
-} {
-  const inflow = sumAmounts(rows.filter(isCompanyFloatDeposit));
-  const expenses = sumAmounts(rows.filter(isCompanyFloatExpense));
-  return { inflow, expenses, balance: inflow - expenses };
+export function isCompanyFloatExpense(row: Transaction): boolean {
+  return row.kind === 'expense' && !row.paid_by_resident && !row.paid_by_owner;
 }
 
 /** Newest dated rows first; undated rows last. */
-function sortTransactionsNewestFirst(
-  rows: UnifiedTransaction[],
-): UnifiedTransaction[] {
+function sortTransactionsNewestFirst(rows: Transaction[]): Transaction[] {
   return [...rows].sort((a, b) => {
     const aHasDate = Boolean(a.transaction_date);
     const bHasDate = Boolean(b.transaction_date);
@@ -324,16 +275,16 @@ export function mergeAndSortTransactions(
   deposits: Deposit[],
   expenses: Expense[],
   limit?: number,
-): UnifiedTransaction[] {
+): Transaction[] {
   const rows = [
-    ...deposits.map(depositToUnified),
-    ...expenses.map(expenseToUnified),
+    ...deposits.map(depositToTransaction),
+    ...expenses.map(expenseToTransaction),
   ];
   const sorted = sortTransactionsNewestFirst(rows);
   return limit != null ? sorted.slice(0, limit) : sorted;
 }
 
-export function transactionRowClassName(row: UnifiedTransaction): string {
+export function transactionRowClassName(row: Transaction): string {
   if (row.paid_by_resident) return 'row-resident-paid';
   if (row.paid_by_owner) return 'row-owner-paid';
   if (row.paid_by_company) return 'row-mip-paid';
@@ -345,12 +296,7 @@ export function transactionRowClassName(row: UnifiedTransaction): string {
   return 'row-expense';
 }
 
-/** Amount stays uncolored; Balance (not Amount) uses red/green by sign. */
-export function transactionAmountClassName(_row: UnifiedTransaction): string {
-  return '';
-}
-
-export function formatTransactionFeedback(row: UnifiedTransaction): string {
+export function formatTransactionFeedback(row: Transaction): string {
   const lines = [
     'Feedback about this transaction:',
     '',

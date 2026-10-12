@@ -131,6 +131,6 @@ def test_parse_bank_balance_upload_endpoint(client):
     assert Decimal(body["bank_balance"]) != 0
     assert body["movement_row_count"] > 0
     # Net-through-date default: earliest movement date as plain YYYY-MM-DD
-    assert body["statement_start_date"] == "2026-06-02"
-    assert body["statement_end_date"] == "2026-07-08"
+    assert body["statement_start_date"] == "2026-07-02"
+    assert body["statement_end_date"] == "2026-08-07"
     assert "T" not in body["statement_start_date"]

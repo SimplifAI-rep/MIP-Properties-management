@@ -2,7 +2,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
-import type { DepositCreate, ExpenseCreate } from '../types';
+import type { DepositCreate, ExpenseCreate, Transaction, TransactionKind } from '../types';
 import {
   TransactionDisplayCells,
   TransactionTableColgroup,
@@ -40,9 +40,7 @@ import {
   isCompanyFloatExpense,
   mergeAndSortTransactions,
   transactionRowClassName,
-  type TransactionKind,
-  type UnifiedTransaction,
-} from '../utils/unifiedTransaction';
+} from '../utils/transactionView';
 import {
   EXPENSE_SOURCES as SOURCES,
   SECTION_SUGGESTIONS,
@@ -92,7 +90,7 @@ interface TransactionEditForm {
   payback_of_expense_id: string | null;
 }
 
-function rowTypeTags(row: UnifiedTransaction): TypeFilterKind[] {
+function rowTypeTags(row: Transaction): TypeFilterKind[] {
   const tags: TypeFilterKind[] = [];
   if (row.kind === 'deposit') {
     tags.push(row.is_rental_income ? 'rental_income' : 'deposit');
@@ -115,6 +113,16 @@ function rowTypeTags(row: UnifiedTransaction): TypeFilterKind[] {
 }
 
 const PAGE_SIZE = 50;
+
+/** Default Type filter: company-float lanes plus rental so a new rental row is visible. Deposit-only still excludes rental. */
+const DEFAULT_TYPE_KINDS: TypeFilterKind[] = ['deposit', 'expense', 'rental_income'];
+
+function isDefaultTypeFilter(kinds: TypeFilterKind[]): boolean {
+  return (
+    kinds.length === DEFAULT_TYPE_KINDS.length &&
+    DEFAULT_TYPE_KINDS.every((kind) => kinds.includes(kind))
+  );
+}
 
 function makeEmptyForm(): ExpenseCreate {
   return {
@@ -147,7 +155,7 @@ function makeEmptyDepositForm(): DepositCreate {
   };
 }
 
-function rowToEditForm(row: UnifiedTransaction, ownerId = ''): TransactionEditForm {
+function rowToEditForm(row: Transaction, ownerId = ''): TransactionEditForm {
   return {
     kind: row.kind,
     id: row.id,
@@ -203,7 +211,7 @@ export function TransactionsPage() {
     queryFn: api.getCreditCards,
   });
   const creditCards = creditCardsQuery.data ?? [];
-  const [kinds, setKinds] = useState<TypeFilterKind[]>(['deposit', 'expense']);
+  const [kinds, setKinds] = useState<TypeFilterKind[]>(DEFAULT_TYPE_KINDS);
   const [page, setPage] = useState(1);
   const [propertyStatuses, setPropertyStatuses] = useState<PropertyStatusFilter[]>(['active']);
   const [propertyIds, setPropertyIds] = useState<string[]>([]);
@@ -294,7 +302,7 @@ export function TransactionsPage() {
       setKinds(['expense']);
       setPage(1);
     } else if (nextPropertyIds || nextClientPropIds || nextOwnerIds) {
-      setKinds(['deposit', 'expense']);
+      setKinds(DEFAULT_TYPE_KINDS);
     }
     if (state.sections) {
       setSections(state.sections);
@@ -618,7 +626,7 @@ export function TransactionsPage() {
   });
 
   const writeOffAwaitingMutation = useMutation({
-    mutationFn: async (row: UnifiedTransaction) => {
+    mutationFn: async (row: Transaction) => {
       if (row.kind === 'expense') return api.writeOffExpenseToBuffer(row.id);
       return api.writeOffDepositToBuffer(row.id);
     },
@@ -961,9 +969,7 @@ export function TransactionsPage() {
   }
 
   const hasActiveFilters = Boolean(
-    kinds.length !== 2 ||
-      !kinds.includes('deposit') ||
-      !kinds.includes('expense') ||
+    !isDefaultTypeFilter(kinds) ||
       propertyStatuses.length !== 1 ||
       propertyStatuses[0] !== 'active' ||
       alertFilters.length ||
@@ -978,7 +984,7 @@ export function TransactionsPage() {
   );
 
   function clearFilters() {
-    setKinds(['deposit', 'expense']);
+    setKinds(DEFAULT_TYPE_KINDS);
     setPropertyStatuses(['active']);
     setAlertFilters([]);
     setPropertyIds([]);
@@ -992,7 +998,7 @@ export function TransactionsPage() {
     setPage(1);
   }
 
-  function openEdit(row: UnifiedTransaction) {
+  function openEdit(row: Transaction) {
     const ownerId =
       properties.find((property) => property.id === row.property_id)?.owner_id ?? '';
     setEditForm(rowToEditForm(row, ownerId));
@@ -1038,7 +1044,7 @@ export function TransactionsPage() {
     setEditForm((current) => (current ? { ...current, ...patch } : current));
   }
 
-  function reviewBang(row: UnifiedTransaction) {
+  function reviewBang(row: Transaction) {
     return (
       <Tooltip content="Incomplete import — click to edit inline.">
         <button
@@ -1782,8 +1788,8 @@ export function TransactionsPage() {
       </section>
 
       <section className="panel overflow-hidden">
-        <div className="w-full min-w-0">
-          <table className="table-shell">
+        <div className="w-full min-w-0 overflow-x-auto">
+          <table className="table-shell table-shell-wide">
             <TransactionTableColgroup actionsColWidth="w-[12%]" />
             <TransactionTableHeader />
             <tbody>

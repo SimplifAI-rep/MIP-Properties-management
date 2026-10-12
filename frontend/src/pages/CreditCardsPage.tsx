@@ -9,7 +9,7 @@ import {
 } from '../components/ui/States';
 import { Tooltip } from '../components/ui/Tooltip';
 import { getUserErrorMessage } from '../utils/errors';
-import { recordToUnified } from '../utils/unifiedTransaction';
+import { toTransaction } from '../utils/transactionView';
 import type { CreditCard } from '../types';
 
 function statusBadgeClass(active: boolean) {
@@ -325,7 +325,7 @@ export function CreditCardsPage() {
           ) : (
             <TransactionTable
               rows={(cardTxQuery.data?.items ?? []).map((row) =>
-                recordToUnified(row as unknown as Record<string, unknown>, 'expense'),
+                toTransaction(row, 'expense'),
               )}
               emptyMessage="No transactions linked to this card."
               showBalance={false}

@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { api } from '../api/client';
-import type { CcReconcileSession } from '../types';
+import type { CcReconcileSession, Transaction } from '../types';
 import { VerifyTransactionTable } from './VerifyTransactionTable';
 import { VerifyGroupSection, VerifyProgress, VerifySpinner } from './verifyGroups';
 import { ConfirmButton } from './ui/ConfirmButton';
@@ -14,8 +14,7 @@ import {
   invalidateAlertData,
   invalidateVerificationWorkspace,
 } from '../utils/invalidateQueries';
-import { ccDraftToUnified, ccFoundTxs, txsFromApi } from '../utils/verifyTxDisplay';
-import type { UnifiedTransaction } from '../utils/unifiedTransaction';
+import { ccDraftToTransaction, ccFoundTxs, txsFromApi } from '../utils/verifyTxDisplay';
 
 const LINE_STATUS_KEYS = ['proposed_match', 'matched', 'ignored', 'unmatched', 'added'];
 
@@ -274,11 +273,9 @@ export function CcReconcilePanel() {
     proposed.map((l) => l.proposed_tx_id).filter(Boolean) as string[],
   );
 
-  const foundTxs: UnifiedTransaction[] = ccFoundTxs(reviewSession);
-  const notInExcelTxs: UnifiedTransaction[] = txsFromApi(
-    activeSession?.not_in_excel_txs as Record<string, unknown>[] | undefined,
-  );
-  const draftTxs: UnifiedTransaction[] = notInBankLines.map(ccDraftToUnified);
+  const foundTxs: Transaction[] = ccFoundTxs(reviewSession);
+  const notInExcelTxs = txsFromApi(activeSession?.not_in_excel_txs);
+  const draftTxs: Transaction[] = notInBankLines.map(ccDraftToTransaction);
 
   const counts = activeSession?.counts ?? {};
   const totalItems =
@@ -374,7 +371,7 @@ export function CcReconcilePanel() {
     ]);
   }
 
-  function confirmOne(tx: UnifiedTransaction) {
+  function confirmOne(tx: Transaction) {
     const fingerprint = fingerprintByTxId.get(tx.id);
     if (!fingerprint) return;
     runActions(null, tx.id, [

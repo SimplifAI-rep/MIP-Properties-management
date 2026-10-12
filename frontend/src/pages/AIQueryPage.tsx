@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
-import type { AIQueryResponse, DepositQueryIntent } from '../types';
+import type { AIQueryResponse, DepositQueryIntent, Transaction } from '../types';
 import { TransactionTable } from '../components/TransactionTable';
 import { DataResultTable } from '../components/ui/DataResultTable';
 import { ErrorState, LoadingState } from '../components/ui/States';
@@ -11,13 +11,7 @@ import { downloadAIQueryExcel } from '../utils/exportExcel';
 import { getUserErrorMessage } from '../utils/errors';
 import { formatLabel } from '../utils/formatLabel';
 import { aiIntentToTransactionsState } from '../utils/transactionsNav';
-import {
-  isUnifiedTransactionRow,
-  looksLikeTransactionList,
-  recordToUnified,
-  unifiedFromRecord,
-  type UnifiedTransaction,
-} from '../utils/unifiedTransaction';
+import { looksLikeTransactionList, toTransaction } from '../utils/transactionView';
 
 const EXAMPLE_PROMPTS = [
   'Show all deposits for Rothschild 12 in Q1 2026',
@@ -34,15 +28,13 @@ const EXAMPLE_PROMPTS = [
   'Expenses for Prop ID BUFFER',
 ];
 
-function mapResultToTransactions(result: AIQueryResponse): UnifiedTransaction[] | null {
+function mapResultToTransactions(result: AIQueryResponse): Transaction[] | null {
   if (result.query_used.query_type !== 'list') return null;
   if (!looksLikeTransactionList(result.data)) return null;
   const domain = result.query_used.domain ?? 'deposits';
   const fallbackKind =
     domain === 'expenses' ? 'expense' : domain === 'deposits' ? 'deposit' : undefined;
-  return result.data.map((row) =>
-    isUnifiedTransactionRow(row) ? unifiedFromRecord(row) : recordToUnified(row, fallbackKind),
-  );
+  return result.data.map((row) => toTransaction(row, fallbackKind));
 }
 
 function canOpenInTransactions(result: AIQueryResponse): boolean {

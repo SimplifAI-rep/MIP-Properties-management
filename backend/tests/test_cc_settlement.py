@@ -59,11 +59,11 @@ def client(db):
 @pytest.mark.skipif(not SAMPLE_BANK.exists(), reason="sample bank Excel not present")
 def test_settlement_proposes_group_and_confirm_no_double_count(client, db):
     now = datetime.now(timezone.utc)
-    # Merchants in window after 2026-06-10 settlement → before/on 2026-07-02
+    # Merchants in window after 2026-07-10 settlement → before/on 2026-08-01
     merchants = [
-        ("Zoom A", Decimal("1000.00"), date(2026, 6, 15)),
-        ("Zoom B", Decimal("1166.50"), date(2026, 6, 20)),
-        ("Zoom C", Decimal("1000.00"), date(2026, 6, 28)),
+        ("Zoom A", Decimal("1000.00"), date(2026, 7, 15)),
+        ("Zoom B", Decimal("1166.50"), date(2026, 7, 20)),
+        ("Zoom C", Decimal("1000.00"), date(2026, 7, 28)),
     ]
     for name, amount, tx_date in merchants:
         db.add(
@@ -83,7 +83,7 @@ def test_settlement_proposes_group_and_confirm_no_double_count(client, db):
     db.add(
         Expense(
             property_id=PROPERTY_ROTHSCHILD_ID,
-            transaction_date=date(2026, 6, 5),
+            transaction_date=date(2026, 7, 5),
             amount=Decimal("50.00"),
             category="utilities",
             source="credit_card",
@@ -117,7 +117,7 @@ def test_settlement_proposes_group_and_confirm_no_double_count(client, db):
     july = next(
         line
         for line in settlements
-        if line.get("transaction_date") == "2026-07-02"
+        if line.get("transaction_date") == "2026-08-01"
     )
     assert july["proposed_kind"] == "cc_settlement"
     assert Decimal(july["amount"]) == Decimal("3166.5")

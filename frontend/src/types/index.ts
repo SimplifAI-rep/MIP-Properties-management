@@ -46,7 +46,9 @@ export interface BankAccount {
   property_id?: string | null;
 }
 
-export type { Attachment } from './transaction';
+import type { Attachment } from './transaction';
+
+export type { Attachment };
 
 export interface Deposit {
   id: string;

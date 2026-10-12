@@ -8,7 +8,7 @@ React + TypeScript + Vite UI for SimplifAI.
 npm install
 npm run dev      # http://localhost:5173
 npm run build
-npm run lint
+npm run lint     # oxlint
 ```
 
 Set `VITE_API_BASE_URL` in `.env` (defaults to `http://localhost:8000/api/v1`).

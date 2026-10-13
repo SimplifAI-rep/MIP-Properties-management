@@ -16,6 +16,7 @@ from app.api.v1 import (
     meta,
     owners,
     properties,
+    report_presets,
     uploads,
 )
 
@@ -34,5 +35,6 @@ api_router.include_router(imports.router)
 api_router.include_router(uploads.router)
 api_router.include_router(alerts.router)
 api_router.include_router(alert_rules.router)
+api_router.include_router(report_presets.router)
 api_router.include_router(ai.router)
 api_router.include_router(feedback.router)

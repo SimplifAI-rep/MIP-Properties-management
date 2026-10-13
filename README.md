@@ -10,7 +10,7 @@ Web app for property managers to track owner and property money (ILS): enter rec
 2. Day to day, receipts go in on **Transactions** (manual or file upload). Rows can be tagged as rental income, He/She paid, owner-paid, or paid with a card.
 3. At period end, upload the **bank Excel** on Verification. If that statement includes a card settlement, upload the matching **card Excel** next.
 4. Confirm suggested matches. For leftovers: create (with a real owner/property), merge, or ignore. Finish the period when the lists are clear and the gap is within tolerance.
-5. Use **Alerts**, **Next cycle**, and **Reports** to follow leftovers, deferred card charges, and owner/property totals.
+5. Use **Alerts** and **Next cycle** for leftovers and deferred card charges. Use **Reports** to save an owner’s filters and export every matching transaction as CSV.
 
 ## Features
 
@@ -18,12 +18,13 @@ Web app for property managers to track owner and property money (ILS): enter rec
 - **Transactions** — unified deposits and expenses, type/date/owner/property filters, inline edit, attachments, CSV export
 - **Alerts** — missing deposits, incomplete imports, unmatched bank/card rows, unverified-for-more-than-a-month
 - **Data Import** — ClientData Excel from the UI (no auto-seed on startup)
+- **Reports** — same filters as Transactions, saved presets, CSV named after the owner
 - **Credit cards** — last-4 and labels; cards also appear when a card statement is uploaded
 - **AI querying** — natural-language questions (rule-based; optional OpenAI via `LLM_API_KEY`)
 - **Feedback** — in-app form emailed via SMTP
 - **Dark mode** — toggle in the sidebar
 
-**Not in this product yet:** per-client login / multi-tenant auth. Reports is still a basic owner/property summary. Storage is SQLite (local file, or a Render disk in production).
+**Not in this product yet:** per-client login / multi-tenant auth. Storage is SQLite (local file, or a Render disk in production).
 
 ## Pages
 
@@ -37,7 +38,7 @@ Web app for property managers to track owner and property money (ILS): enter rec
 | Next cycle | `/next-cycle` | all | Card charges waiting for the next statement |
 | Credit cards | `/credit-cards` | all | Add, rename, or deactivate cards |
 | Alerts | `/alerts` | all | Review and resolve alerts |
-| Reports | `/reports` | all | Owner and property totals |
+| Reports | `/reports` | all | Saved filter presets, owner transaction list, CSV export |
 | Data import | `/data-import` | admin | Upload ClientData Excel; optional database reset |
 | Bank settings | `/admin/bank-settings` | admin | Opening balance, last verification date, go-live cutover |
 | Alert rules | `/admin/alert-rules` | admin | Low-balance thresholds (global and per property) |

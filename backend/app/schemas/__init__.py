@@ -888,3 +888,86 @@ class VerificationWorkspaceResponse(BaseModel):
 class VerificationTransactionsResponse(BaseModel):
     items: list[TransactionRead]
     total: int
+
+
+ALLOWED_REPORT_KINDS = (
+    "deposit",
+    "expense",
+    "rental_income",
+    "he_she_paid",
+    "owner_paid",
+    "bank_statement",
+    "nearly_cc",
+    "created_from_verification",
+)
+ALLOWED_REPORT_PROPERTY_STATUSES = ("active", "inactive")
+ALLOWED_REPORT_ALERT_FILTERS = ("incomplete_import",)
+
+
+class ReportFilterSet(BaseModel):
+    """Same filter fields as the Transactions page."""
+
+    kinds: list[str] = Field(default_factory=list)
+    property_statuses: list[str] = Field(default_factory=list)
+    property_ids: list[str] = Field(default_factory=list)
+    client_prop_ids: list[str] = Field(default_factory=list)
+    owner_ids: list[str] = Field(default_factory=list)
+    date_from: str | None = None
+    date_to: str | None = None
+    sections: list[str] = Field(default_factory=list)
+    sources: list[str] = Field(default_factory=list)
+    source_files: list[str] = Field(default_factory=list)
+    alert_filters: list[str] = Field(default_factory=list)
+
+    def validated(self) -> "ReportFilterSet":
+        kinds = [item.strip() for item in self.kinds if item and item.strip()]
+        unknown_kinds = [item for item in kinds if item not in ALLOWED_REPORT_KINDS]
+        if unknown_kinds:
+            raise ValueError(f"Unknown type filter: {unknown_kinds[0]}")
+        statuses = [
+            item.strip() for item in self.property_statuses if item and item.strip()
+        ]
+        unknown_status = [
+            item for item in statuses if item not in ALLOWED_REPORT_PROPERTY_STATUSES
+        ]
+        if unknown_status:
+            raise ValueError(f"Unknown property status: {unknown_status[0]}")
+        alerts = [item.strip() for item in self.alert_filters if item and item.strip()]
+        unknown_alerts = [
+            item for item in alerts if item not in ALLOWED_REPORT_ALERT_FILTERS
+        ]
+        if unknown_alerts:
+            raise ValueError(f"Unknown alert filter: {unknown_alerts[0]}")
+        return ReportFilterSet(
+            kinds=kinds,
+            property_statuses=statuses,
+            property_ids=[item.strip() for item in self.property_ids if item.strip()],
+            client_prop_ids=[
+                item.strip() for item in self.client_prop_ids if item.strip()
+            ],
+            owner_ids=[item.strip() for item in self.owner_ids if item.strip()],
+            date_from=(self.date_from or "").strip() or None,
+            date_to=(self.date_to or "").strip() or None,
+            sections=[item.strip() for item in self.sections if item.strip()],
+            sources=[item.strip() for item in self.sources if item.strip()],
+            source_files=[item.strip() for item in self.source_files if item.strip()],
+            alert_filters=alerts,
+        )
+
+
+class ReportPresetRead(BaseModel):
+    id: UUID
+    name: str
+    filters: ReportFilterSet
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+class ReportPresetCreate(BaseModel):
+    name: str
+    filters: ReportFilterSet = Field(default_factory=ReportFilterSet)
+
+
+class ReportPresetUpdate(BaseModel):
+    name: str | None = None
+    filters: ReportFilterSet | None = None

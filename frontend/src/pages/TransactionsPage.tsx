@@ -54,19 +54,16 @@ import {
   buildTxnSharedFilters,
 } from '../utils/prefetchTransactions';
 import { parseTransactionsLocationState } from '../utils/transactionsNav';
-
-/** Filters that match Excel money lanes + Deposit/Expense. */
-type TypeFilterKind =
-  | 'deposit'
-  | 'expense'
-  | 'rental_income'
-  | 'he_she_paid'
-  | 'owner_paid'
-  | 'bank_statement'
-  | 'nearly_cc'
-  | 'created_from_verification';
-type AlertFilterKind = 'incomplete_import';
-type PropertyStatusFilter = 'active' | 'inactive';
+import { downloadCsv } from '../utils/downloadCsv';
+import { transactionCsvRows } from '../utils/transactionCsv';
+import {
+  DEFAULT_TYPE_KINDS,
+  isDefaultTypeFilter,
+  rowTypeTags,
+  type AlertFilterKind,
+  type PropertyStatusFilter,
+  type TypeFilterKind,
+} from '../utils/transactionTypeFilters';
 
 function label(value: string) {
   return formatLabel(value);
@@ -90,39 +87,7 @@ interface TransactionEditForm {
   payback_of_expense_id: string | null;
 }
 
-function rowTypeTags(row: Transaction): TypeFilterKind[] {
-  const tags: TypeFilterKind[] = [];
-  if (row.kind === 'deposit') {
-    tags.push(row.is_rental_income ? 'rental_income' : 'deposit');
-  } else if (row.paid_by_resident) {
-    tags.push('he_she_paid');
-  } else if (row.paid_by_owner) {
-    tags.push('owner_paid');
-  } else {
-    tags.push('expense');
-  }
-  if (row.from_bank_statement) tags.push('bank_statement');
-  if (row.ledger_column === 'nearly_cc') tags.push('nearly_cc');
-  if ((row.review_reasons || '')
-    .split(',')
-    .map((part) => part.trim())
-    .includes('created_from_verification')) {
-    tags.push('created_from_verification');
-  }
-  return tags;
-}
-
 const PAGE_SIZE = 50;
-
-/** Default Type filter: company-float lanes plus rental so a new rental row is visible. Deposit-only still excludes rental. */
-const DEFAULT_TYPE_KINDS: TypeFilterKind[] = ['deposit', 'expense', 'rental_income'];
-
-function isDefaultTypeFilter(kinds: TypeFilterKind[]): boolean {
-  return (
-    kinds.length === DEFAULT_TYPE_KINDS.length &&
-    DEFAULT_TYPE_KINDS.every((kind) => kinds.includes(kind))
-  );
-}
 
 function makeEmptyForm(): ExpenseCreate {
   return {
@@ -173,33 +138,6 @@ function rowToEditForm(row: Transaction, ownerId = ''): TransactionEditForm {
     is_payback: Boolean(row.is_payback),
     payback_of_expense_id: row.payback_of_expense_id ?? null,
   };
-}
-
-
-function downloadCsv(rows: Record<string, string | number | null>[], filename: string) {
-  if (rows.length === 0) return;
-  const headers = Object.keys(rows[0]);
-  const lines = [
-    headers.join(','),
-    ...rows.map((row) =>
-      headers
-        .map((header) => {
-          const value = row[header];
-          const text = value == null ? '' : String(value);
-          return `"${text.replace(/"/g, '""')}"`;
-        })
-        .join(','),
-    ),
-  ];
-  // UTF-8 BOM so Excel (Windows) treats Hebrew/Unicode as UTF-8, not ANSI.
-  const blob = new Blob(['\uFEFF' + lines.join('\n')], {
-    type: 'text/csv;charset=utf-8;',
-  });
-  const link = document.createElement('a');
-  link.href = URL.createObjectURL(blob);
-  link.download = filename;
-  link.click();
-  URL.revokeObjectURL(link.href);
 }
 
 export function TransactionsPage() {
@@ -1142,27 +1080,7 @@ export function TransactionsPage() {
           <button
             type="button"
             onClick={() =>
-              downloadCsv(
-                items.map((row) => ({
-                  Ref: row.transaction_ref ?? '',
-                  'Prop ID': row.client_prop_id,
-                  Date: row.transaction_date,
-                  Section: row.section,
-                  Notes: row.notes ?? '',
-                  Type: row.kind === 'deposit' ? 'Deposit' : 'Expense',
-                  Amount: row.kind === 'expense' ? row.amount : '',
-                  Inflow: row.kind === 'deposit' ? row.amount : '',
-                  Company: row.company ?? '',
-                  Balance: row.balance_after ?? '',
-                  Property: row.property_name,
-                  Owner: row.owner_name,
-                  'Source file': row.source_file ?? '',
-                  'He/She paid': row.paid_by_resident ? 'yes' : '',
-                  'Owner paid': row.paid_by_owner ? 'yes' : '',
-                  'Rental income': row.is_rental_income ? 'yes' : '',
-                })),
-                'transactions.csv',
-              )
+              downloadCsv(transactionCsvRows(items), 'transactions.csv')
             }
             className="btn-secondary shrink-0"
           >

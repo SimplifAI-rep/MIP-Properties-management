@@ -901,3 +901,35 @@ export interface VerificationTransactionsResponse {
   items: Transaction[];
   total: number;
 }
+
+export interface ReportFilterSet {
+  kinds: string[];
+  property_statuses: string[];
+  property_ids: string[];
+  client_prop_ids: string[];
+  owner_ids: string[];
+  date_from: string | null;
+  date_to: string | null;
+  sections: string[];
+  sources: string[];
+  source_files: string[];
+  alert_filters: string[];
+}
+
+export interface ReportPreset {
+  id: string;
+  name: string;
+  filters: ReportFilterSet;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface ReportPresetCreate {
+  name: string;
+  filters: ReportFilterSet;
+}
+
+export interface ReportPresetUpdate {
+  name?: string;
+  filters?: ReportFilterSet;
+}

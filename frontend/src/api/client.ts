@@ -24,6 +24,9 @@ import type {
   AlertRule,
   AlertRuleCreate,
   AlertRuleUpdate,
+  ReportPreset,
+  ReportPresetCreate,
+  ReportPresetUpdate,
   FixIncompletePayload,
   FixIncompleteResponse,
   ClientDataStatusResponse,
@@ -619,6 +622,23 @@ export const api = {
     }),
   deleteAlertRule: (ruleId: string) =>
     request<void>(`/alert-rules/${ruleId}`, {
+      method: 'DELETE',
+    }),
+  getReportPresets: () => request<ReportPreset[]>('/report-presets'),
+  createReportPreset: (payload: ReportPresetCreate) =>
+    request<ReportPreset>('/report-presets', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }),
+  updateReportPreset: (presetId: string, payload: ReportPresetUpdate) =>
+    request<ReportPreset>(`/report-presets/${presetId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }),
+  deleteReportPreset: (presetId: string) =>
+    request<void>(`/report-presets/${presetId}`, {
       method: 'DELETE',
     }),
   getClientDataStatus: () => request<ClientDataStatusResponse>('/imports/client-data/status'),

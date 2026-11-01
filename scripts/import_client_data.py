@@ -114,6 +114,21 @@ def main() -> int:
     try:
         stats = import_client_data(db, data_dir=args.data_dir)
         print("Import stats:", json.dumps(stats.to_dict(), ensure_ascii=False, indent=2))
+        if args.reset:
+            from app.services.bank_settings import mark_reset_import_verified
+
+            dep_n, exp_n, as_of = mark_reset_import_verified(db)
+            print(
+                "Reset import marked verified:",
+                json.dumps(
+                    {
+                        "deposits": dep_n,
+                        "expenses": exp_n,
+                        "last_verification_date": as_of.isoformat() if as_of else None,
+                    },
+                    indent=2,
+                ),
+            )
         print_db_counts(db)
         report = verify_against_excel(db, args.data_dir)
         print("Verification:", json.dumps(report, ensure_ascii=False, indent=2))

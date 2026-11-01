@@ -184,6 +184,16 @@ def run_client_data_import(
 
         report("Importing ClientData files…")
         stats = import_client_data(work_db, data_dir=data_dir, progress=progress)
+        verified_deposits = 0
+        verified_expenses = 0
+        last_verification_date = None
+        if reset:
+            report("Marking imported history as verified…")
+            from app.services.bank_settings import mark_reset_import_verified
+
+            verified_deposits, verified_expenses, last_verification_date = (
+                mark_reset_import_verified(work_db)
+            )
         counts = database_counts(work_db)
 
         report("Building skip report…")
@@ -225,6 +235,9 @@ def run_client_data_import(
             warnings=stats.warnings[:100],
             errors=stats.errors[:100],
             database_counts=counts,
+            verified_deposits=verified_deposits,
+            verified_expenses=verified_expenses,
+            last_verification_date=last_verification_date,
         )
     finally:
         if owns_session:

@@ -21,6 +21,7 @@ from app.services.client_import import (
     CREDIT_CARD_FILES,
     MANAGEMENT_FILE,
     META_SHEETS,
+    _mgmt_import_key,
     _parse_amount,
     _parse_date,
     normalize_prop_key,
@@ -164,7 +165,7 @@ def _resolve_verify_prop_id(
 
 
 def count_management_rows(path: Path) -> dict[str, int]:
-    """Count unique management ledger import keys (matches importer dedupe)."""
+    """Count management ledger import keys (one per Excel row; matches importer)."""
     wb = openpyxl.load_workbook(path, data_only=True)
     alias_to_prop = _build_prop_alias_map(path.parent)
     expense_keys: set[str] = set()
@@ -206,7 +207,7 @@ def count_management_rows(path: Path) -> dict[str, int]:
         sheet_slug = re.sub(r"[^A-Za-z0-9]+", "", sheet_name).lower() or "sheet"
         ws = wb[sheet_name]
         header = None
-        for row in ws.iter_rows(values_only=True):
+        for row_number, row in enumerate(ws.iter_rows(values_only=True), 1):
             values = list(row)
             if header is None:
                 detected = _detect_header(values)
@@ -245,18 +246,29 @@ def count_management_rows(path: Path) -> dict[str, int]:
             date_key = tx_date.isoformat()
 
             def add_expense(kind: str, exp_amount: Any, bucket: set[str] | None = None) -> None:
-                key = (
-                    f"mgmt:{sheet_slug}:{kind}:{date_key}:{exp_amount}:"
-                    f"{prop_id}:{section}"
+                key = _mgmt_import_key(
+                    sheet_slug=sheet_slug,
+                    kind=kind,
+                    date_key=date_key,
+                    amount=exp_amount,
+                    prop_id=prop_id,
+                    row_number=row_number,
+                    section=section,
                 )
                 expense_keys.add(key)
                 if bucket is not None:
                     bucket.add(key)
 
             def add_deposit(kind: str, dep_amount: Any, bucket: set[str] | None = None) -> None:
-                key = (
-                    f"mgmt:{sheet_slug}:{kind}:{date_key}:{dep_amount}:"
-                    f"{prop_id}:{section}"
+                key = _mgmt_import_key(
+                    sheet_slug=sheet_slug,
+                    kind=kind,
+                    date_key=date_key,
+                    amount=dep_amount,
+                    prop_id=prop_id,
+                    row_number=row_number,
+                    section=section,
+                    include_section=kind != "rental",
                 )
                 deposit_keys.add(key)
                 if bucket is not None:

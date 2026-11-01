@@ -300,6 +300,60 @@ def run_go_live_cutover(
     return account, company, deposits_marked, expenses_marked
 
 
+def mark_reset_import_verified(db: Session) -> tuple[int, int, date | None]:
+    """After a wipe+import, treat the loaded ledger as already checked.
+
+    Stamps every dated deposit/expense as bank-verified (credit-card rows also
+    get card confirmation). Does not set opening_balance — that remains an
+    admin figure from the real bank. Sets last_verification_date to the latest
+    dated transaction so Verification starts with history already closed.
+    Rows with no date (needs_review) stay unverified.
+    """
+    now = datetime.now(timezone.utc)
+    max_dep = db.scalar(select(func.max(Deposit.transaction_date)))
+    max_exp = db.scalar(select(func.max(Expense.transaction_date)))
+    dated = [d for d in (max_dep, max_exp) if d is not None]
+    as_of = max(dated) if dated else None
+
+    dep_result = db.execute(
+        update(Deposit)
+        .where(Deposit.transaction_date.is_not(None))
+        .values(bank_verified_at=now)
+    )
+    exp_result = db.execute(
+        update(Expense)
+        .where(Expense.transaction_date.is_not(None))
+        .values(bank_verified_at=now)
+    )
+    db.execute(
+        update(Expense)
+        .where(
+            Expense.transaction_date.is_not(None),
+            Expense.payment_method == "credit_card",
+        )
+        .values(
+            cc_verified_at=now,
+            cc_bank_confirmed_at=now,
+            cc_deferred_until=None,
+        )
+    )
+
+    account, company = resolve_account_settings(db)
+    if as_of is not None:
+        if account is not None:
+            account.last_verification_date = as_of
+            db.add(account)
+            default = get_default_operating_account(db)
+            if default is not None and account.id == default.id:
+                company.last_verification_date = as_of
+        else:
+            company.last_verification_date = as_of
+        db.add(company)
+
+    db.commit()
+    return int(dep_result.rowcount or 0), int(exp_result.rowcount or 0), as_of
+
+
 def settings_read_payload(
     db: Session, *, bank_account_id: UUID | str | None = None
 ) -> dict:

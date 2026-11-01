@@ -219,6 +219,9 @@ class ClientDataImportResponse(BaseModel):
     warnings: list[str] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
     database_counts: ClientDataImportCounts = Field(default_factory=ClientDataImportCounts)
+    verified_deposits: int = 0
+    verified_expenses: int = 0
+    last_verification_date: date | None = None
 
 
 class ClientDataStatusResponse(BaseModel):

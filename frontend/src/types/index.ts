@@ -450,6 +450,9 @@ export interface ClientDataImportResponse {
   warnings: string[];
   errors: string[];
   database_counts: ClientDataImportCounts;
+  verified_deposits?: number;
+  verified_expenses?: number;
+  last_verification_date?: string | null;
 }
 
 export interface ClientDataImportJobAccepted {

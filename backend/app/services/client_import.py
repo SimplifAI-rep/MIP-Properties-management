@@ -264,6 +264,29 @@ def _parse_amount(value: Any) -> Decimal | None:
     return abs(amount).quantize(Decimal("0.01"))
 
 
+def _mgmt_import_key(
+    *,
+    sheet_slug: str,
+    kind: str,
+    date_key: str,
+    amount: Decimal | str,
+    prop_id: str,
+    row_number: int,
+    section: str | None = None,
+    extra: str | None = None,
+    include_section: bool = True,
+) -> str:
+    """Stable per-Excel-row key so same-day/same-amount ledger lines all import."""
+    parts = ["mgmt", sheet_slug, kind, date_key, str(amount)]
+    if extra:
+        parts.append(extra)
+    parts.append(prop_id)
+    if include_section and section is not None:
+        parts.append(section[:40])
+    parts.append(f"r{row_number}")
+    return ":".join(parts)
+
+
 def _map_payment(method: Any) -> tuple[str, str, str | None]:
     """Return (source, payment_method, extra_reference)."""
     if method is None:
@@ -503,9 +526,15 @@ class ClientDataImportService:
             )
             is_rental = rental_income_amount is not None and inflow is None
             kind = "rental" if is_rental else "inflow"
-            import_key = (
-                f"mgmt:{sheet_slug}:incomplete:{kind}:"
-                f"{date_key}:{store_amount}:{reason_key}:{prop.client_prop_id}"
+            import_key = _mgmt_import_key(
+                sheet_slug=sheet_slug,
+                kind=f"incomplete:{kind}",
+                date_key=date_key,
+                amount=store_amount,
+                prop_id=prop.client_prop_id,
+                row_number=row_number,
+                extra=reason_key,
+                include_section=False,
             )
             if import_key in self.existing_deposit_keys:
                 self.stats.deposits_skipped += 1
@@ -603,9 +632,15 @@ class ClientDataImportService:
             elif paid_by_company:
                 source, payment_method = "manual_company", "company_account"
 
-            import_key = (
-                f"mgmt:{sheet_slug}:incomplete:expense:"
-                f"{date_key}:{store_amount}:{reason_key}:{prop.client_prop_id}:{section[:40]}"
+            import_key = _mgmt_import_key(
+                sheet_slug=sheet_slug,
+                kind="incomplete:expense",
+                date_key=date_key,
+                amount=store_amount,
+                prop_id=prop.client_prop_id,
+                row_number=row_number,
+                extra=reason_key,
+                section=section or "other",
             )
             if import_key in self.existing_expense_keys:
                 self.stats.expenses_skipped += 1
@@ -659,21 +694,6 @@ class ClientDataImportService:
                 )
             counts["expenses"] = counts.get("expenses", 0) + 1
             counts["needs_review"] = counts.get("needs_review", 0) + 1
-
-        self._record_skip(
-            source_file=MANAGEMENT_FILE,
-            sheet=sheet_label,
-            row_number=row_number,
-            reason="imported_needs_review",
-            prop_id=prop.client_prop_id,
-            transaction_date=tx_date,
-            amount=store_amount if not as_deposit else None,
-            inflow=store_amount if as_deposit else inflow,
-            section=section,
-            notes=notes,
-            details=f"Imported incomplete ({reason_key})",
-            import_key=import_key,
-        )
 
     def _ensure_company_owner_and_buffer(self) -> None:
         from app.services.holding import (
@@ -1122,9 +1142,14 @@ class ClientDataImportService:
                 count_key: str | None = None,
             ) -> None:
                 date_key = tx_date.isoformat() if tx_date else "nodate"
-                import_key = (
-                    f"mgmt:{sheet_slug}:{key_kind}:"
-                    f"{date_key}:{exp_amount}:{prop.client_prop_id}:{section[:40]}"
+                import_key = _mgmt_import_key(
+                    sheet_slug=sheet_slug,
+                    kind=key_kind,
+                    date_key=date_key,
+                    amount=exp_amount,
+                    prop_id=prop.client_prop_id,
+                    row_number=row_number,
+                    section=section,
                 )
                 if import_key in self.existing_expense_keys:
                     self.stats.expenses_skipped += 1
@@ -1245,9 +1270,14 @@ class ClientDataImportService:
                 )
 
             if inflow is not None:
-                import_key = (
-                    f"mgmt:{sheet_slug}:inflow:{tx_date.isoformat()}:{inflow}:"
-                    f"{prop.client_prop_id}:{section[:40]}"
+                import_key = _mgmt_import_key(
+                    sheet_slug=sheet_slug,
+                    kind="inflow",
+                    date_key=tx_date.isoformat(),
+                    amount=inflow,
+                    prop_id=prop.client_prop_id,
+                    row_number=row_number,
+                    section=section,
                 )
                 if import_key not in self.existing_deposit_keys:
                     self.db.add(
@@ -1286,9 +1316,14 @@ class ClientDataImportService:
 
             # Rental income — shown in UI, excluded from company float totals
             if rental_income_amount is not None:
-                import_key = (
-                    f"mgmt:{sheet_slug}:rental:{tx_date.isoformat()}:{rental_income_amount}:"
-                    f"{prop.client_prop_id}"
+                import_key = _mgmt_import_key(
+                    sheet_slug=sheet_slug,
+                    kind="rental",
+                    date_key=tx_date.isoformat(),
+                    amount=rental_income_amount,
+                    prop_id=prop.client_prop_id,
+                    row_number=row_number,
+                    include_section=False,
                 )
                 if import_key not in self.existing_deposit_keys:
                     self.db.add(

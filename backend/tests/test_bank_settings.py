@@ -122,6 +122,38 @@ def test_go_live_cutover_marks_verified(client, db):
     assert settings["last_verification_date"] == cutover
 
 
+def test_mark_reset_import_verified_stamps_dated_and_cards(db):
+    from app.services.bank_settings import mark_reset_import_verified, resolve_account_settings
+
+    expenses = db.scalars(select(Expense)).all()
+    assert expenses
+    expenses[0].transaction_date = None
+    db.add(expenses[0])
+    db.commit()
+
+    _, exp_n, as_of = mark_reset_import_verified(db)
+    db.expire_all()
+    dated = [row for row in db.scalars(select(Expense)).all() if row.transaction_date is not None]
+    undated = [row for row in db.scalars(select(Expense)).all() if row.transaction_date is None]
+    assert exp_n == len(dated)
+    assert dated and all(row.bank_verified_at is not None for row in dated)
+    assert undated and all(row.bank_verified_at is None for row in undated)
+    cards = [row for row in dated if row.payment_method == "credit_card"]
+    assert cards
+    assert all(row.cc_verified_at is not None for row in cards)
+    assert all(row.cc_bank_confirmed_at is not None for row in cards)
+    assert as_of is not None
+    account, company = resolve_account_settings(db)
+    last = (
+        account.last_verification_date
+        if account is not None and account.last_verification_date is not None
+        else company.last_verification_date
+    )
+    assert last == as_of
+    opening = account.opening_balance if account is not None else company.opening_balance
+    assert opening is None
+
+
 def test_unverified_stale_alert_after_go_live(client, db):
     from app.services.bank_settings import month_ago, resolve_account_settings
 

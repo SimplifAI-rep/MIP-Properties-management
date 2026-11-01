@@ -218,7 +218,8 @@ export function DataImportPage() {
                 </strong>
                 <span className="block text-muted">
                   Wipes all owners, properties, expenses, deposits, and uploads, then imports from
-                  the files above. Use this for a clean reload matching seed data.
+                  the files above. Dated transactions are marked verified so ledger history does not
+                  appear on Verification. Enter the opening bank balance in Bank settings afterwards.
                 </span>
               </span>
             </label>
@@ -266,6 +267,16 @@ export function DataImportPage() {
           <p className="mt-2 text-sm text-muted">
             {result.reset ? 'Database was reset, then imported.' : 'Imported into existing database.'}
           </p>
+          {result.reset ? (
+            <p className="mt-2 text-sm">
+              Marked {result.verified_deposits ?? 0} deposits and{' '}
+              {result.verified_expenses ?? 0} expenses as verified
+              {result.last_verification_date
+                ? ` through ${result.last_verification_date}`
+                : ''}
+              . Opening bank balance is still unset — enter it in Bank settings.
+            </p>
+          ) : null}
 
           <div className="mt-4 grid gap-4 lg:grid-cols-2">
             <div>

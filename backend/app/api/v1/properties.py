@@ -10,7 +10,8 @@ from app.models.bank_account import BankAccount
 from app.models.deposit import Deposit
 from app.models.owner import Owner
 from app.models.property import Property
-from app.schemas import PropertyDetail, PropertyRead, PropertyUpdate
+from app.schemas import PropertyCreate, PropertyDetail, PropertyRead, PropertyUpdate
+from app.services.client_import import normalize_prop_key
 from app.services.deposit_query import list_deposits
 from app.services.expense_query import list_expenses
 from app.services.running_balance import property_float_totals
@@ -46,6 +47,52 @@ def _property_read(
         total_incoming=incoming,
         total_outgoing=outgoing,
         net_balance=net,
+    )
+
+
+@router.post("", response_model=PropertyRead, status_code=201)
+def create_property(payload: PropertyCreate, db: Session = Depends(get_db)) -> PropertyRead:
+    owner = db.get(Owner, payload.owner_id)
+    if owner is None:
+        raise HTTPException(status_code=404, detail="Owner not found")
+    raw_id = (payload.client_prop_id or "").strip()
+    client_prop_id = normalize_prop_key(raw_id) or raw_id
+    if not client_prop_id:
+        raise HTTPException(status_code=400, detail="Property ID is required")
+    if len(client_prop_id) > 50:
+        raise HTTPException(status_code=400, detail="Property ID is too long")
+    name = (payload.name or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Property name is required")
+    existing = db.scalars(
+        select(Property).where(Property.client_prop_id == client_prop_id)
+    ).first()
+    if existing is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Property ID {client_prop_id} is already in use",
+        )
+    address = (payload.address or "").strip() or None
+    city = (payload.city or "").strip() or None
+    prop = Property(
+        owner_id=owner.id,
+        client_prop_id=client_prop_id,
+        name=name,
+        address=address,
+        city=city,
+        status=payload.status,
+    )
+    db.add(prop)
+    db.commit()
+    db.refresh(prop)
+    return _property_read(
+        prop,
+        owner.name,
+        0,
+        _zero(),
+        incoming=_zero(),
+        outgoing=_zero(),
+        net=_zero(),
     )
 
 

@@ -13,7 +13,7 @@ import {
   LoadingState,
 } from '../components/ui/States';
 import { Tooltip } from '../components/ui/Tooltip';
-import type { Property, PropertyDetail } from '../types';
+import type { OwnerSummary, Property, PropertyDetail } from '../types';
 import {
   ownerTransactionsState,
   propertyTransactionsState,
@@ -216,16 +216,46 @@ export function PropertiesPage() {
   const queryClient = useQueryClient();
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [statusError, setStatusError] = useState<unknown>(null);
+  const [newOwnerId, setNewOwnerId] = useState('');
+  const [newPropId, setNewPropId] = useState('');
+  const [newName, setNewName] = useState('');
+  const [newAddress, setNewAddress] = useState('');
+  const [newCity, setNewCity] = useState('');
+  const [createMessage, setCreateMessage] = useState<string | null>(null);
+  const [createError, setCreateError] = useState<string | null>(null);
 
   const propertiesQuery = useQuery({
     queryKey: ['properties'],
     queryFn: api.getProperties,
   });
 
+  const ownersQuery = useQuery({
+    queryKey: ['owners'],
+    queryFn: api.getOwners,
+  });
+
   const detailQuery = useQuery({
     queryKey: ['property', expandedId],
     queryFn: () => api.getProperty(expandedId!),
     enabled: !!expandedId,
+  });
+
+  const createMutation = useMutation({
+    mutationFn: api.createProperty,
+    onSuccess: (created) => {
+      void queryClient.invalidateQueries({ queryKey: ['properties'] });
+      void queryClient.invalidateQueries({ queryKey: ['owners'] });
+      setNewPropId('');
+      setNewName('');
+      setNewAddress('');
+      setNewCity('');
+      setCreateMessage(`Added ${created.client_prop_id}.`);
+      setCreateError(null);
+    },
+    onError: (error) => {
+      setCreateError(getUserErrorMessage(error));
+      setCreateMessage(null);
+    },
   });
 
   const statusMutation = useMutation({
@@ -266,6 +296,7 @@ export function PropertiesPage() {
   }
 
   const properties = propertiesQuery.data ?? [];
+  const owners = ownersQuery.data ?? [];
 
   return (
     <div className="space-y-6">
@@ -276,6 +307,103 @@ export function PropertiesPage() {
           to open filtered transactions, or Details to expand under the row.
         </p>
       </div>
+
+      <section className="panel p-4 sm:p-5 space-y-3">
+        <h3 className="section-title text-sm">Add a property</h3>
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <label className="text-sm">
+            <span className="label-text">Owner</span>
+            <select
+              className="field"
+              value={newOwnerId}
+              onChange={(event) => setNewOwnerId(event.target.value)}
+            >
+              <option value="">Select owner</option>
+              {owners.map((owner: OwnerSummary) => (
+                <option key={owner.id} value={owner.id}>
+                  {owner.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="text-sm">
+            <span className="label-text">
+              <Tooltip content="Client property code, for example 618 or C19.">Prop ID</Tooltip>
+            </span>
+            <input
+              className="field font-mono"
+              value={newPropId}
+              onChange={(event) => setNewPropId(event.target.value)}
+              placeholder="618"
+            />
+          </label>
+          <label className="text-sm">
+            <span className="label-text">Name</span>
+            <input
+              className="field"
+              value={newName}
+              onChange={(event) => setNewName(event.target.value)}
+              placeholder="Property name"
+            />
+          </label>
+          <label className="text-sm">
+            <span className="label-text">Address (optional)</span>
+            <input
+              className="field"
+              value={newAddress}
+              onChange={(event) => setNewAddress(event.target.value)}
+              placeholder="Street address"
+            />
+          </label>
+          <label className="text-sm">
+            <span className="label-text">City (optional)</span>
+            <input
+              className="field"
+              value={newCity}
+              onChange={(event) => setNewCity(event.target.value)}
+              placeholder="City"
+            />
+          </label>
+          <div className="flex items-end">
+            <button
+              type="button"
+              className="btn-primary"
+              disabled={createMutation.isPending}
+              onClick={() => {
+                if (!newOwnerId) {
+                  setCreateError('Select an owner.');
+                  setCreateMessage(null);
+                  return;
+                }
+                const clientPropId = newPropId.trim();
+                const name = newName.trim();
+                if (!clientPropId) {
+                  setCreateError('Enter a property ID.');
+                  setCreateMessage(null);
+                  return;
+                }
+                if (!name) {
+                  setCreateError('Enter a property name.');
+                  setCreateMessage(null);
+                  return;
+                }
+                createMutation.mutate({
+                  owner_id: newOwnerId,
+                  client_prop_id: clientPropId,
+                  name,
+                  address: newAddress.trim() || null,
+                  city: newCity.trim() || null,
+                  status: 'active',
+                });
+              }}
+            >
+              {createMutation.isPending ? 'Adding…' : 'Add property'}
+            </button>
+          </div>
+        </div>
+        {createMessage ? <p className="text-sm text-positive">{createMessage}</p> : null}
+        {createError ? <p className="text-sm text-negative">{createError}</p> : null}
+      </section>
 
       <section className="panel overflow-hidden">
         <div className="overflow-x-auto">

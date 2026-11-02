@@ -54,12 +54,64 @@ META_SHEETS = {
     "oldbuffer",
     "expenses",
     "bills",
+    "clients",
+    "convert clients",
+}
+
+# Tabs that mix several properties on one sheet (per-row Prop ID, no sheet default).
+COMBINED_SHEET_NAMES = {
+    "801-618- 619",
+    "801-618-619",
 }
 
 BUFFER_PROP_ID = "BUFFER"
+SHARED_PROP_PREFIX = "SHARED-"
 COMPANY_OWNER_NAME = "My Israel Property (MIP)"
 COMPANY_ACCOUNT_NUMBER = "MIP-LEUMI-OPS"
 COMPANY_CC_ACCOUNT_PREFIX = "MIP-LEUMI-CC-"
+_COMBINED_PROP_SPLIT = re.compile(r"[\/+]")
+
+
+def split_combined_prop_keys(raw: Any) -> list[str]:
+    """Split a combined Excel Prop ID such as '618/619/801' or '618+801'."""
+    if raw is None:
+        return []
+    text = str(raw).strip()
+    if not text:
+        return []
+    keys: list[str] = []
+    seen: set[str] = set()
+    for part in _COMBINED_PROP_SPLIT.split(text):
+        key = normalize_prop_key(part)
+        if key and key not in seen:
+            seen.add(key)
+            keys.append(key)
+    return keys
+
+
+def is_combined_prop_id(raw: Any) -> bool:
+    if raw is None:
+        return False
+    text = str(raw).strip()
+    if "/" not in text and "+" not in text:
+        return False
+    return len(split_combined_prop_keys(text)) >= 2
+
+
+def owner_shared_client_prop_id(owner_name: str) -> str:
+    """Stable per-owner Prop ID for money split across that owner's properties."""
+    slug = re.sub(r"[^A-Za-z0-9]+", "", owner_name).upper() or "OWNER"
+    return f"{SHARED_PROP_PREFIX}{slug[:40]}"
+
+
+def sheet_uses_row_prop_ids(sheet_name: str) -> bool:
+    """True for owner-label / combined tabs (e.g. Silver ex) rather than a single Prop ID."""
+    if sheet_name.strip() in COMBINED_SHEET_NAMES:
+        return True
+    canonical = normalize_prop_key(sheet_name)
+    if not canonical:
+        return True
+    return not re.search(r"\d", canonical)
 
 
 @dataclass
@@ -351,6 +403,8 @@ class ClientDataImportService:
         self.existing_deposit_keys: set[str] = set()
         # Prop IDs from the "current clients" sheet — source of truth for active status.
         self.current_client_ids: set[str] = set()
+        # Prop IDs seen on current or past client lists (not UI-created extras).
+        self.listed_client_ids: set[str] = set()
 
     def _report(self, message: str) -> None:
         if self.progress:
@@ -395,18 +449,35 @@ class ClientDataImportService:
         return self.stats
 
     def _apply_property_active_status(self) -> None:
-        """Mark current-client properties active; everything else inactive (except BUFFER and Awaiting return)."""
+        """Mark current-client properties active; listed past clients inactive.
+
+        BUFFER / Awaiting return stay active. Owner-shared buckets follow the
+        owner. Properties created in the app (not on the client list) keep
+        the status they already have.
+        """
         active_ids: list[str] = []
         inactive_ids: list[str] = []
         from app.services.holding import AWAITING_RETURN_PROP_ID, BUFFER_PROP_ID as HOLDING_BUFFER
 
         holding_ids = {HOLDING_BUFFER, AWAITING_RETURN_PROP_ID}
-        for prop in self.db.scalars(select(Property).order_by(Property.client_prop_id)).all():
+        properties = list(self.db.scalars(select(Property).order_by(Property.client_prop_id)).all())
+        owner_has_current = {
+            prop.owner_id
+            for prop in properties
+            if prop.client_prop_id in self.current_client_ids
+        }
+        for prop in properties:
             previous = (prop.status or "").strip().lower()
-            if prop.client_prop_id in holding_ids or prop.client_prop_id in self.current_client_ids:
+            if prop.client_prop_id in holding_ids:
                 next_status = "active"
-            else:
+            elif prop.client_prop_id in self.current_client_ids:
+                next_status = "active"
+            elif (prop.client_prop_id or "").startswith(SHARED_PROP_PREFIX):
+                next_status = "active" if prop.owner_id in owner_has_current else "inactive"
+            elif prop.client_prop_id in self.listed_client_ids:
                 next_status = "inactive"
+            else:
+                next_status = previous or "inactive"
             if previous != next_status:
                 if next_status == "active":
                     self.stats.properties_marked_active += 1
@@ -751,6 +822,69 @@ class ClientDataImportService:
             return None
         return self.properties_by_id.get(canonical)
 
+    def _get_or_create_owner_shared_property(self, owner: Owner) -> Property:
+        key = owner_shared_client_prop_id(owner.name)
+        existing = self.properties_by_id.get(key)
+        if existing is None:
+            existing = self.db.scalars(
+                select(Property).where(Property.client_prop_id == key)
+            ).first()
+        if existing is not None:
+            if existing.owner_id != owner.id:
+                key = f"{key}-{str(owner.id).replace('-', '')[:8]}"[:50]
+                existing = self.properties_by_id.get(key) or self.db.scalars(
+                    select(Property).where(Property.client_prop_id == key)
+                ).first()
+            if existing is not None:
+                self.properties_by_id[existing.client_prop_id] = existing
+                self._register_aliases(existing.client_prop_id, existing.client_prop_id)
+                return existing
+
+        prop = Property(
+            owner_id=owner.id,
+            client_prop_id=key,
+            name=f"{owner.name} — shared",
+            status="active",
+        )
+        self.db.add(prop)
+        self.db.flush()
+        self.properties_by_id[key] = prop
+        self._register_aliases(key, key)
+        self.stats.properties_created += 1
+        return prop
+
+    def _resolve_combined_property(self, raw: Any) -> Property | None:
+        """Map 618/619/801-style codes to that owner's shared property (BUFFER for MIP)."""
+        buffer = self.properties_by_id.get(BUFFER_PROP_ID)
+        keys = split_combined_prop_keys(raw)
+        owners: dict[str, Owner] = {}
+        for key in keys:
+            prop = self._resolve_property(key)
+            if prop is None:
+                continue
+            owner = self.db.get(Owner, prop.owner_id)
+            if owner is None:
+                continue
+            owners[str(owner.id)] = owner
+        if len(owners) != 1:
+            return buffer
+        owner = next(iter(owners.values()))
+        if owner.name == COMPANY_OWNER_NAME:
+            return buffer
+        return self._get_or_create_owner_shared_property(owner)
+
+    def _resolve_ledger_property(
+        self,
+        prop_raw: Any,
+        default_prop_id: str | None,
+    ) -> Property | None:
+        if is_combined_prop_id(prop_raw):
+            return self._resolve_combined_property(prop_raw)
+        prop = self._resolve_property(prop_raw) if prop_raw is not None else None
+        if prop is None and default_prop_id:
+            prop = self.properties_by_id.get(default_prop_id)
+        return prop
+
     def _import_client_list(self) -> None:
         path = self.data_dir / CLIENT_LIST_FILE
         if not path.exists():
@@ -848,6 +982,7 @@ class ClientDataImportService:
 
                 self.properties_by_id[canonical] = existing
                 self._register_aliases(canonical, prop_raw)
+                self.listed_client_ids.add(canonical)
                 if status == "active":
                     self.current_client_ids.add(canonical)
 
@@ -890,9 +1025,13 @@ class ClientDataImportService:
             for sheet_name in wb.sheetnames:
                 if sheet_name.strip().lower() in META_SHEETS:
                     continue
-                # Combined multi-property sheet — import with per-row Prop ID
-                if sheet_name.strip() in {"801-618- 619", "801-618-619"}:
-                    self._import_ledger_sheet(wb[sheet_name], default_prop_id=None, sheet_label=sheet_name)
+                # Combined / owner-label sheets (Silver ex, 801-618-619) use per-row Prop ID
+                if sheet_uses_row_prop_ids(sheet_name) and self._resolve_property(sheet_name) is None:
+                    self._report(f"Importing sheet {sheet_name}…")
+                    self._import_ledger_sheet(
+                        wb[sheet_name], default_prop_id=None, sheet_label=sheet_name
+                    )
+                    self._checkpoint()
                     continue
 
                 prop = self._resolve_property(sheet_name)
@@ -987,14 +1126,7 @@ class ClientDataImportService:
                 return values[idx]
 
             prop_raw = col("prop_id")
-            prop = self._resolve_property(prop_raw) if prop_raw is not None else None
-            if prop is None and default_prop_id:
-                prop = self.properties_by_id.get(default_prop_id)
-            # Combined codes on sheets without a default property → company buffer
-            if prop is None and prop_raw is not None:
-                raw_text = str(prop_raw)
-                if "/" in raw_text or "+" in raw_text:
-                    prop = self.properties_by_id.get(BUFFER_PROP_ID)
+            prop = self._resolve_ledger_property(prop_raw, default_prop_id)
             if prop is None:
                 counts["skipped"] += 1
                 self.stats.rows_skipped_empty += 1

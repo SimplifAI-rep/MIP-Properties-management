@@ -286,8 +286,29 @@ export const api = {
     ),
   getOwners: () => request<OwnerSummary[]>('/owners'),
   getOwner: (id: string) => request<OwnerDetail>(`/owners/${id}`),
+  createOwner: (payload: {
+    name: string;
+    contact_email?: string | null;
+    contact_phone?: string | null;
+  }) =>
+    request<OwnerSummary>('/owners', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
   getProperties: () => request<Property[]>('/properties'),
   getProperty: (id: string) => request<PropertyDetail>(`/properties/${id}`),
+  createProperty: (payload: {
+    owner_id: string;
+    client_prop_id: string;
+    name: string;
+    address?: string | null;
+    city?: string | null;
+    status?: 'active' | 'inactive';
+  }) =>
+    request<Property>('/properties', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
   updatePropertyStatus: (id: string, status: 'active' | 'inactive') =>
     request<Property>(`/properties/${id}`, {
       method: 'PATCH',

@@ -6,6 +6,12 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 
 
+class OwnerCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=255)
+    contact_email: str | None = Field(default=None, max_length=255)
+    contact_phone: str | None = Field(default=None, max_length=50)
+
+
 class OwnerRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -123,6 +129,15 @@ class PropertyDetail(PropertyRead):
     bank_accounts: list[BankAccountRead] = Field(default_factory=list)
     recent_deposits: list[DepositRead] = Field(default_factory=list)
     recent_expenses: list["ExpenseRead"] = Field(default_factory=list)
+
+
+class PropertyCreate(BaseModel):
+    owner_id: UUID
+    client_prop_id: str = Field(..., min_length=1, max_length=50)
+    name: str = Field(..., min_length=1, max_length=255)
+    address: str | None = None
+    city: str | None = Field(default=None, max_length=100)
+    status: Literal["active", "inactive"] = "active"
 
 
 class PropertyUpdate(BaseModel):

@@ -14,14 +14,21 @@ from app.core.config import PROJECT_ROOT
 from app.core.database import Base
 from app.models.deposit import Deposit
 from app.models.expense import Expense
+from app.models.owner import Owner
 from app.models.property import Property
 from app.services.bank_settings import mark_reset_import_verified, resolve_account_settings
 from app.services.client_import import (
+    BUFFER_PROP_ID,
     CLIENT_LIST_FILE,
+    COMPANY_OWNER_NAME,
     MANAGEMENT_FILE,
-    normalize_prop_key,
-    prop_key_aliases,
     import_client_data,
+    is_combined_prop_id,
+    normalize_prop_key,
+    owner_shared_client_prop_id,
+    prop_key_aliases,
+    sheet_uses_row_prop_ids,
+    split_combined_prop_keys,
 )
 from app.services.client_import_verify import verify_against_excel
 
@@ -50,6 +57,18 @@ def test_prop_key_aliases_include_both_sides():
     aliases = prop_key_aliases("C6 or 06 ex")
     assert "C6" in aliases
     assert "6" in aliases
+
+
+def test_combined_prop_id_helpers():
+    assert split_combined_prop_keys("618/619/801") == ["618", "619", "801"]
+    assert split_combined_prop_keys("618+801") == ["618", "801"]
+    assert is_combined_prop_id("618/619/801")
+    assert is_combined_prop_id("618 + 801")
+    assert not is_combined_prop_id("618")
+    assert sheet_uses_row_prop_ids("Silver ex")
+    assert sheet_uses_row_prop_ids("801-618-619")
+    assert not sheet_uses_row_prop_ids("H111")
+    assert owner_shared_client_prop_id("Stu Silver") == "SHARED-STUSILVER"
 
 
 @pytest.fixture
@@ -199,3 +218,61 @@ def test_reset_import_marks_dated_transactions_verified(db, tmp_path):
     assert last == date(2026, 1, 16)
     opening = account.opening_balance if account is not None else company.opening_balance
     assert opening is None
+
+
+def test_silver_shared_property_from_combined_prop_ids(db, tmp_path):
+    clients = Workbook()
+    ws = clients.active
+    ws.title = "current clients"
+    ws.append(["Property number", "Last", "First", "Hebrew", "Address", "City"])
+    ws.append(["618", "Silver", "Stu", None, "Shirat Hayam 618", "Zichron"])
+    ws.append(["619", "Silver", "Stu", None, "Shirat Hayam 619", "Zichron"])
+    ws.append(["801", "Silver", "Stu", None, "Havat Habaron 801", "Zichron"])
+    clients.save(tmp_path / CLIENT_LIST_FILE)
+
+    mgmt = Workbook()
+    silver = mgmt.active
+    silver.title = "Silver ex"
+    silver.append(["Prop ID", "Date", "Section", "Amount", "Inflow", "Notes"])
+    silver.append(["618", date(2026, 1, 10), "Electric", 10, None, "one property"])
+    silver.append(["619", date(2026, 1, 11), "Water", 20, None, "one property"])
+    silver.append(["618/619/801", date(2026, 1, 12), "Arnona", 30, None, "shared three"])
+    silver.append(["618/801", date(2026, 1, 13), "Prepaid", None, 40, "shared two"])
+    buffer = mgmt.create_sheet("Buffer")
+    buffer.append(["Prop ID", "Date", "Section", "Amount", "Inflow", "Notes"])
+    buffer.append(["BUFFER/UNKNOWN", date(2026, 1, 14), "Misc", 5, None, "mip combined"])
+    mgmt.save(tmp_path / MANAGEMENT_FILE)
+
+    stats = import_client_data(
+        db,
+        data_dir=tmp_path,
+        include_bank=False,
+        include_credit_cards=False,
+    )
+    assert not stats.errors
+
+    by_id = {prop.client_prop_id: prop for prop in db.scalars(select(Property)).all()}
+    assert "618" in by_id
+    assert "619" in by_id
+    assert "801" in by_id
+    assert "SILVER" not in by_id
+    shared_id = owner_shared_client_prop_id("Stu Silver")
+    assert shared_id in by_id
+    silver_owner = db.scalars(select(Owner).where(Owner.name == "Stu Silver")).first()
+    assert silver_owner is not None
+    assert by_id[shared_id].owner_id == silver_owner.id
+    assert by_id[shared_id].status == "active"
+    company = db.scalars(select(Owner).where(Owner.name == COMPANY_OWNER_NAME)).first()
+    assert company is not None
+    assert by_id[shared_id].owner_id != company.id
+
+    expenses = db.scalars(select(Expense)).all()
+    deposits = db.scalars(select(Deposit)).all()
+    amounts = {(row.property_id, row.amount) for row in expenses}
+    assert (by_id["618"].id, Decimal("10.00")) in amounts
+    assert (by_id["619"].id, Decimal("20.00")) in amounts
+    assert (by_id[shared_id].id, Decimal("30.00")) in amounts
+    assert (by_id[BUFFER_PROP_ID].id, Decimal("5.00")) in amounts
+    assert len(deposits) == 1
+    assert deposits[0].property_id == by_id[shared_id].id
+    assert deposits[0].amount == Decimal("40.00")

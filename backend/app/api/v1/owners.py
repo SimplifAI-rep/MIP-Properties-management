@@ -10,7 +10,7 @@ from app.models.deposit import Deposit
 from app.models.expense import Expense
 from app.models.owner import Owner
 from app.models.property import Property
-from app.schemas import OwnerDetail, OwnerPropertySummary, OwnerSummary
+from app.schemas import OwnerCreate, OwnerDetail, OwnerPropertySummary, OwnerSummary
 from app.services.deposit_query import list_deposits
 from app.services.expense_query import list_expenses
 from app.services.running_balance import property_float_totals
@@ -65,6 +65,37 @@ def _property_count_by_owner_subquery():
         )
         .group_by(Property.owner_id)
         .subquery()
+    )
+
+
+@router.post("", response_model=OwnerSummary, status_code=201)
+def create_owner(payload: OwnerCreate, db: Session = Depends(get_db)) -> OwnerSummary:
+    name = (payload.name or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Owner name is required")
+    email = (payload.contact_email or "").strip() or None
+    phone = (payload.contact_phone or "").strip() or None
+    duplicate = db.scalars(
+        select(Owner).where(func.lower(Owner.name) == name.lower())
+    ).first()
+    if duplicate is not None:
+        raise HTTPException(status_code=409, detail="An owner with this name already exists")
+    owner = Owner(name=name, contact_email=email, contact_phone=phone)
+    db.add(owner)
+    db.commit()
+    db.refresh(owner)
+    return OwnerSummary(
+        id=owner.id,
+        name=owner.name,
+        contact_email=owner.contact_email,
+        contact_phone=owner.contact_phone,
+        property_count=0,
+        deposit_count=0,
+        total_deposits=_zero(),
+        expense_count=0,
+        total_expenses=_zero(),
+        balance=_zero(),
+        status="active",
     )
 
 

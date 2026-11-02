@@ -1,6 +1,6 @@
 import { Fragment, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
 import { TransactionTable } from '../components/TransactionTable';
 import { EntityFeedbackButton } from '../components/ui/EntityFeedbackButton';
@@ -14,6 +14,7 @@ import {
 } from '../components/ui/States';
 import { Tooltip } from '../components/ui/Tooltip';
 import type { OwnerDetail, OwnerSummary } from '../types';
+import { getUserErrorMessage } from '../utils/errors';
 import {
   ownerTransactionsState,
   propertyTransactionsState,
@@ -164,13 +165,35 @@ function OwnerExpandedDetails({
 
 export function OwnersPage() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [ownerFilterIds, setOwnerFilterIds] = useState<string[]>([]);
   const [ownerStatuses, setOwnerStatuses] = useState<OwnerStatusFilter[]>(['active']);
+  const [newName, setNewName] = useState('');
+  const [newEmail, setNewEmail] = useState('');
+  const [newPhone, setNewPhone] = useState('');
+  const [createMessage, setCreateMessage] = useState<string | null>(null);
+  const [createError, setCreateError] = useState<string | null>(null);
 
   const ownersQuery = useQuery({
     queryKey: ['owners'],
     queryFn: api.getOwners,
+  });
+
+  const createMutation = useMutation({
+    mutationFn: api.createOwner,
+    onSuccess: (created) => {
+      void queryClient.invalidateQueries({ queryKey: ['owners'] });
+      setNewName('');
+      setNewEmail('');
+      setNewPhone('');
+      setCreateMessage(`Added ${created.name}.`);
+      setCreateError(null);
+    },
+    onError: (error) => {
+      setCreateError(getUserErrorMessage(error));
+      setCreateMessage(null);
+    },
   });
 
   const detailQuery = useQuery({
@@ -232,6 +255,64 @@ export function OwnersPage() {
           open filtered transactions, or Details to expand under the row.
         </p>
       </div>
+
+      <section className="panel p-4 sm:p-5 space-y-3">
+        <h3 className="section-title text-sm">Add an owner</h3>
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-[1fr_1fr_1fr_auto]">
+          <label className="text-sm">
+            <span className="label-text">Name</span>
+            <input
+              className="field"
+              value={newName}
+              onChange={(event) => setNewName(event.target.value)}
+              placeholder="Owner name"
+            />
+          </label>
+          <label className="text-sm">
+            <span className="label-text">Email (optional)</span>
+            <input
+              className="field"
+              type="email"
+              value={newEmail}
+              onChange={(event) => setNewEmail(event.target.value)}
+              placeholder="name@example.com"
+            />
+          </label>
+          <label className="text-sm">
+            <span className="label-text">Phone (optional)</span>
+            <input
+              className="field"
+              value={newPhone}
+              onChange={(event) => setNewPhone(event.target.value)}
+              placeholder="Phone"
+            />
+          </label>
+          <div className="flex items-end">
+            <button
+              type="button"
+              className="btn-primary"
+              disabled={createMutation.isPending}
+              onClick={() => {
+                const name = newName.trim();
+                if (!name) {
+                  setCreateError('Enter an owner name.');
+                  setCreateMessage(null);
+                  return;
+                }
+                createMutation.mutate({
+                  name,
+                  contact_email: newEmail.trim() || null,
+                  contact_phone: newPhone.trim() || null,
+                });
+              }}
+            >
+              {createMutation.isPending ? 'Adding…' : 'Add owner'}
+            </button>
+          </div>
+        </div>
+        {createMessage ? <p className="text-sm text-positive">{createMessage}</p> : null}
+        {createError ? <p className="text-sm text-negative">{createError}</p> : null}
+      </section>
 
       <div className="filter-panel max-w-3xl md:grid-cols-2">
         <SearchableMultiSelect

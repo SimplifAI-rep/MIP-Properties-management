@@ -29,6 +29,8 @@ from app.services.transaction_filters import (
 class PropertyFloatTotals:
     incoming: Decimal
     outgoing: Decimal
+    incoming_count: int = 0
+    outgoing_count: int = 0
 
     @property
     def net(self) -> Decimal:
@@ -44,6 +46,7 @@ def property_float_totals(
         select(
             Deposit.property_id,
             func.coalesce(func.sum(Deposit.amount), 0),
+            func.count(Deposit.id),
         )
         .where(deposit_company_float_clause())
         .group_by(Deposit.property_id)
@@ -52,6 +55,7 @@ def property_float_totals(
         select(
             Expense.property_id,
             func.coalesce(func.sum(Expense.amount), 0),
+            func.count(Expense.id),
         )
         .where(and_(*expense_company_float_clauses()))
         .group_by(Expense.property_id)
@@ -63,13 +67,13 @@ def property_float_totals(
         deposit_stmt = deposit_stmt.where(Deposit.property_id.in_(unique_ids))
         expense_stmt = expense_stmt.where(Expense.property_id.in_(unique_ids))
 
-    incoming_map = {
-        property_id: Decimal(str(total)).quantize(Decimal("0.01"))
-        for property_id, total in db.execute(deposit_stmt).all()
+    incoming_map: dict[UUID, tuple[Decimal, int]] = {
+        property_id: (Decimal(str(total)).quantize(Decimal("0.01")), int(count))
+        for property_id, total, count in db.execute(deposit_stmt).all()
     }
-    outgoing_map = {
-        property_id: Decimal(str(total)).quantize(Decimal("0.01"))
-        for property_id, total in db.execute(expense_stmt).all()
+    outgoing_map: dict[UUID, tuple[Decimal, int]] = {
+        property_id: (Decimal(str(total)).quantize(Decimal("0.01")), int(count))
+        for property_id, total, count in db.execute(expense_stmt).all()
     }
 
     keys = set(incoming_map) | set(outgoing_map)
@@ -79,8 +83,10 @@ def property_float_totals(
     zero = Decimal("0.00")
     return {
         property_id: PropertyFloatTotals(
-            incoming=incoming_map.get(property_id, zero),
-            outgoing=outgoing_map.get(property_id, zero),
+            incoming=incoming_map.get(property_id, (zero, 0))[0],
+            outgoing=outgoing_map.get(property_id, (zero, 0))[0],
+            incoming_count=incoming_map.get(property_id, (zero, 0))[1],
+            outgoing_count=outgoing_map.get(property_id, (zero, 0))[1],
         )
         for property_id in keys
     }

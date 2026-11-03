@@ -1,3 +1,6 @@
+from datetime import date
+from decimal import Decimal
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -7,6 +10,8 @@ from sqlalchemy.pool import StaticPool
 from app.api.deps import get_db
 from app.core.database import Base
 from app.main import app
+from app.models.deposit import Deposit
+from app.models.expense import Expense
 from app.models.owner import Owner
 from app.models.property import Property
 from app.services.client_import import PAST_CLIENTS_OWNER_NAME
@@ -206,3 +211,95 @@ def test_past_clients_owner_is_listed_as_active(client, db):
     past = next(row for row in body if row["name"] == PAST_CLIENTS_OWNER_NAME)
     assert past["status"] == "active"
     assert past["property_count"] == 1
+
+
+def test_owner_and_property_totals_match_company_float(client, db):
+    owner = Owner(name="Float Totals Client")
+    db.add(owner)
+    db.flush()
+    prop = Property(
+        owner_id=owner.id,
+        client_prop_id="FT-1",
+        name="Float house",
+        status="active",
+    )
+    db.add(prop)
+    db.flush()
+    db.add_all(
+        [
+            Deposit(
+                property_id=prop.id,
+                transaction_date=date(2026, 1, 1),
+                amount=Decimal("1000.00"),
+                currency="ILS",
+                source="management_ledger",
+                is_rental_income=False,
+            ),
+            Deposit(
+                property_id=prop.id,
+                transaction_date=date(2026, 1, 2),
+                amount=Decimal("3000.00"),
+                currency="ILS",
+                source="rental_income",
+                is_rental_income=True,
+            ),
+            Expense(
+                property_id=prop.id,
+                transaction_date=date(2026, 1, 3),
+                amount=Decimal("200.00"),
+                currency="ILS",
+                category="maintenance",
+                source="management_ledger",
+                payment_method="company_account",
+                paid_by_resident=False,
+                paid_by_owner=False,
+            ),
+            Expense(
+                property_id=prop.id,
+                transaction_date=date(2026, 1, 4),
+                amount=Decimal("50.00"),
+                currency="ILS",
+                category="utilities",
+                source="manual_owner",
+                payment_method="owner_personal",
+                paid_by_resident=True,
+            ),
+            Expense(
+                property_id=prop.id,
+                transaction_date=date(2026, 1, 5),
+                amount=Decimal("75.00"),
+                currency="ILS",
+                category="tax",
+                source="manual_owner",
+                payment_method="owner_personal",
+                paid_by_owner=True,
+            ),
+        ]
+    )
+    db.commit()
+
+    listed = next(
+        row for row in client.get("/api/v1/owners").json() if row["name"] == owner.name
+    )
+    assert listed["deposit_count"] == 1
+    assert float(listed["total_deposits"]) == pytest.approx(1000.00)
+    assert listed["expense_count"] == 1
+    assert float(listed["total_expenses"]) == pytest.approx(200.00)
+    assert float(listed["balance"]) == pytest.approx(800.00)
+
+    detail = client.get(f"/api/v1/owners/{owner.id}").json()
+    assert float(detail["total_deposits"]) == pytest.approx(1000.00)
+    assert float(detail["total_expenses"]) == pytest.approx(200.00)
+    assert float(detail["balance"]) == pytest.approx(800.00)
+    assert float(detail["properties"][0]["total_deposits"]) == pytest.approx(1000.00)
+    assert float(detail["properties"][0]["total_expenses"]) == pytest.approx(200.00)
+
+    property_row = next(
+        row
+        for row in client.get("/api/v1/properties").json()
+        if row["client_prop_id"] == "FT-1"
+    )
+    assert float(property_row["total_incoming"]) == pytest.approx(1000.00)
+    assert float(property_row["total_outgoing"]) == pytest.approx(200.00)
+    assert float(property_row["net_balance"]) == pytest.approx(800.00)
+    assert float(property_row["total_deposits"]) == pytest.approx(1000.00)

@@ -2,25 +2,33 @@ from decimal import Decimal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db
 from app.models.bank_account import BankAccount
-from app.models.deposit import Deposit
 from app.models.owner import Owner
 from app.models.property import Property
 from app.schemas import PropertyCreate, PropertyDetail, PropertyRead, PropertyUpdate
 from app.services.client_import import normalize_prop_key
 from app.services.deposit_query import list_deposits
 from app.services.expense_query import list_expenses
-from app.services.running_balance import property_float_totals
+from app.services.running_balance import PropertyFloatTotals, property_float_totals
 
 router = APIRouter(prefix="/properties", tags=["properties"])
 
 
 def _zero() -> Decimal:
     return Decimal("0.00")
+
+
+def _empty_float() -> PropertyFloatTotals:
+    return PropertyFloatTotals(
+        incoming=_zero(),
+        outgoing=_zero(),
+        incoming_count=0,
+        outgoing_count=0,
+    )
 
 
 def _property_read(
@@ -99,31 +107,24 @@ def create_property(payload: PropertyCreate, db: Session = Depends(get_db)) -> P
 @router.get("", response_model=list[PropertyRead])
 def list_properties(db: Session = Depends(get_db)) -> list[PropertyRead]:
     rows = db.execute(
-        select(
-            Property,
-            Owner.name,
-            func.count(Deposit.id),
-            func.coalesce(func.sum(Deposit.amount), 0),
-        )
+        select(Property, Owner.name)
         .join(Owner, Property.owner_id == Owner.id)
-        .outerjoin(Deposit, Deposit.property_id == Property.id)
-        .group_by(Property.id, Owner.name)
         .order_by(Property.client_prop_id)
     ).all()
 
-    floats = property_float_totals(db, [prop.id for prop, *_ in rows])
+    floats = property_float_totals(db, [prop.id for prop, _ in rows])
 
     return [
         _property_read(
             prop,
             owner_name,
-            deposit_count or 0,
-            total_deposits or _zero(),
-            incoming=(floats.get(prop.id).incoming if prop.id in floats else _zero()),
-            outgoing=(floats.get(prop.id).outgoing if prop.id in floats else _zero()),
-            net=(floats.get(prop.id).net if prop.id in floats else _zero()),
+            (floats.get(prop.id) or _empty_float()).incoming_count,
+            (floats.get(prop.id) or _empty_float()).incoming,
+            incoming=(floats.get(prop.id) or _empty_float()).incoming,
+            outgoing=(floats.get(prop.id) or _empty_float()).outgoing,
+            net=(floats.get(prop.id) or _empty_float()).net,
         )
-        for prop, owner_name, deposit_count, total_deposits in rows
+        for prop, owner_name in rows
     ]
 
 
@@ -177,42 +178,32 @@ def update_property(
     db.refresh(prop)
 
     owner = db.get(Owner, prop.owner_id)
-    deposit_count = db.scalar(
-        select(func.count(Deposit.id)).where(Deposit.property_id == property_id)
-    ) or 0
-    total_deposits = db.scalar(
-        select(func.coalesce(func.sum(Deposit.amount), 0)).where(
-            Deposit.property_id == property_id
-        )
-    ) or _zero()
     floats = property_float_totals(db, [property_id])
-    totals = floats.get(property_id)
+    totals = floats.get(property_id) or _empty_float()
 
     return _property_read(
         prop,
         owner.name if owner else "",
-        int(deposit_count),
-        total_deposits if isinstance(total_deposits, Decimal) else _zero(),
-        incoming=totals.incoming if totals else _zero(),
-        outgoing=totals.outgoing if totals else _zero(),
-        net=totals.net if totals else _zero(),
+        totals.incoming_count,
+        totals.incoming,
+        incoming=totals.incoming,
+        outgoing=totals.outgoing,
+        net=totals.net,
     )
 
 
 @router.get("/{property_id}", response_model=PropertyDetail)
 def get_property(property_id: UUID, db: Session = Depends(get_db)) -> PropertyDetail:
     row = db.execute(
-        select(Property, Owner, func.count(Deposit.id), func.coalesce(func.sum(Deposit.amount), 0))
+        select(Property, Owner)
         .join(Owner, Property.owner_id == Owner.id)
-        .outerjoin(Deposit, Deposit.property_id == Property.id)
         .where(Property.id == property_id)
-        .group_by(Property.id, Owner.id)
     ).first()
 
     if not row:
         raise HTTPException(status_code=404, detail="Property not found")
 
-    prop, owner, deposit_count, total_deposits = row
+    prop, owner = row
     accounts = list(
         db.scalars(
             select(BankAccount).where(BankAccount.property_id == property_id)
@@ -221,7 +212,7 @@ def get_property(property_id: UUID, db: Session = Depends(get_db)) -> PropertyDe
     recent, _ = list_deposits(db, property_id=property_id, page=1, page_size=10)
     recent_expenses, _ = list_expenses(db, property_id=property_id, page=1, page_size=10)
     floats = property_float_totals(db, [property_id])
-    totals = floats.get(property_id)
+    totals = floats.get(property_id) or _empty_float()
 
     return PropertyDetail(
         id=prop.id,
@@ -232,11 +223,11 @@ def get_property(property_id: UUID, db: Session = Depends(get_db)) -> PropertyDe
         status=prop.status,
         owner_id=prop.owner_id,
         owner_name=owner.name,
-        deposit_count=deposit_count or 0,
-        total_deposits=total_deposits or 0,
-        total_incoming=totals.incoming if totals else _zero(),
-        total_outgoing=totals.outgoing if totals else _zero(),
-        net_balance=totals.net if totals else _zero(),
+        deposit_count=totals.incoming_count,
+        total_deposits=totals.incoming,
+        total_incoming=totals.incoming,
+        total_outgoing=totals.outgoing,
+        net_balance=totals.net,
         owner=owner,
         bank_accounts=accounts,
         recent_deposits=recent,

@@ -415,10 +415,14 @@ export function OwnersPage() {
                   <Tooltip content="Properties linked to this owner.">Properties</Tooltip>
                 </th>
                 <th className="px-5 py-3 font-medium">
-                  <Tooltip content="Total deposits across linked properties.">Deposits</Tooltip>
+                  <Tooltip content="Company-float inflow across linked properties. Rental income is excluded.">
+                    Deposits
+                  </Tooltip>
                 </th>
                 <th className="px-5 py-3 font-medium">
-                  <Tooltip content="Total expenses across linked properties.">Expenses</Tooltip>
+                  <Tooltip content="Company-float expenses across linked properties. He/She paid and owner-paid are excluded.">
+                    Expenses
+                  </Tooltip>
                 </th>
                 <th className="px-5 py-3 font-medium">
                   <Tooltip content="Same as Transactions Balance: Inflow − Expenses across linked properties. Rental income and He/She paid are excluded.">

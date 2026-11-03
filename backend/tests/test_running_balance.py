@@ -103,3 +103,5 @@ def test_running_balance_matches_company_float_net(db):
     assert totals.incoming == Decimal("1000.00")
     assert totals.outgoing == Decimal("300.00")  # 200 + 100 MIP; excludes resident 50
     assert totals.net == Decimal("700.00")
+    assert totals.incoming_count == 1
+    assert totals.outgoing_count == 2

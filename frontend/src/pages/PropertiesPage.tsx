@@ -221,6 +221,7 @@ export function PropertiesPage() {
   const [newName, setNewName] = useState('');
   const [newAddress, setNewAddress] = useState('');
   const [newCity, setNewCity] = useState('');
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [createMessage, setCreateMessage] = useState<string | null>(null);
   const [createError, setCreateError] = useState<string | null>(null);
 
@@ -245,10 +246,7 @@ export function PropertiesPage() {
     onSuccess: (created) => {
       void queryClient.invalidateQueries({ queryKey: ['properties'] });
       void queryClient.invalidateQueries({ queryKey: ['owners'] });
-      setNewPropId('');
-      setNewName('');
-      setNewAddress('');
-      setNewCity('');
+      resetPropertyForm();
       setCreateMessage(`Added ${created.client_prop_id}.`);
       setCreateError(null);
     },
@@ -257,6 +255,56 @@ export function PropertiesPage() {
       setCreateMessage(null);
     },
   });
+
+  const updateMutation = useMutation({
+    mutationFn: ({
+      id,
+      payload,
+    }: {
+      id: string;
+      payload: {
+        owner_id: string;
+        client_prop_id: string;
+        name: string;
+        address: string | null;
+        city: string | null;
+      };
+    }) => api.updateProperty(id, payload),
+    onSuccess: (updated) => {
+      void queryClient.invalidateQueries({ queryKey: ['properties'] });
+      void queryClient.invalidateQueries({ queryKey: ['property', updated.id] });
+      void queryClient.invalidateQueries({ queryKey: ['owners'] });
+      resetPropertyForm();
+      setCreateMessage(`Updated ${updated.client_prop_id}.`);
+      setCreateError(null);
+    },
+    onError: (error) => {
+      setCreateError(getUserErrorMessage(error));
+      setCreateMessage(null);
+    },
+  });
+
+  function resetPropertyForm() {
+    setEditingId(null);
+    setNewOwnerId('');
+    setNewPropId('');
+    setNewName('');
+    setNewAddress('');
+    setNewCity('');
+  }
+
+  function startEditProperty(property: Property) {
+    setEditingId(property.id);
+    setNewOwnerId(property.owner_id);
+    setNewPropId(property.client_prop_id);
+    setNewName(property.name);
+    setNewAddress(property.address ?? '');
+    setNewCity(property.city ?? '');
+    setCreateMessage(null);
+    setCreateError(null);
+  }
+
+  const formPending = createMutation.isPending || updateMutation.isPending;
 
   const statusMutation = useMutation({
     mutationFn: ({ id, status }: { id: string; status: 'active' | 'inactive' }) =>
@@ -309,7 +357,7 @@ export function PropertiesPage() {
       </div>
 
       <section className="panel p-4 sm:p-5 space-y-3">
-        <h3 className="section-title text-sm">Add a property</h3>
+        <h3 className="section-title text-sm">{editingId ? 'Edit property' : 'Add a property'}</h3>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <label className="text-sm">
             <span className="label-text">Owner</span>
@@ -364,11 +412,11 @@ export function PropertiesPage() {
               placeholder="City"
             />
           </label>
-          <div className="flex items-end">
+          <div className="flex items-end gap-2">
             <button
               type="button"
               className="btn-primary"
-              disabled={createMutation.isPending}
+              disabled={formPending}
               onClick={() => {
                 if (!newOwnerId) {
                   setCreateError('Select an owner.');
@@ -387,18 +435,33 @@ export function PropertiesPage() {
                   setCreateMessage(null);
                   return;
                 }
-                createMutation.mutate({
+                const payload = {
                   owner_id: newOwnerId,
                   client_prop_id: clientPropId,
                   name,
                   address: newAddress.trim() || null,
                   city: newCity.trim() || null,
-                  status: 'active',
-                });
+                };
+                if (editingId) {
+                  updateMutation.mutate({ id: editingId, payload });
+                  return;
+                }
+                createMutation.mutate({ ...payload, status: 'active' });
               }}
             >
-              {createMutation.isPending ? 'Adding…' : 'Add property'}
+              {formPending
+                ? editingId
+                  ? 'Saving…'
+                  : 'Adding…'
+                : editingId
+                  ? 'Save property'
+                  : 'Add property'}
             </button>
+            {editingId ? (
+              <button type="button" className="btn-secondary" onClick={resetPropertyForm}>
+                Cancel
+              </button>
+            ) : null}
           </div>
         </div>
         {createMessage ? <p className="text-sm text-positive">{createMessage}</p> : null}
@@ -499,6 +562,13 @@ export function PropertiesPage() {
                             onClick={() => toggleExpand(property.id)}
                           >
                             {expanded ? 'Close' : 'Details'}
+                          </button>
+                          <button
+                            type="button"
+                            className="btn-secondary shrink-0 text-xs"
+                            onClick={() => startEditProperty(property)}
+                          >
+                            Edit
                           </button>
                           <EntityFeedbackButton message={formatPropertyFeedback(property)} />
                         </div>

@@ -39,6 +39,7 @@ function formatOwnerFeedback(owner: OwnerSummary): string {
 }
 
 function isOwnerInactive(owner: OwnerSummary): boolean {
+  if (owner.name === 'PAST CLIENTS') return false;
   return owner.status === 'inactive';
 }
 
@@ -172,6 +173,7 @@ export function OwnersPage() {
   const [newName, setNewName] = useState('');
   const [newEmail, setNewEmail] = useState('');
   const [newPhone, setNewPhone] = useState('');
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [createMessage, setCreateMessage] = useState<string | null>(null);
   const [createError, setCreateError] = useState<string | null>(null);
 
@@ -187,6 +189,7 @@ export function OwnersPage() {
       setNewName('');
       setNewEmail('');
       setNewPhone('');
+      setEditingId(null);
       setCreateMessage(`Added ${created.name}.`);
       setCreateError(null);
     },
@@ -195,6 +198,49 @@ export function OwnersPage() {
       setCreateMessage(null);
     },
   });
+
+  const updateMutation = useMutation({
+    mutationFn: ({
+      id,
+      payload,
+    }: {
+      id: string;
+      payload: { name: string; contact_email: string | null; contact_phone: string | null };
+    }) => api.updateOwner(id, payload),
+    onSuccess: (updated) => {
+      void queryClient.invalidateQueries({ queryKey: ['owners'] });
+      void queryClient.invalidateQueries({ queryKey: ['owner', updated.id] });
+      setNewName('');
+      setNewEmail('');
+      setNewPhone('');
+      setEditingId(null);
+      setCreateMessage(`Updated ${updated.name}.`);
+      setCreateError(null);
+    },
+    onError: (error) => {
+      setCreateError(getUserErrorMessage(error));
+      setCreateMessage(null);
+    },
+  });
+
+  function startEditOwner(owner: OwnerSummary) {
+    setEditingId(owner.id);
+    setNewName(owner.name);
+    setNewEmail(owner.contact_email ?? '');
+    setNewPhone(owner.contact_phone ?? '');
+    setCreateMessage(null);
+    setCreateError(null);
+  }
+
+  function cancelEditOwner() {
+    setEditingId(null);
+    setNewName('');
+    setNewEmail('');
+    setNewPhone('');
+    setCreateError(null);
+  }
+
+  const formPending = createMutation.isPending || updateMutation.isPending;
 
   const detailQuery = useQuery({
     queryKey: ['owner', expandedId],
@@ -257,7 +303,7 @@ export function OwnersPage() {
       </div>
 
       <section className="panel p-4 sm:p-5 space-y-3">
-        <h3 className="section-title text-sm">Add an owner</h3>
+        <h3 className="section-title text-sm">{editingId ? 'Edit owner' : 'Add an owner'}</h3>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-[1fr_1fr_1fr_auto]">
           <label className="text-sm">
             <span className="label-text">Name</span>
@@ -287,11 +333,11 @@ export function OwnersPage() {
               placeholder="Phone"
             />
           </label>
-          <div className="flex items-end">
+          <div className="flex items-end gap-2">
             <button
               type="button"
               className="btn-primary"
-              disabled={createMutation.isPending}
+              disabled={formPending}
               onClick={() => {
                 const name = newName.trim();
                 if (!name) {
@@ -299,15 +345,31 @@ export function OwnersPage() {
                   setCreateMessage(null);
                   return;
                 }
-                createMutation.mutate({
+                const payload = {
                   name,
                   contact_email: newEmail.trim() || null,
                   contact_phone: newPhone.trim() || null,
-                });
+                };
+                if (editingId) {
+                  updateMutation.mutate({ id: editingId, payload });
+                  return;
+                }
+                createMutation.mutate(payload);
               }}
             >
-              {createMutation.isPending ? 'Adding…' : 'Add owner'}
+              {formPending
+                ? editingId
+                  ? 'Saving…'
+                  : 'Adding…'
+                : editingId
+                  ? 'Save owner'
+                  : 'Add owner'}
             </button>
+            {editingId ? (
+              <button type="button" className="btn-secondary" onClick={cancelEditOwner}>
+                Cancel
+              </button>
+            ) : null}
           </div>
         </div>
         {createMessage ? <p className="text-sm text-positive">{createMessage}</p> : null}
@@ -421,6 +483,13 @@ export function OwnersPage() {
                             onClick={() => toggleExpand(owner.id)}
                           >
                             {expanded ? 'Close' : 'Details'}
+                          </button>
+                          <button
+                            type="button"
+                            className="btn-secondary text-xs"
+                            onClick={() => startEditOwner(owner)}
+                          >
+                            Edit
                           </button>
                           <EntityFeedbackButton message={formatOwnerFeedback(owner)} />
                         </div>

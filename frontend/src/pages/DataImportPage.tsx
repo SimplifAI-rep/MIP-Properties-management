@@ -10,7 +10,7 @@ import { validationError, AppError } from '../utils/errors';
 import { formatLabel } from '../utils/formatLabel';
 import { invalidateAfterClientDataImport } from '../utils/invalidateQueries';
 
-type FileRole = 'client_list' | 'management';
+type FileRole = 'client_list' | 'past_client_list' | 'management';
 
 const FILE_FIELDS: {
   role: FileRole;
@@ -25,6 +25,13 @@ const FILE_FIELDS: {
     required: true,
     hint: 'client list to print.xlsx — owners and properties',
     tip: 'Owners, properties, and bank accounts.',
+  },
+  {
+    role: 'past_client_list',
+    label: 'Past client list',
+    required: false,
+    hint: 'past client list.xlsx — hidden / leftover ledger properties',
+    tip: 'Maps leftover ledger tabs onto the PAST CLIENTS owner. Current clients are not moved.',
   },
   {
     role: 'management',
@@ -82,6 +89,7 @@ export function DataImportPage() {
       setProgressMessage('Uploading files…');
       const accepted = await api.importClientData({
         clientList: files.client_list,
+        pastClientList: files.past_client_list || undefined,
         management: files.management,
         reset,
         confirmReset,
@@ -175,8 +183,9 @@ export function DataImportPage() {
         <div className="space-y-4">
           <h3 className="subheading">Upload files</h3>
           <p className="text-sm text-muted">
-            Upload the client list and management ledger. Bank statements and credit-card files are
-            uploaded from the Transactions page.
+            Upload the client list and management ledger. The past client list is optional and
+            groups leftover ledger properties under PAST CLIENTS. Bank statements and credit-card
+            files are uploaded from the Transactions page.
           </p>
 
           <div className="grid gap-4 md:grid-cols-2">

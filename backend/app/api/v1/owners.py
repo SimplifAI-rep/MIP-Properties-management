@@ -10,7 +10,8 @@ from app.models.deposit import Deposit
 from app.models.expense import Expense
 from app.models.owner import Owner
 from app.models.property import Property
-from app.schemas import OwnerCreate, OwnerDetail, OwnerPropertySummary, OwnerSummary
+from app.schemas import OwnerCreate, OwnerDetail, OwnerPropertySummary, OwnerSummary, OwnerUpdate
+from app.services.client_import import PAST_CLIENTS_OWNER_NAME
 from app.services.deposit_query import list_deposits
 from app.services.expense_query import list_expenses
 from app.services.running_balance import property_float_totals
@@ -29,6 +30,13 @@ def _owner_status_from_property_statuses(statuses: list[str]) -> str:
     if all((status or "").strip().lower() != "active" for status in statuses):
         return "inactive"
     return "active"
+
+
+def _owner_display_status(owner: Owner, statuses: list[str]) -> str:
+    """PAST CLIENTS stays visible on the default Active owners filter."""
+    if owner.name == PAST_CLIENTS_OWNER_NAME:
+        return "active"
+    return _owner_status_from_property_statuses(statuses)
 
 
 def _deposit_stats_by_owner_subquery():
@@ -99,6 +107,90 @@ def create_owner(payload: OwnerCreate, db: Session = Depends(get_db)) -> OwnerSu
     )
 
 
+def _build_owner_summary(db: Session, owner: Owner) -> OwnerSummary:
+    props = list(db.scalars(select(Property).where(Property.owner_id == owner.id)).all())
+    floats = property_float_totals(db, [prop.id for prop in props])
+    deposit_count = (
+        db.scalar(
+            select(func.count(Deposit.id))
+            .select_from(Deposit)
+            .join(Property, Deposit.property_id == Property.id)
+            .where(Property.owner_id == owner.id)
+        )
+        or 0
+    )
+    total_deposits = db.scalar(
+        select(func.coalesce(func.sum(Deposit.amount), 0))
+        .select_from(Deposit)
+        .join(Property, Deposit.property_id == Property.id)
+        .where(Property.owner_id == owner.id)
+    ) or _zero()
+    expense_count = (
+        db.scalar(
+            select(func.count(Expense.id))
+            .select_from(Expense)
+            .join(Property, Expense.property_id == Property.id)
+            .where(Property.owner_id == owner.id)
+        )
+        or 0
+    )
+    total_expenses = db.scalar(
+        select(func.coalesce(func.sum(Expense.amount), 0))
+        .select_from(Expense)
+        .join(Property, Expense.property_id == Property.id)
+        .where(Property.owner_id == owner.id)
+    ) or _zero()
+    balance = sum(
+        (floats[prop.id].net if prop.id in floats else _zero() for prop in props),
+        _zero(),
+    ).quantize(Decimal("0.01"))
+    return OwnerSummary(
+        id=owner.id,
+        name=owner.name,
+        contact_email=owner.contact_email,
+        contact_phone=owner.contact_phone,
+        property_count=len(props),
+        deposit_count=int(deposit_count),
+        total_deposits=total_deposits if isinstance(total_deposits, Decimal) else _zero(),
+        expense_count=int(expense_count),
+        total_expenses=total_expenses if isinstance(total_expenses, Decimal) else _zero(),
+        balance=balance,
+        status=_owner_display_status(owner, [prop.status for prop in props]),
+    )
+
+
+@router.patch("/{owner_id}", response_model=OwnerSummary)
+def update_owner(
+    owner_id: UUID,
+    payload: OwnerUpdate,
+    db: Session = Depends(get_db),
+) -> OwnerSummary:
+    owner = db.get(Owner, owner_id)
+    if owner is None:
+        raise HTTPException(status_code=404, detail="Owner not found")
+    data = payload.model_dump(exclude_unset=True)
+    if "name" in data:
+        name = (data["name"] or "").strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="Owner name is required")
+        duplicate = db.scalars(
+            select(Owner).where(
+                func.lower(Owner.name) == name.lower(),
+                Owner.id != owner.id,
+            )
+        ).first()
+        if duplicate is not None:
+            raise HTTPException(status_code=409, detail="An owner with this name already exists")
+        owner.name = name
+    if "contact_email" in data:
+        owner.contact_email = (data["contact_email"] or "").strip() or None
+    if "contact_phone" in data:
+        owner.contact_phone = (data["contact_phone"] or "").strip() or None
+    db.commit()
+    db.refresh(owner)
+    return _build_owner_summary(db, owner)
+
+
 @router.get("", response_model=list[OwnerSummary])
 def list_owners(db: Session = Depends(get_db)) -> list[OwnerSummary]:
     property_stats = _property_count_by_owner_subquery()
@@ -152,9 +244,7 @@ def list_owners(db: Session = Depends(get_db)) -> list[OwnerSummary]:
             expense_count=expense_count or 0,
             total_expenses=total_expenses or 0,
             balance=balance_by_owner.get(owner.id, _zero()).quantize(Decimal("0.01")),
-            status=_owner_status_from_property_statuses(
-                statuses_by_owner.get(owner.id, [])
-            ),
+            status=_owner_display_status(owner, statuses_by_owner.get(owner.id, [])),
         )
         for owner, property_count, deposit_count, total_deposits, expense_count, total_expenses in rows
     ]
@@ -240,7 +330,7 @@ def get_owner(owner_id: UUID, db: Session = Depends(get_db)) -> OwnerDetail:
         expense_count=sum(p.expense_count for p in properties),
         total_expenses=sum(p.total_expenses for p in properties),
         balance=sum((p.balance for p in properties), _zero()).quantize(Decimal("0.01")),
-        status=_owner_status_from_property_statuses([p.status for p in properties]),
+        status=_owner_display_status(owner, [p.status for p in properties]),
         properties=properties,
         recent_deposits=recent_deposits,
         recent_expenses=recent_expenses,

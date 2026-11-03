@@ -7,8 +7,13 @@ from sqlalchemy.pool import StaticPool
 from app.api.deps import get_db
 from app.core.database import Base
 from app.main import app
+from app.models.owner import Owner
+from app.models.property import Property
+from app.services.client_import import PAST_CLIENTS_OWNER_NAME
 from app.services.seed import (
     OWNER_DAVID_ID,
+    OWNER_SARAH_ID,
+    PROPERTY_ROTHSCHILD_ID,
     seed_reference_data,
     seed_sample_expenses,
 )
@@ -125,3 +130,79 @@ def test_create_owner_and_property(client):
     listed = client.get("/api/v1/owners").json()
     created_owner = next(row for row in listed if row["id"] == owner["id"])
     assert created_owner["property_count"] == 1
+
+
+def test_update_owner_and_property(client):
+    owner_patch = client.patch(
+        f"/api/v1/owners/{OWNER_DAVID_ID}",
+        json={"name": "David Cohen Updated", "contact_phone": "050-000"},
+    )
+    assert owner_patch.status_code == 200, owner_patch.text
+    body = owner_patch.json()
+    assert body["name"] == "David Cohen Updated"
+    assert body["contact_phone"] == "050-000"
+    assert body["contact_email"] == "david.cohen@example.com"
+    assert body["property_count"] == 2
+
+    clash = client.patch(
+        f"/api/v1/owners/{OWNER_DAVID_ID}",
+        json={"name": "Sarah Levi"},
+    )
+    assert clash.status_code == 409
+
+    missing = client.patch(
+        "/api/v1/owners/00000000-0000-0000-0000-000000000000",
+        json={"name": "Nobody"},
+    )
+    assert missing.status_code == 404
+
+    prop_patch = client.patch(
+        f"/api/v1/properties/{PROPERTY_ROTHSCHILD_ID}",
+        json={
+            "name": "Rothschild 12B",
+            "city": "Jaffa",
+            "client_prop_id": "r12b",
+            "owner_id": str(OWNER_SARAH_ID),
+        },
+    )
+    assert prop_patch.status_code == 200, prop_patch.text
+    updated = prop_patch.json()
+    assert updated["name"] == "Rothschild 12B"
+    assert updated["city"] == "Jaffa"
+    assert updated["client_prop_id"] == "R12B"
+    assert updated["owner_id"] == str(OWNER_SARAH_ID)
+    assert updated["status"] == "active"
+
+    status_only = client.patch(
+        f"/api/v1/properties/{PROPERTY_ROTHSCHILD_ID}",
+        json={"status": "inactive"},
+    )
+    assert status_only.status_code == 200
+    assert status_only.json()["status"] == "inactive"
+    assert status_only.json()["name"] == "Rothschild 12B"
+
+    duplicate_id = client.patch(
+        f"/api/v1/properties/{PROPERTY_ROTHSCHILD_ID}",
+        json={"client_prop_id": "TEST-H8"},
+    )
+    assert duplicate_id.status_code == 409
+
+
+def test_past_clients_owner_is_listed_as_active(client, db):
+    owner = Owner(name=PAST_CLIENTS_OWNER_NAME)
+    db.add(owner)
+    db.flush()
+    db.add(
+        Property(
+            owner_id=owner.id,
+            client_prop_id="H111",
+            name="H111 past",
+            status="inactive",
+        )
+    )
+    db.commit()
+
+    body = client.get("/api/v1/owners").json()
+    past = next(row for row in body if row["name"] == PAST_CLIENTS_OWNER_NAME)
+    assert past["status"] == "active"
+    assert past["property_count"] == 1

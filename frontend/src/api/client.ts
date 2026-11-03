@@ -295,6 +295,18 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
+  updateOwner: (
+    id: string,
+    payload: {
+      name?: string;
+      contact_email?: string | null;
+      contact_phone?: string | null;
+    },
+  ) =>
+    request<OwnerSummary>(`/owners/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    }),
   getProperties: () => request<Property[]>('/properties'),
   getProperty: (id: string) => request<PropertyDetail>(`/properties/${id}`),
   createProperty: (payload: {
@@ -307,6 +319,21 @@ export const api = {
   }) =>
     request<Property>('/properties', {
       method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  updateProperty: (
+    id: string,
+    payload: {
+      owner_id?: string;
+      client_prop_id?: string;
+      name?: string;
+      address?: string | null;
+      city?: string | null;
+      status?: 'active' | 'inactive';
+    },
+  ) =>
+    request<Property>(`/properties/${id}`, {
+      method: 'PATCH',
       body: JSON.stringify(payload),
     }),
   updatePropertyStatus: (id: string, status: 'active' | 'inactive') =>
@@ -678,6 +705,7 @@ export const api = {
     }),
   importClientData: (payload: {
     clientList: File;
+    pastClientList?: File;
     management: File;
     bank?: File;
     creditCard1?: File;
@@ -687,6 +715,7 @@ export const api = {
   }) => {
     const form = new FormData();
     form.append('client_list', payload.clientList);
+    if (payload.pastClientList) form.append('past_client_list', payload.pastClientList);
     form.append('management', payload.management);
     if (payload.bank) form.append('bank', payload.bank);
     if (payload.creditCard1) form.append('credit_card_1', payload.creditCard1);

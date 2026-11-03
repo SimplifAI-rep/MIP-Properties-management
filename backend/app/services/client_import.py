@@ -14,7 +14,7 @@ from __future__ import annotations
 import gc
 import logging
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
@@ -36,6 +36,7 @@ logger = logging.getLogger(__name__)
 
 CLIENT_DATA_DIR = PROJECT_ROOT / "data" / "ClientData"
 CLIENT_LIST_FILE = "client list to print.xlsx"
+PAST_CLIENT_LIST_FILE = "past client list.xlsx"
 MANAGEMENT_FILE = "Management expenses sheet.xlsx"
 BANK_FILE = "Bank Account example.xlsx"
 CREDIT_CARD_FILES = ("credit card 1 example.xlsx", "credit card 2 example.xlsx")
@@ -67,6 +68,7 @@ COMBINED_SHEET_NAMES = {
 BUFFER_PROP_ID = "BUFFER"
 SHARED_PROP_PREFIX = "SHARED-"
 COMPANY_OWNER_NAME = "My Israel Property (MIP)"
+PAST_CLIENTS_OWNER_NAME = "PAST CLIENTS"
 COMPANY_ACCOUNT_NUMBER = "MIP-LEUMI-OPS"
 COMPANY_CC_ACCOUNT_PREFIX = "MIP-LEUMI-CC-"
 _COMBINED_PROP_SPLIT = re.compile(r"[\/+]")
@@ -102,6 +104,208 @@ def owner_shared_client_prop_id(owner_name: str) -> str:
     """Stable per-owner Prop ID for money split across that owner's properties."""
     slug = re.sub(r"[^A-Za-z0-9]+", "", owner_name).upper() or "OWNER"
     return f"{SHARED_PROP_PREFIX}{slug[:40]}"
+
+
+def looks_like_shared_prop(*values: Any) -> bool:
+    for value in values:
+        text = str(value or "").lower()
+        if "shared" in text or "shered" in text:
+            return True
+    return False
+
+
+def unique_listed_prefix_match(key: str, listed_ids: Iterable[str]) -> str | None:
+    """Map a truncated ledger code onto a unique listed Final # (1008BEL → 1008BELL)."""
+    if not key:
+        return None
+    matches = sorted({cid for cid in listed_ids if cid.startswith(key) and cid != key})
+    if len(matches) == 1:
+        return matches[0]
+    return None
+
+
+def unique_listed_stem_match(key: str, listed_ids: Iterable[str]) -> str | None:
+    """Map an extended ledger tab onto a unique listed Final # (707SETH → 707).
+
+    The extra suffix must be letters only so 7071 does not steal listed 707,
+    and H111 does not match 111.
+    """
+    if not key:
+        return None
+    matches: list[str] = []
+    for cid in listed_ids:
+        if not cid or cid == key or not key.startswith(cid):
+            continue
+        rest = key[len(cid) :]
+        if rest.isalpha():
+            matches.append(cid)
+    if not matches:
+        return None
+    matches = sorted(set(matches), key=len, reverse=True)
+    longest = len(matches[0])
+    top = [cid for cid in matches if len(cid) == longest]
+    if len(top) == 1:
+        return top[0]
+    return None
+
+
+def unique_listed_alias_match(key: str, listed_ids: Iterable[str]) -> str | None:
+    return unique_listed_prefix_match(key, listed_ids) or unique_listed_stem_match(
+        key, listed_ids
+    )
+
+
+def parse_active_flag(raw: Any) -> bool | None:
+    if raw is None:
+        return None
+    text = str(raw).strip().lower()
+    if not text:
+        return None
+    if text in {"yes", "y", "true", "1", "active"}:
+        return True
+    if text in {"no", "n", "false", "0", "inactive"}:
+        return False
+    return None
+
+
+def client_list_sheet_key(name: str) -> str:
+    return re.sub(r"\s+", " ", name).strip().lower()
+
+
+def pick_client_list_main_sheet(sheet_names: list[str]) -> str | None:
+    for name in sheet_names:
+        key = client_list_sheet_key(name)
+        if key in {"all clients", "current clients"}:
+            return name
+    return sheet_names[0] if sheet_names else None
+
+
+def detect_client_list_header(values: list[Any]) -> dict[str, int] | None:
+    """Map named client-list columns (Final #, Active, …) to indexes."""
+    labels: list[str] = []
+    for value in values:
+        if value is None:
+            labels.append("")
+        else:
+            labels.append(re.sub(r"\s+", " ", str(value).strip().lower()))
+    mapping: dict[str, int] = {}
+    for idx, label in enumerate(labels):
+        if not label:
+            continue
+        if "final" in label:
+            mapping["final_id"] = idx
+        elif "hidden" in label and "sheet" in label:
+            mapping["sheet_id"] = idx
+        elif (
+            ("property" in label and "number" in label)
+            or ("property" in label and "#" in label)
+            or label in {"#", "prop id", "property #"}
+        ):
+            mapping.setdefault("prop_number", idx)
+        elif "owner" in label:
+            mapping.setdefault("owner_name", idx)
+        elif label in {"last name", "last"} or (
+            label == "name" and "last_name" not in mapping and "first" not in label
+        ):
+            mapping["last_name"] = idx
+        elif "first" in label:
+            mapping["first_name"] = idx
+        elif "שם" in label:
+            mapping["hebrew"] = idx
+        elif "address" in label:
+            mapping["address"] = idx
+        elif label == "city":
+            mapping["city"] = idx
+        elif label == "active":
+            mapping["active"] = idx
+    if "final_id" in mapping or "prop_number" in mapping or "sheet_id" in mapping:
+        return mapping
+    return None
+
+
+def detect_past_client_list_header(values: list[Any]) -> dict[str, int] | None:
+    """Require Hidden Sheet plus Property # or Owner(s).
+
+    Title/subtitle rows mention “hidden sheets” in one cell and must not match.
+    """
+    mapping = detect_client_list_header(values)
+    if not mapping or "sheet_id" not in mapping:
+        return None
+    if "prop_number" not in mapping and "owner_name" not in mapping:
+        return None
+    nonempty = sum(1 for value in values if value is not None and str(value).strip())
+    if nonempty < 2:
+        return None
+    return mapping
+
+
+def iter_past_client_list_data_rows(ws):
+    header: dict[str, int] | None = None
+    for row in ws.iter_rows(values_only=True):
+        values = list(row)
+        if header is None:
+            detected = detect_past_client_list_header(values)
+            if detected:
+                header = detected
+            continue
+        yield header, values
+
+
+def past_client_owner_label(raw: Any) -> str | None:
+    text = excel_cell_label(raw)
+    if not text:
+        return None
+    if text.strip().lower() in {"not found", "unknown", "none", "n/a"}:
+        return None
+    return text.strip()
+
+
+def looks_like_prop_id(key: str) -> bool:
+    """True for ledger-style codes (H111, 22, TS225, 1008BELL), not notes."""
+    if not key or len(key) > 24:
+        return False
+    return bool(re.fullmatch(r"[A-Z]{0,10}\d{1,8}[A-Z]{0,16}", key))
+
+
+CLIENT_LIST_POSITIONAL_HEADER: dict[str, int] = {
+    "prop_number": 0,
+    "last_name": 1,
+    "first_name": 2,
+    "hebrew": 3,
+    "address": 4,
+    "city": 5,
+}
+
+
+def merge_client_list_header(values: list[Any] | None) -> dict[str, int]:
+    header = dict(CLIENT_LIST_POSITIONAL_HEADER)
+    detected = detect_client_list_header(values or [])
+    if detected:
+        header.update(detected)
+    return header
+
+
+def client_list_col(row_values: list[Any], header: dict[str, int], key: str) -> Any:
+    idx = header.get(key)
+    if idx is None or idx >= len(row_values):
+        return None
+    return row_values[idx]
+
+
+def iter_client_list_data_rows(ws):
+    """Yield (header, row_values) for client-list data rows, skipping the header."""
+    header: dict[str, int] | None = None
+    for i, row in enumerate(ws.iter_rows(values_only=True), 1):
+        values = list(row)
+        if header is None:
+            detected = detect_client_list_header(values)
+            if detected:
+                header = merge_client_list_header(values)
+                continue
+            header = dict(CLIENT_LIST_POSITIONAL_HEADER)
+            if i == 1:
+                continue
+        yield header, values
 
 
 def sheet_uses_row_prop_ids(sheet_name: str) -> bool:
@@ -199,6 +403,21 @@ class ImportStats:
         }
 
 
+def excel_cell_label(raw: Any) -> str | None:
+    """String form of an Excel cell; whole numbers drop the trailing .0."""
+    if raw is None:
+        return None
+    if isinstance(raw, bool):
+        return str(raw)
+    if isinstance(raw, int):
+        return str(raw)
+    if isinstance(raw, float):
+        if raw.is_integer():
+            return str(int(raw))
+        return format(raw, "g")
+    return _optional_str(raw)
+
+
 def normalize_prop_key(raw: Any) -> str:
     """Normalize client property codes for matching.
 
@@ -212,9 +431,18 @@ def normalize_prop_key(raw: Any) -> str:
     """
     if raw is None:
         return ""
-    text = str(raw).strip()
+    if isinstance(raw, bool):
+        return ""
+    if isinstance(raw, int):
+        text = str(raw)
+    elif isinstance(raw, float):
+        text = str(int(raw)) if raw.is_integer() else format(raw, "g")
+    else:
+        text = str(raw).strip()
     if not text:
         return ""
+    if re.fullmatch(r"\d+\.0+", text):
+        text = str(int(float(text)))
 
     # "C4or c4 EX" (missing space before or)
     text = re.sub(r"(?i)([A-Za-z0-9])or\s+", r"\1 or ", text)
@@ -401,10 +629,15 @@ class ClientDataImportService:
         self.properties_by_id: dict[str, Property] = {}
         self.existing_expense_keys: set[str] = set()
         self.existing_deposit_keys: set[str] = set()
-        # Prop IDs from the "current clients" sheet — source of truth for active status.
+        # Prop IDs from the client list marked Active / current — source of truth for active status.
         self.current_client_ids: set[str] = set()
         # Prop IDs seen on current or past client lists (not UI-created extras).
         self.listed_client_ids: set[str] = set()
+        # owner UUID string → listed shared property client_prop_id (e.g. SHAREDSILVER)
+        self.owner_shared_prop_ids: dict[str, str] = {}
+        # owner UUID string → client-list shared row (created only if combined ledger rows exist)
+        self.listed_shared_rows: dict[str, dict[str, Any]] = {}
+        self.owners_by_name: dict[str, Owner] = {}
 
     def _report(self, message: str) -> None:
         if self.progress:
@@ -431,6 +664,9 @@ class ClientDataImportService:
         self._ensure_company_owner_and_buffer()
         self._report("Importing client list…")
         self._import_client_list()
+        self._checkpoint()
+        self._report("Importing past client list…")
+        self._import_past_client_list()
         self._checkpoint()
         if include_management:
             self._report("Importing management ledger…")
@@ -798,6 +1034,12 @@ class ClientDataImportService:
             self.alias_to_prop[alias] = canonical
         self.alias_to_prop[normalize_prop_key(canonical)] = canonical
 
+    def _prefix_match_listed(self, key: str) -> str | None:
+        matched = unique_listed_alias_match(key, self.listed_client_ids)
+        if matched:
+            self.alias_to_prop[key] = matched
+        return matched
+
     def _resolve_property(self, raw: Any) -> Property | None:
         if raw is None:
             return None
@@ -819,10 +1061,95 @@ class ClientDataImportService:
                 if canonical:
                     break
         if not canonical:
+            canonical = self._prefix_match_listed(key)
+        if not canonical:
             return None
         return self.properties_by_id.get(canonical)
 
+    def _refresh_owners_by_name(self) -> None:
+        self.owners_by_name = {owner.name: owner for owner in self.db.scalars(select(Owner)).all()}
+
+    def _get_or_create_named_owner(self, name: str) -> Owner:
+        owner = self.owners_by_name.get(name)
+        if owner is None:
+            owner = self.db.scalars(select(Owner).where(Owner.name == name)).first()
+        if owner is None:
+            owner = Owner(name=name)
+            self.db.add(owner)
+            self.db.flush()
+            self.stats.owners_created += 1
+        self.owners_by_name[name] = owner
+        return owner
+
+    def _ensure_past_clients_owner(self) -> Owner:
+        existing = self.owners_by_name.get(PAST_CLIENTS_OWNER_NAME)
+        if existing is not None:
+            return existing
+        owner = self.db.scalars(
+            select(Owner).where(Owner.name == PAST_CLIENTS_OWNER_NAME)
+        ).first()
+        if owner is None:
+            owner = Owner(name=PAST_CLIENTS_OWNER_NAME)
+            self.db.add(owner)
+            self.db.flush()
+            self.stats.owners_created += 1
+        self.owners_by_name[PAST_CLIENTS_OWNER_NAME] = owner
+        return owner
+
+    def _prop_key_is_known(self, key: str) -> bool:
+        if not key:
+            return False
+        if key in self.properties_by_id or key in self.listed_client_ids:
+            return True
+        mapped = self.alias_to_prop.get(key)
+        if mapped and (mapped in self.properties_by_id or mapped in self.listed_client_ids):
+            return True
+        return unique_listed_alias_match(key, self.listed_client_ids) is not None
+
+    def _materialize_listed_shared_property(self, owner: Owner) -> Property | None:
+        owner_key = str(owner.id)
+        spec = self.listed_shared_rows.get(owner_key) or {}
+        listed_key = self.owner_shared_prop_ids.get(owner_key) or spec.get("canonical")
+        if not listed_key:
+            return None
+        existing = self.properties_by_id.get(listed_key)
+        if existing is None:
+            existing = self.db.scalars(
+                select(Property).where(Property.client_prop_id == listed_key)
+            ).first()
+        if existing is not None:
+            self.properties_by_id[existing.client_prop_id] = existing
+            return existing
+        status = spec.get("status") or "active"
+        prop = Property(
+            owner_id=owner.id,
+            client_prop_id=listed_key,
+            name=spec.get("name") or listed_key,
+            status=status,
+        )
+        self.db.add(prop)
+        self.db.flush()
+        self.properties_by_id[listed_key] = prop
+        self._register_aliases(listed_key, listed_key)
+        for raw in spec.get("alias_raws") or []:
+            self._register_aliases(listed_key, raw)
+        self.listed_client_ids.add(listed_key)
+        if status == "active":
+            self.current_client_ids.add(listed_key)
+        self.stats.properties_created += 1
+        return prop
+
     def _get_or_create_owner_shared_property(self, owner: Owner) -> Property:
+        listed = self._materialize_listed_shared_property(owner)
+        if listed is not None:
+            return listed
+        for prop in list(self.properties_by_id.values()):
+            if prop.owner_id != owner.id:
+                continue
+            if looks_like_shared_prop(prop.client_prop_id, prop.name):
+                self.owner_shared_prop_ids[str(owner.id)] = prop.client_prop_id
+                return prop
+
         key = owner_shared_client_prop_id(owner.name)
         existing = self.properties_by_id.get(key)
         if existing is None:
@@ -869,7 +1196,7 @@ class ClientDataImportService:
         if len(owners) != 1:
             return buffer
         owner = next(iter(owners.values()))
-        if owner.name == COMPANY_OWNER_NAME:
+        if owner.name in {COMPANY_OWNER_NAME, PAST_CLIENTS_OWNER_NAME}:
             return buffer
         return self._get_or_create_owner_shared_property(owner)
 
@@ -893,11 +1220,13 @@ class ClientDataImportService:
 
         wb = self._open_workbook(path)
         try:
-            current = (
-                wb["current clients"] if "current clients" in wb.sheetnames else wb[wb.sheetnames[0]]
-            )
+            main_name = pick_client_list_main_sheet(list(wb.sheetnames))
+            if main_name is None:
+                self.stats.errors.append(f"Client list has no sheets: {path}")
+                return
+            current = wb[main_name]
             past_name = next(
-                (n for n in wb.sheetnames if n.strip().lower().startswith("past")),
+                (n for n in wb.sheetnames if client_list_sheet_key(n).startswith("past")),
                 None,
             )
 
@@ -906,21 +1235,35 @@ class ClientDataImportService:
             }
             self.current_client_ids = set()
 
-            def upsert_row(row_values: list[Any], *, status: str) -> None:
+            def upsert_row(
+                row_values: list[Any],
+                header: dict[str, int],
+                *,
+                default_status: str,
+            ) -> None:
                 if not row_values:
                     return
-                prop_raw = row_values[0] if len(row_values) > 0 else None
-                last_name = row_values[1] if len(row_values) > 1 else None
-                first_name = row_values[2] if len(row_values) > 2 else None
-                hebrew = row_values[3] if len(row_values) > 3 else None
-                address = row_values[4] if len(row_values) > 4 else None
-                city = row_values[5] if len(row_values) > 5 else None
 
-                # skip header
+                final_raw = client_list_col(row_values, header, "final_id")
+                prop_number_raw = client_list_col(row_values, header, "prop_number")
+                prop_raw = final_raw if excel_cell_label(final_raw) else prop_number_raw
+                last_name = client_list_col(row_values, header, "last_name")
+                first_name = client_list_col(row_values, header, "first_name")
+                hebrew = client_list_col(row_values, header, "hebrew")
+                address = client_list_col(row_values, header, "address")
+                city = client_list_col(row_values, header, "city")
+
                 if prop_raw is None:
                     return
                 header_probe = str(prop_raw).strip().lower()
-                if header_probe in {"property number", "property\nnumber", "#", "prop id"}:
+                if header_probe in {
+                    "property number",
+                    "property\nnumber",
+                    "#",
+                    "prop id",
+                    "final #",
+                    "final#",
+                }:
                     return
 
                 canonical = normalize_prop_key(prop_raw)
@@ -931,12 +1274,22 @@ class ClientDataImportService:
                         )
                     self._record_skip(
                         source_file=CLIENT_LIST_FILE,
-                        sheet=status,
+                        sheet=default_status,
                         row_number=0,
                         reason="empty_prop_id",
-                        details=str(row_values[:6]),
+                        details=str(row_values[:9]),
                     )
                     return
+
+                status = default_status
+                if "active" in header:
+                    parsed_active = parse_active_flag(
+                        client_list_col(row_values, header, "active")
+                    )
+                    if parsed_active is True:
+                        status = "active"
+                    elif parsed_active is False:
+                        status = "inactive"
 
                 owner_name = _owner_display_name(last_name, first_name, hebrew)
                 owner = owners_by_name.get(owner_name)
@@ -955,9 +1308,26 @@ class ClientDataImportService:
 
                 addr = _optional_str(address)
                 city_s = _optional_str(city)
-                display_name = f"{addr}" if addr else f"Property {canonical}"
+                label = excel_cell_label(final_raw) or excel_cell_label(prop_number_raw)
+                display_name = f"{addr}" if addr else (label or f"Property {canonical}")
                 if city_s and addr:
                     display_name = f"{addr}, {city_s}"
+
+                if looks_like_shared_prop(final_raw, prop_number_raw, canonical, display_name):
+                    # Remember the listed shared ID, but only create the property
+                    # if a later ledger row actually splits across properties.
+                    self.owner_shared_prop_ids[str(owner.id)] = canonical
+                    self.listed_shared_rows[str(owner.id)] = {
+                        "canonical": canonical,
+                        "name": display_name,
+                        "status": status,
+                        "alias_raws": [
+                            raw
+                            for raw in (prop_raw, prop_number_raw, final_raw)
+                            if raw is not None
+                        ],
+                    }
+                    return
 
                 if existing is None:
                     existing = Property(
@@ -982,29 +1352,124 @@ class ClientDataImportService:
 
                 self.properties_by_id[canonical] = existing
                 self._register_aliases(canonical, prop_raw)
+                if prop_number_raw is not None and excel_cell_label(prop_number_raw):
+                    self._register_aliases(canonical, prop_number_raw)
+                if final_raw is not None and excel_cell_label(final_raw):
+                    self._register_aliases(canonical, final_raw)
                 self.listed_client_ids.add(canonical)
                 if status == "active":
                     self.current_client_ids.add(canonical)
 
-            for i, row in enumerate(current.iter_rows(values_only=True), 1):
-                if i == 1:
-                    continue
-                upsert_row(list(row), status="active")
+            def import_sheet(ws, *, default_status: str, skip_if_listed: bool) -> None:
+                for header, values in iter_client_list_data_rows(ws):
+                    if skip_if_listed:
+                        probe = None
+                        for key in ("final_id", "prop_number"):
+                            idx = header.get(key)
+                            if idx is not None and idx < len(values) and values[idx] is not None:
+                                probe = values[idx]
+                                break
+                        if probe is None and values:
+                            probe = values[0]
+                        canonical = normalize_prop_key(probe)
+                        mapped = self.alias_to_prop.get(canonical, canonical)
+                        if canonical and mapped in self.properties_by_id:
+                            self._register_aliases(mapped, probe)
+                            self.listed_client_ids.add(mapped)
+                            continue
+                    upsert_row(values, header, default_status=default_status)
+
+            import_sheet(current, default_status="active", skip_if_listed=False)
 
             if past_name:
-                past = wb[past_name]
-                for i, row in enumerate(past.iter_rows(values_only=True), 1):
-                    if i == 1:
-                        continue
-                    vals = list(row)
-                    prop_raw = vals[0] if vals else None
-                    canonical = normalize_prop_key(prop_raw)
-                    if canonical and canonical in self.properties_by_id:
-                        # already active from current list — do not downgrade
-                        self._register_aliases(canonical, prop_raw)
-                        continue
-                    upsert_row(vals, status="inactive")
+                import_sheet(wb[past_name], default_status="inactive", skip_if_listed=True)
 
+            self.db.flush()
+        finally:
+            wb.close()
+            gc.collect()
+
+    def _register_past_prop_aliases(
+        self,
+        canonical: str,
+        *,
+        prop_raw: Any,
+        sheet_raw: Any,
+        prop_number_raw: Any,
+    ) -> None:
+        self._register_aliases(canonical, prop_raw)
+        if sheet_raw is not None and excel_cell_label(sheet_raw):
+            self._register_aliases(canonical, sheet_raw)
+        number_key = normalize_prop_key(prop_number_raw)
+        if (
+            number_key
+            and not self._prop_key_is_known(number_key)
+            and not is_combined_prop_id(prop_number_raw)
+        ):
+            self._register_aliases(canonical, prop_number_raw)
+
+    def _import_past_client_list(self) -> None:
+        path = self.data_dir / PAST_CLIENT_LIST_FILE
+        if not path.exists():
+            return
+
+        self._refresh_owners_by_name()
+        wb = self._open_workbook(path)
+        try:
+            for header, values in iter_past_client_list_data_rows(wb[wb.sheetnames[0]]):
+                sheet_raw = client_list_col(values, header, "sheet_id")
+                prop_number_raw = client_list_col(values, header, "prop_number")
+                owner_raw = client_list_col(values, header, "owner_name")
+                prop_raw = sheet_raw if excel_cell_label(sheet_raw) else prop_number_raw
+                canonical = normalize_prop_key(prop_raw)
+                if not canonical or not looks_like_prop_id(canonical):
+                    continue
+                if looks_like_shared_prop(sheet_raw, prop_number_raw, canonical):
+                    continue
+                if self._prop_key_is_known(canonical):
+                    number_key = normalize_prop_key(prop_number_raw)
+                    if (
+                        number_key
+                        and not self._prop_key_is_known(number_key)
+                        and not is_combined_prop_id(prop_number_raw)
+                    ):
+                        mapped = self.alias_to_prop.get(canonical, canonical)
+                        self._register_aliases(mapped, prop_number_raw)
+                    continue
+
+                owner_label = past_client_owner_label(owner_raw)
+                if not owner_label:
+                    # “Not found” / blank — leftover ledger tabs land on PAST CLIENTS later.
+                    continue
+
+                owner = self._get_or_create_named_owner(owner_label)
+                sheet_label = excel_cell_label(sheet_raw) or canonical
+                existing = self.properties_by_id.get(canonical) or self.db.scalars(
+                    select(Property).where(Property.client_prop_id == canonical)
+                ).first()
+                if existing is None:
+                    existing = Property(
+                        owner_id=owner.id,
+                        client_prop_id=canonical,
+                        name=sheet_label,
+                        status="inactive",
+                    )
+                    self.db.add(existing)
+                    self.db.flush()
+                    self.stats.properties_created += 1
+                else:
+                    existing.owner_id = owner.id
+                    existing.name = sheet_label
+                    existing.status = "inactive"
+
+                self.properties_by_id[canonical] = existing
+                self._register_past_prop_aliases(
+                    canonical,
+                    prop_raw=prop_raw,
+                    sheet_raw=sheet_raw,
+                    prop_number_raw=prop_number_raw,
+                )
+                self.listed_client_ids.add(canonical)
             self.db.flush()
         finally:
             wb.close()
@@ -1041,12 +1506,9 @@ class ClientDataImportService:
                     if not canonical:
                         self.stats.warnings.append(f"Skipping sheet with unusable name: {sheet_name!r}")
                         continue
-                    company = self.db.scalars(
-                        select(Owner).where(Owner.name == COMPANY_OWNER_NAME)
-                    ).first()
-                    assert company is not None
+                    past_owner = self._ensure_past_clients_owner()
                     prop = Property(
-                        owner_id=company.id,
+                        owner_id=past_owner.id,
                         client_prop_id=canonical,
                         name=f"Property {canonical} (from ledger)",
                         status="inactive",

@@ -42,6 +42,7 @@ def client_data_status(db: Session = Depends(get_db)) -> ClientDataStatusRespons
 )
 async def import_client_data_files(
     client_list: UploadFile = File(..., description="client list to print.xlsx"),
+    past_client_list: UploadFile | None = File(None, description="past client list.xlsx"),
     management: UploadFile = File(..., description="Management expenses sheet.xlsx"),
     bank: UploadFile | None = File(None, description="Bank Account example.xlsx"),
     credit_card_1: UploadFile | None = File(None, description="credit card 1 example.xlsx"),
@@ -53,7 +54,7 @@ async def import_client_data_files(
     """Queue a ClientData Excel import (background job — poll GET .../jobs/{job_id}).
 
     Required: client_list + management.
-    Optional: bank, credit_card_1, credit_card_2.
+    Optional: past_client_list, bank, credit_card_1, credit_card_2.
     Set reset=true and confirm_reset=true to wipe all tables before importing
     (requires admin login).
     """
@@ -70,6 +71,7 @@ async def import_client_data_files(
     try:
         _, files_used = await stage_client_data_files(
             client_list=client_list,
+            past_client_list=past_client_list,
             management=management,
             bank=bank,
             credit_card_1=credit_card_1,

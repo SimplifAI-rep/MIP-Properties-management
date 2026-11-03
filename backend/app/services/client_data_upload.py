@@ -22,9 +22,11 @@ from app.models.property import Property
 from app.schemas import ClientDataImportCounts, ClientDataImportResponse
 from app.services.client_import import (
     BANK_FILE,
+    CLIENT_DATA_DIR,
     CLIENT_LIST_FILE,
     CREDIT_CARD_FILES,
     MANAGEMENT_FILE,
+    PAST_CLIENT_LIST_FILE,
     build_skip_report_excel,
     import_client_data,
 )
@@ -33,6 +35,7 @@ from app.services.document_storage import get_storage_root
 # Canonical filenames expected by ClientDataImportService
 FILE_ROLES: dict[str, str] = {
     "client_list": CLIENT_LIST_FILE,
+    "past_client_list": PAST_CLIENT_LIST_FILE,
     "management": MANAGEMENT_FILE,
     "bank": BANK_FILE,
     "credit_card_1": CREDIT_CARD_FILES[0],
@@ -103,10 +106,11 @@ async def _read_excel_upload(upload: UploadFile | None, *, role: str) -> bytes |
 async def stage_client_data_files(
     *,
     client_list: UploadFile | None,
-    management: UploadFile | None,
-    bank: UploadFile | None,
-    credit_card_1: UploadFile | None,
-    credit_card_2: UploadFile | None,
+    past_client_list: UploadFile | None = None,
+    management: UploadFile | None = None,
+    bank: UploadFile | None = None,
+    credit_card_1: UploadFile | None = None,
+    credit_card_2: UploadFile | None = None,
     target_dir: Path | None = None,
 ) -> tuple[Path, list[str]]:
     """Write uploads into a ClientData-shaped directory.
@@ -116,6 +120,7 @@ async def stage_client_data_files(
     """
     uploads = {
         "client_list": client_list,
+        "past_client_list": past_client_list,
         "management": management,
         "bank": bank,
         "credit_card_1": credit_card_1,
@@ -149,6 +154,11 @@ async def stage_client_data_files(
             files_used.append(filename)
             # Drop bytes from memory ASAP after write
             staged[role] = b""
+        dest_past = temp_dir / PAST_CLIENT_LIST_FILE
+        default_past = CLIENT_DATA_DIR / PAST_CLIENT_LIST_FILE
+        if not dest_past.exists() and default_past.exists():
+            shutil.copy2(default_past, dest_past)
+            files_used.append(PAST_CLIENT_LIST_FILE)
     except Exception:
         if owns_temp:
             shutil.rmtree(temp_dir, ignore_errors=True)

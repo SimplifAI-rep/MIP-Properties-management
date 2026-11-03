@@ -24,8 +24,15 @@ from app.services.client_import import (
     _mgmt_import_key,
     _parse_amount,
     _parse_date,
+    client_list_col,
+    client_list_sheet_key,
+    excel_cell_label,
+    iter_client_list_data_rows,
+    looks_like_shared_prop,
     normalize_prop_key,
+    pick_client_list_main_sheet,
     prop_key_aliases,
+    unique_listed_alias_match,
 )
 
 
@@ -106,6 +113,21 @@ def _sheet_default_prop_id(sheet_name: str) -> str | None:
     return normalize_prop_key(sheet_name)
 
 
+def _register_client_list_aliases(
+    alias_to_prop: dict[str, str],
+    canonical: str,
+    *raws: Any,
+) -> None:
+    if not canonical:
+        return
+    alias_to_prop.setdefault(canonical, canonical)
+    for raw in raws:
+        if raw is None or not excel_cell_label(raw):
+            continue
+        for alias in prop_key_aliases(raw):
+            alias_to_prop.setdefault(alias, canonical)
+
+
 def _build_prop_alias_map(data_dir: Path) -> dict[str, str]:
     """Map normalized aliases → canonical client_prop_id (mirrors importer)."""
     alias_to_prop: dict[str, str] = {BUFFER_PROP_ID: BUFFER_PROP_ID}
@@ -114,22 +136,30 @@ def _build_prop_alias_map(data_dir: Path) -> dict[str, str]:
         return alias_to_prop
     wb = openpyxl.load_workbook(client_list, data_only=True)
     try:
-        for sheet_name in ("current clients", "past clients"):
-            if sheet_name not in wb.sheetnames:
+        sheet_names = list(wb.sheetnames)
+        ordered: list[str] = []
+        main_name = pick_client_list_main_sheet(sheet_names)
+        if main_name:
+            ordered.append(main_name)
+        for name in sheet_names:
+            if name in ordered:
                 continue
+            if client_list_sheet_key(name).startswith("past"):
+                ordered.append(name)
+        for sheet_name in ordered:
             ws = wb[sheet_name]
-            for i, row in enumerate(ws.iter_rows(values_only=True), 1):
-                if i == 1:
-                    continue
-                raw = row[0] if row else None
-                canonical = normalize_prop_key(raw)
+            for header, values in iter_client_list_data_rows(ws):
+                final_raw = client_list_col(values, header, "final_id")
+                prop_number_raw = client_list_col(values, header, "prop_number")
+                prop_raw = final_raw if excel_cell_label(final_raw) else prop_number_raw
+                canonical = normalize_prop_key(prop_raw)
                 if not canonical:
                     continue
-                # Prefer first (current) registration; don't overwrite with past
-                if canonical not in alias_to_prop:
-                    alias_to_prop[canonical] = canonical
-                for alias in prop_key_aliases(raw):
-                    alias_to_prop.setdefault(alias, canonical)
+                if looks_like_shared_prop(final_raw, prop_number_raw, canonical):
+                    continue
+                _register_client_list_aliases(
+                    alias_to_prop, canonical, prop_raw, final_raw, prop_number_raw
+                )
     finally:
         wb.close()
     return alias_to_prop
@@ -141,6 +171,7 @@ def _resolve_verify_prop_id(
     alias_to_prop: dict[str, str],
 ) -> str | None:
     """Match ClientDataImportService ledger property resolution order."""
+    listed_ids = set(alias_to_prop.values())
     resolved: str | None = None
     if prop_raw is not None:
         text = str(prop_raw).strip()
@@ -155,8 +186,16 @@ def _resolve_verify_prop_id(
                         if alias in alias_to_prop:
                             resolved = alias_to_prop[alias]
                             break
+                if resolved is None:
+                    resolved = unique_listed_alias_match(key, listed_ids)
     if resolved is None and default_prop_id:
-        resolved = alias_to_prop.get(default_prop_id, default_prop_id)
+        resolved = alias_to_prop.get(default_prop_id)
+        if resolved is None:
+            resolved = unique_listed_alias_match(
+                normalize_prop_key(default_prop_id), listed_ids
+            )
+        if resolved is None:
+            resolved = default_prop_id
     if resolved is None and prop_raw is not None:
         text = str(prop_raw)
         if "/" in text or "+" in text:
@@ -191,9 +230,14 @@ def count_management_rows(path: Path) -> dict[str, int]:
         canonical = normalize_prop_key(sheet_name)
         if not canonical:
             continue
-        alias_to_prop.setdefault(canonical, canonical)
+        listed_ids = set(alias_to_prop.values())
+        mapped = alias_to_prop.get(canonical) or unique_listed_alias_match(
+            canonical, listed_ids
+        )
+        target = mapped or canonical
+        alias_to_prop.setdefault(canonical, target)
         for alias in prop_key_aliases(sheet_name):
-            alias_to_prop.setdefault(alias, canonical)
+            alias_to_prop.setdefault(alias, target)
 
     for sheet_name in wb.sheetnames:
         lower = sheet_name.strip().lower()
@@ -203,7 +247,12 @@ def count_management_rows(path: Path) -> dict[str, int]:
 
         default_prop_id = _sheet_default_prop_id(sheet_name)
         if default_prop_id:
-            default_prop_id = alias_to_prop.get(default_prop_id, default_prop_id)
+            listed_ids = set(alias_to_prop.values())
+            default_prop_id = (
+                alias_to_prop.get(default_prop_id)
+                or unique_listed_alias_match(default_prop_id, listed_ids)
+                or default_prop_id
+            )
         sheet_slug = re.sub(r"[^A-Za-z0-9]+", "", sheet_name).lower() or "sheet"
         ws = wb[sheet_name]
         header = None
@@ -393,15 +442,24 @@ def count_cc_rows(data_dir: Path) -> dict[str, int]:
 
 def count_client_list_properties(path: Path) -> int:
     wb = openpyxl.load_workbook(path, data_only=True)
-    ws = wb["current clients"]
-    keys: set[str] = set()
-    for i, row in enumerate(ws.iter_rows(values_only=True), 1):
-        if i == 1:
-            continue
-        key = normalize_prop_key(row[0] if row else None)
-        if key:
+    try:
+        main_name = pick_client_list_main_sheet(list(wb.sheetnames))
+        if main_name is None:
+            return 0
+        keys: set[str] = set()
+        for header, values in iter_client_list_data_rows(wb[main_name]):
+            final_raw = client_list_col(values, header, "final_id")
+            prop_number_raw = client_list_col(values, header, "prop_number")
+            prop_raw = final_raw if excel_cell_label(final_raw) else prop_number_raw
+            key = normalize_prop_key(prop_raw)
+            if not key:
+                continue
+            if looks_like_shared_prop(final_raw, prop_number_raw, key):
+                continue
             keys.add(key)
-    return len(keys)
+        return len(keys)
+    finally:
+        wb.close()
 
 
 def verify_against_excel(db: Session, data_dir: Path) -> dict[str, Any]:

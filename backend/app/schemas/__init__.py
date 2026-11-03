@@ -12,6 +12,12 @@ class OwnerCreate(BaseModel):
     contact_phone: str | None = Field(default=None, max_length=50)
 
 
+class OwnerUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    contact_email: str | None = Field(default=None, max_length=255)
+    contact_phone: str | None = Field(default=None, max_length=50)
+
+
 class OwnerRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -141,7 +147,12 @@ class PropertyCreate(BaseModel):
 
 
 class PropertyUpdate(BaseModel):
-    status: Literal["active", "inactive"]
+    owner_id: UUID | None = None
+    client_prop_id: str | None = Field(default=None, min_length=1, max_length=50)
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    address: str | None = None
+    city: str | None = Field(default=None, max_length=100)
+    status: Literal["active", "inactive"] | None = None
 
 
 class DepositListResponse(BaseModel):

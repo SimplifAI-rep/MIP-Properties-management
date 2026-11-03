@@ -137,7 +137,42 @@ def update_property(
     if not prop:
         raise HTTPException(status_code=404, detail="Property not found")
 
-    prop.status = payload.status
+    data = payload.model_dump(exclude_unset=True)
+    if "owner_id" in data:
+        owner = db.get(Owner, data["owner_id"])
+        if owner is None:
+            raise HTTPException(status_code=404, detail="Owner not found")
+        prop.owner_id = owner.id
+    if "client_prop_id" in data:
+        raw_id = (data["client_prop_id"] or "").strip()
+        client_prop_id = normalize_prop_key(raw_id) or raw_id
+        if not client_prop_id:
+            raise HTTPException(status_code=400, detail="Property ID is required")
+        if len(client_prop_id) > 50:
+            raise HTTPException(status_code=400, detail="Property ID is too long")
+        clash = db.scalars(
+            select(Property).where(
+                Property.client_prop_id == client_prop_id,
+                Property.id != prop.id,
+            )
+        ).first()
+        if clash is not None:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Property ID {client_prop_id} is already in use",
+            )
+        prop.client_prop_id = client_prop_id
+    if "name" in data:
+        name = (data["name"] or "").strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="Property name is required")
+        prop.name = name
+    if "address" in data:
+        prop.address = (data["address"] or "").strip() or None
+    if "city" in data:
+        prop.city = (data["city"] or "").strip() or None
+    if "status" in data and data["status"] is not None:
+        prop.status = data["status"]
     db.commit()
     db.refresh(prop)
 

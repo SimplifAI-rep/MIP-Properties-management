@@ -68,6 +68,16 @@ def _sum_owner_floats(
     )
 
 
+def _sorted_client_prop_ids(ids: list[str]) -> list[str]:
+    def sort_key(value: str) -> tuple[int, int, str]:
+        text = (value or "").strip()
+        if text.isdigit():
+            return (0, int(text), text.lower())
+        return (1, 0, text.lower())
+
+    return sorted(ids, key=sort_key)
+
+
 def _property_count_by_owner_subquery():
     return (
         select(
@@ -101,6 +111,7 @@ def create_owner(payload: OwnerCreate, db: Session = Depends(get_db)) -> OwnerSu
         contact_email=owner.contact_email,
         contact_phone=owner.contact_phone,
         property_count=0,
+        client_prop_ids=[],
         deposit_count=0,
         total_deposits=_zero(),
         expense_count=0,
@@ -120,6 +131,7 @@ def _build_owner_summary(db: Session, owner: Owner) -> OwnerSummary:
         contact_email=owner.contact_email,
         contact_phone=owner.contact_phone,
         property_count=len(props),
+        client_prop_ids=_sorted_client_prop_ids([prop.client_prop_id for prop in props]),
         deposit_count=money.incoming_count,
         total_deposits=money.incoming,
         expense_count=money.outgoing_count,
@@ -177,20 +189,27 @@ def list_owners(db: Session = Depends(get_db)) -> list[OwnerSummary]:
     owner_ids = [owner.id for owner, _ in rows]
     property_rows = (
         db.execute(
-            select(Property.id, Property.owner_id, Property.status).where(
-                Property.owner_id.in_(owner_ids)
-            )
+            select(
+                Property.id,
+                Property.owner_id,
+                Property.status,
+                Property.client_prop_id,
+            ).where(Property.owner_id.in_(owner_ids))
         ).all()
         if owner_ids
         else []
     )
-    floats = property_float_totals(db, [property_id for property_id, _, _ in property_rows])
+    floats = property_float_totals(
+        db, [property_id for property_id, _, _, _ in property_rows]
+    )
     money_by_owner: dict[UUID, PropertyFloatTotals] = {}
     statuses_by_owner: dict[UUID, list[str]] = {}
     ids_by_owner: dict[UUID, list[UUID]] = {}
-    for property_id, owner_id, status in property_rows:
+    client_prop_ids_by_owner: dict[UUID, list[str]] = {}
+    for property_id, owner_id, status, client_prop_id in property_rows:
         statuses_by_owner.setdefault(owner_id, []).append(status)
         ids_by_owner.setdefault(owner_id, []).append(property_id)
+        client_prop_ids_by_owner.setdefault(owner_id, []).append(client_prop_id)
     for owner_id, prop_ids in ids_by_owner.items():
         money_by_owner[owner_id] = _sum_owner_floats(floats, prop_ids)
 
@@ -201,6 +220,9 @@ def list_owners(db: Session = Depends(get_db)) -> list[OwnerSummary]:
             contact_email=owner.contact_email,
             contact_phone=owner.contact_phone,
             property_count=property_count or 0,
+            client_prop_ids=_sorted_client_prop_ids(
+                client_prop_ids_by_owner.get(owner.id, [])
+            ),
             deposit_count=(money_by_owner.get(owner.id) or _empty_float()).incoming_count,
             total_deposits=(money_by_owner.get(owner.id) or _empty_float()).incoming,
             expense_count=(money_by_owner.get(owner.id) or _empty_float()).outgoing_count,
@@ -254,6 +276,9 @@ def get_owner(owner_id: UUID, db: Session = Depends(get_db)) -> OwnerDetail:
         contact_email=owner.contact_email,
         contact_phone=owner.contact_phone,
         property_count=len(properties),
+        client_prop_ids=_sorted_client_prop_ids(
+            [prop.client_prop_id for prop in properties]
+        ),
         deposit_count=money.incoming_count,
         total_deposits=money.incoming,
         expense_count=money.outgoing_count,

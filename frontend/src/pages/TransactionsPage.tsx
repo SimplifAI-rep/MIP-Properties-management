@@ -30,6 +30,9 @@ import { PaidWithSelect } from '../components/ui/PaidWithSelect';
 import { TransactionUploadPanel } from '../components/TransactionUploadPanel';
 import { useFeedback } from '../context/FeedbackContext';
 import {
+  cascadeEntityFilterValues,
+  cascadeOwnerPropertyFilterOptions,
+  pruneEntityFiltersByStatus,
   syncClientPropIdsFromProperties,
   syncPropertyIdsFromPropIds,
   useOwnerPropertyFilterOptions,
@@ -105,15 +108,15 @@ function makeEmptyForm(): ExpenseCreate {
 
 function makeEmptyDepositForm(): DepositCreate {
   return {
-    property_id: '',
+  property_id: '',
     transaction_date: todayISO(),
-    amount: '',
+  amount: '',
     currency: 'ILS',
     category: '',
-    payment_method: 'company_account',
+  payment_method: 'company_account',
     source: 'manual_company',
     vendor_name: '',
-    description: '',
+  description: '',
     is_rental_income: false,
     is_payback: false,
     payback_of_expense_id: null,
@@ -604,25 +607,29 @@ export function TransactionsPage() {
     [],
   );
 
-  const statusFilteredPropertyOptions = useMemo(() => {
-    if (propertyStatuses.length !== 1) return propertyOptions;
-    const status = propertyStatuses[0];
-    const allowed = new Set(
-      properties.filter((property) => property.status === status).map((property) => property.id),
-    );
-    return propertyOptions.filter((option) => allowed.has(option.value));
-  }, [properties, propertyOptions, propertyStatuses]);
-
-  const statusFilteredPropIdOptions = useMemo(() => {
-    if (propertyStatuses.length !== 1) return propIdOptions;
-    const status = propertyStatuses[0];
-    const allowed = new Set(
-      properties
-        .filter((property) => property.status === status)
-        .map((property) => property.client_prop_id),
-    );
-    return propIdOptions.filter((option) => allowed.has(option.value));
-  }, [properties, propIdOptions, propertyStatuses]);
+  const cascadedFilterOptions = useMemo(
+    () =>
+      cascadeOwnerPropertyFilterOptions({
+        properties,
+        ownerOptions,
+        propertyOptions,
+        propIdOptions,
+        ownerIds,
+        propertyIds,
+        clientPropIds,
+        propertyStatuses,
+      }),
+    [
+      properties,
+      ownerOptions,
+      propertyOptions,
+      propIdOptions,
+      ownerIds,
+      propertyIds,
+      clientPropIds,
+      propertyStatuses,
+    ],
+  );
 
   const alertOptions = useMemo(
     () => [{ value: 'incomplete_import', label: 'Incomplete import' }],
@@ -968,14 +975,13 @@ export function TransactionsPage() {
     updateTransactionMutation.mutate(editForm);
   }
 
+  function requestDelete(kind: TransactionKind, id: string) {
+    deleteTransactionMutation.mutate({ kind, id });
+  }
+
   function deleteEdit() {
     if (!editForm) return;
-    const kindLabel = editForm.kind === 'deposit' ? 'deposit' : 'expense';
-    const confirmed = window.confirm(
-      `Delete this ${kindLabel}? This cannot be undone.`,
-    );
-    if (!confirmed) return;
-    deleteTransactionMutation.mutate({ kind: editForm.kind, id: editForm.id });
+    requestDelete(editForm.kind, editForm.id);
   }
 
   function patchEdit(patch: Partial<TransactionEditForm>) {
@@ -998,9 +1004,10 @@ export function TransactionsPage() {
   }
 
   function syncEntityFilters(next: TransactionEntityFilters) {
-    setOwnerIds(next.ownerIds);
-    setPropertyIds(next.propertyIds);
-    setClientPropIds(next.clientPropIds);
+    const cascaded = cascadeEntityFilterValues(properties, next);
+    setOwnerIds(cascaded.ownerIds);
+    setPropertyIds(cascaded.propertyIds);
+    setClientPropIds(cascaded.clientPropIds);
     setDateFrom(next.dateFrom);
     setDateTo(next.dateTo);
     resetPage();
@@ -1608,9 +1615,9 @@ export function TransactionsPage() {
             dateTo,
           }}
           onChange={syncEntityFilters}
-          ownerOptions={ownerOptions}
-          propertyOptions={statusFilteredPropertyOptions}
-          propIdOptions={statusFilteredPropIdOptions}
+          ownerOptions={cascadedFilterOptions.ownerOptions}
+          propertyOptions={cascadedFilterOptions.propertyOptions}
+          propIdOptions={cascadedFilterOptions.propIdOptions}
           showAmounts={false}
           onSyncFromProperties={(nextPropertyIds) => ({
             propertyIds: nextPropertyIds,
@@ -1628,11 +1635,17 @@ export function TransactionsPage() {
                 options={propertyStatusOptions}
                 selected={propertyStatuses}
                 onChange={(next) => {
-                  setPropertyStatuses(next as PropertyStatusFilter[]);
-                  setPropertyIds([]);
-                  setClientPropIds([]);
-              resetPage();
-            }}
+                  const statuses = next as PropertyStatusFilter[];
+                  setPropertyStatuses(statuses);
+                  const pruned = pruneEntityFiltersByStatus(
+                    properties,
+                    statuses,
+                    propertyIds,
+                  );
+                  setPropertyIds(pruned.propertyIds);
+                  setClientPropIds(pruned.clientPropIds);
+                  resetPage();
+                }}
                 placeholder="All statuses"
                 searchPlaceholder="Search status…"
               />
@@ -1706,9 +1719,14 @@ export function TransactionsPage() {
       </section>
 
       <section className="panel overflow-hidden">
+        {editError && !editForm ? (
+          <div className="px-5 pt-4">
+            <InlineError error={editError} />
+          </div>
+        ) : null}
         <div className="w-full min-w-0 overflow-x-auto">
           <table className="table-shell table-shell-wide">
-            <TransactionTableColgroup actionsColWidth="w-[12%]" />
+            <TransactionTableColgroup actionsColWidth="w-[16%]" />
             <TransactionTableHeader />
             <tbody>
               {items.map((row) => {
@@ -1776,7 +1794,8 @@ export function TransactionsPage() {
                                       confirmLabel="Write off"
                                       disabled={
                                         writeOffAwaitingMutation.isPending ||
-                                        recordAwaitingReturnMutation.isPending
+                                        recordAwaitingReturnMutation.isPending ||
+                                        deleteTransactionMutation.isPending
                                       }
                                       pending={
                                         writeOffAwaitingMutation.isPending &&
@@ -1790,7 +1809,8 @@ export function TransactionsPage() {
                                         confirmLabel="Record"
                                         disabled={
                                           writeOffAwaitingMutation.isPending ||
-                                          recordAwaitingReturnMutation.isPending
+                                          recordAwaitingReturnMutation.isPending ||
+                                          deleteTransactionMutation.isPending
                                         }
                                         pending={
                                           recordAwaitingReturnMutation.isPending &&
@@ -1803,6 +1823,20 @@ export function TransactionsPage() {
                                     ) : null}
                                   </>
                                 ) : null}
+                                <ConfirmButton
+                                  label="Delete"
+                                  confirmLabel="Confirm delete"
+                                  disabled={
+                                    writeOffAwaitingMutation.isPending ||
+                                    recordAwaitingReturnMutation.isPending ||
+                                    deleteTransactionMutation.isPending
+                                  }
+                                  pending={
+                                    deleteTransactionMutation.isPending &&
+                                    deleteTransactionMutation.variables?.id === row.id
+                                  }
+                                  onConfirm={() => requestDelete(row.kind, row.id)}
+                                />
                               </>
                             )}
                             <Tooltip content="Feedback" hideHint>
@@ -2041,19 +2075,19 @@ export function TransactionsPage() {
                                 >
                                   Cancel
                                 </button>
-                                <button
-                                  type="button"
-                                  className="btn-danger ml-auto"
-                                  disabled={
-                                    updateTransactionMutation.isPending ||
-                                    deleteTransactionMutation.isPending
-                                  }
-                                  onClick={deleteEdit}
-                                >
-                                  {deleteTransactionMutation.isPending
-                                    ? 'Deleting…'
-                                    : 'Delete'}
-                                </button>
+                                <div className="ml-auto">
+                                  <ConfirmButton
+                                    label="Delete"
+                                    confirmLabel="Confirm delete"
+                                    className="btn-danger text-xs"
+                                    disabled={
+                                      updateTransactionMutation.isPending ||
+                                      deleteTransactionMutation.isPending
+                                    }
+                                    pending={deleteTransactionMutation.isPending}
+                                    onConfirm={deleteEdit}
+                                  />
+                                </div>
                               </div>
                             </div>
                     </div>

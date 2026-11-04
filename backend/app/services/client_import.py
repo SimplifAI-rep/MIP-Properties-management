@@ -66,6 +66,7 @@ COMBINED_SHEET_NAMES = {
 }
 
 BUFFER_PROP_ID = "BUFFER"
+BUFFER_OWNER_NAME = "BUFFER"
 SHARED_PROP_PREFIX = "SHARED-"
 COMPANY_OWNER_NAME = "My Israel Property (MIP)"
 PAST_CLIENTS_OWNER_NAME = "PAST CLIENTS"
@@ -1196,7 +1197,11 @@ class ClientDataImportService:
         if len(owners) != 1:
             return buffer
         owner = next(iter(owners.values()))
-        if owner.name in {COMPANY_OWNER_NAME, PAST_CLIENTS_OWNER_NAME}:
+        if owner.name in {
+            COMPANY_OWNER_NAME,
+            PAST_CLIENTS_OWNER_NAME,
+            BUFFER_OWNER_NAME,
+        }:
             return buffer
         return self._get_or_create_owner_shared_property(owner)
 

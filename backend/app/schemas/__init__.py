@@ -29,6 +29,7 @@ class OwnerRead(BaseModel):
 
 class OwnerSummary(OwnerRead):
     property_count: int = 0
+    client_prop_ids: list[str] = Field(default_factory=list)
     deposit_count: int = 0
     total_deposits: Decimal = Decimal("0")
     expense_count: int = 0

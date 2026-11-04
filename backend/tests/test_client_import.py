@@ -18,6 +18,7 @@ from app.models.owner import Owner
 from app.models.property import Property
 from app.services.bank_settings import mark_reset_import_verified, resolve_account_settings
 from app.services.client_import import (
+    BUFFER_OWNER_NAME,
     BUFFER_PROP_ID,
     CLIENT_LIST_FILE,
     COMPANY_OWNER_NAME,
@@ -507,7 +508,10 @@ def test_unmatched_ledger_sheet_goes_to_past_clients_and_1008bel_maps(db, tmp_pa
     company = db.scalars(select(Owner).where(Owner.name == COMPANY_OWNER_NAME)).first()
     assert company is not None
     assert by_id["H111"].owner_id != company.id
-    assert by_id[BUFFER_PROP_ID].owner_id == company.id
+    buffer_owner = db.scalars(select(Owner).where(Owner.name == BUFFER_OWNER_NAME)).first()
+    assert buffer_owner is not None
+    assert by_id[BUFFER_PROP_ID].owner_id == buffer_owner.id
+    assert by_id[BUFFER_PROP_ID].owner_id != company.id
 
     expenses = db.scalars(select(Expense)).all()
     amounts = {(row.property_id, row.amount) for row in expenses}

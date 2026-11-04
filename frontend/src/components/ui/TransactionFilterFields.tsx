@@ -55,7 +55,7 @@ export function TransactionFilterFields({
       {prepend}
       <SearchableMultiSelect
         label="Prop ID"
-        tip="Excel Prop ID — select one or more. Syncs with Property."
+        tip="Excel Prop ID — select one or more. Options narrow to the selected owner. Syncs with Property."
         options={propIdOptions}
         selected={value.clientPropIds}
         onChange={(clientPropIds) => {
@@ -70,7 +70,7 @@ export function TransactionFilterFields({
       />
       <SearchableMultiSelect
         label="Property"
-        tip="Select one or more properties. Syncs with Prop ID."
+        tip="Select one or more properties. Options narrow to the selected owner. Syncs with Prop ID."
         options={propertyOptions}
         selected={value.propertyIds}
         onChange={(propertyIds) => {
@@ -85,7 +85,7 @@ export function TransactionFilterFields({
       />
       <SearchableMultiSelect
         label="Owner"
-        tip="Limit results to one or more owners. Combines with other filters."
+        tip="Limit results to one or more owners. Property and Prop ID options then show only that owner's properties."
         options={ownerOptions}
         selected={value.ownerIds}
         onChange={(ownerIds) => patch({ ownerIds })}

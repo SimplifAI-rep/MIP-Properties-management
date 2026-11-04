@@ -31,7 +31,11 @@ function formatOwnerFeedback(owner: OwnerSummary): string {
     `Owner: ${owner.name}`,
     `Owner ID: ${owner.id}`,
     `Status: ${owner.status === 'inactive' ? 'Inactive' : 'Active'}`,
-    `Properties: ${owner.property_count}`,
+    `Properties: ${
+      owner.client_prop_ids?.length
+        ? owner.client_prop_ids.join(', ')
+        : owner.property_count
+    }`,
     `Deposits: ${owner.total_deposits} (${owner.deposit_count})`,
     `Expenses: ${owner.total_expenses} (${owner.expense_count})`,
     `Balance: ${owner.balance}`,
@@ -412,7 +416,7 @@ export function OwnersPage() {
                   </Tooltip>
                 </th>
                 <th className="px-5 py-3 font-medium">
-                  <Tooltip content="Properties linked to this owner.">Properties</Tooltip>
+                  <Tooltip content="Prop IDs linked to this owner.">Properties</Tooltip>
                 </th>
                 <th className="px-5 py-3 font-medium">
                   <Tooltip content="Company-float inflow across linked properties. Rental income is excluded.">
@@ -459,7 +463,19 @@ export function OwnersPage() {
                           <span className="muted-text">—</span>
                         )}
                       </td>
-                      <td className="px-5 py-3">{owner.property_count}</td>
+                      <td className="px-5 py-3 max-w-md">
+                        {owner.client_prop_ids?.length ? (
+                          <span className="flex flex-wrap gap-x-2 gap-y-1">
+                            {owner.client_prop_ids.map((propId) => (
+                              <span key={propId} className="whitespace-nowrap">
+                                {propId}
+                              </span>
+                            ))}
+                          </span>
+                        ) : (
+                          <span className="muted-text">—</span>
+                        )}
+                      </td>
                       <td className="px-5 py-3">
                         {formatCurrency(owner.total_deposits)}
                         <span className="ml-1 text-xs text-slate-400 dark:text-slate-500">

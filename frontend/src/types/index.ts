@@ -11,6 +11,7 @@ export interface Owner {
 
 export interface OwnerSummary extends Owner {
   property_count: number;
+  client_prop_ids?: string[];
   deposit_count: number;
   total_deposits: string;
   expense_count: number;

@@ -17,10 +17,13 @@ from app.main import app
 from app.models.bank_reconcile_session import BankReconcileSession
 from app.models.deposit import Deposit
 from app.models.expense import Expense
+from app.models.owner import Owner
 from app.models.property import Property
 from app.services.holding import (
     AWAITING_RETURN_PROP_ID,
+    BUFFER_OWNER_NAME,
     BUFFER_PROP_ID,
+    COMPANY_OWNER_NAME,
     ensure_company_holdings,
     session_unassigned_count,
 )
@@ -91,12 +94,37 @@ def test_ensure_company_holdings_seeds_awaiting_return(db):
     assert awaiting.client_prop_id == AWAITING_RETURN_PROP_ID
     assert awaiting.status == "active"
     assert awaiting.name == "Awaiting return"
+    buffer_owner = db.scalars(select(Owner).where(Owner.name == BUFFER_OWNER_NAME)).first()
+    company = db.scalars(select(Owner).where(Owner.name == COMPANY_OWNER_NAME)).first()
+    assert buffer_owner is not None
+    assert company is not None
+    assert buffer.owner_id == buffer_owner.id
+    assert awaiting.owner_id == company.id
     again_buffer, again_awaiting = ensure_company_holdings(db)
     assert again_buffer.id == buffer.id
     assert again_awaiting.id == awaiting.id
     ids = {row.client_prop_id for row in db.scalars(select(Property))}
     assert BUFFER_PROP_ID in ids
     assert AWAITING_RETURN_PROP_ID in ids
+
+
+def test_buffer_property_moves_off_mip_onto_buffer_owner(db):
+    buffer, awaiting = ensure_company_holdings(db)
+    db.commit()
+    company = db.scalars(select(Owner).where(Owner.name == COMPANY_OWNER_NAME)).first()
+    buffer_owner = db.scalars(select(Owner).where(Owner.name == BUFFER_OWNER_NAME)).first()
+    assert company is not None
+    assert buffer_owner is not None
+    buffer.owner_id = company.id
+    db.add(buffer)
+    db.commit()
+
+    moved, still_awaiting = ensure_company_holdings(db)
+    db.commit()
+    assert moved.id == buffer.id
+    assert moved.owner_id == buffer_owner.id
+    assert still_awaiting.id == awaiting.id
+    assert still_awaiting.owner_id == company.id
 
 
 def test_add_from_bank_onto_awaiting_does_not_lock_finish(client, db):

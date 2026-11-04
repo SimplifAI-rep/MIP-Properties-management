@@ -16,6 +16,9 @@ import {
 import { Tooltip } from '../components/ui/Tooltip';
 import { ConfirmButton } from '../components/ui/ConfirmButton';
 import {
+  cascadeEntityFilterValues,
+  cascadeOwnerPropertyFilterOptions,
+  pruneEntityFiltersByStatus,
   syncClientPropIdsFromProperties,
   syncPropertyIdsFromPropIds,
   useOwnerPropertyFilterOptions,
@@ -110,25 +113,29 @@ export function ReportsPage() {
     alertFilters,
   } = filters;
 
-  const statusFilteredPropertyOptions = useMemo(() => {
-    if (propertyStatuses.length !== 1) return propertyOptions;
-    const status = propertyStatuses[0];
-    const allowed = new Set(
-      properties.filter((property) => property.status === status).map((property) => property.id),
-    );
-    return propertyOptions.filter((option) => allowed.has(option.value));
-  }, [properties, propertyOptions, propertyStatuses]);
-
-  const statusFilteredPropIdOptions = useMemo(() => {
-    if (propertyStatuses.length !== 1) return propIdOptions;
-    const status = propertyStatuses[0];
-    const allowed = new Set(
-      properties
-        .filter((property) => property.status === status)
-        .map((property) => property.client_prop_id),
-    );
-    return propIdOptions.filter((option) => allowed.has(option.value));
-  }, [properties, propIdOptions, propertyStatuses]);
+  const cascadedFilterOptions = useMemo(
+    () =>
+      cascadeOwnerPropertyFilterOptions({
+        properties,
+        ownerOptions,
+        propertyOptions,
+        propIdOptions,
+        ownerIds,
+        propertyIds,
+        clientPropIds,
+        propertyStatuses,
+      }),
+    [
+      properties,
+      ownerOptions,
+      propertyOptions,
+      propIdOptions,
+      ownerIds,
+      propertyIds,
+      clientPropIds,
+      propertyStatuses,
+    ],
+  );
 
   const apiPropertyId = propertyIds.length === 1 ? propertyIds[0] : undefined;
   const apiPropertyIds = propertyIds.length > 1 ? propertyIds : undefined;
@@ -337,10 +344,11 @@ export function ReportsPage() {
   }
 
   function syncEntityFilters(next: TransactionEntityFilters) {
+    const cascaded = cascadeEntityFilterValues(properties, next);
     patchFilters({
-      ownerIds: next.ownerIds,
-      propertyIds: next.propertyIds,
-      clientPropIds: next.clientPropIds,
+      ownerIds: cascaded.ownerIds,
+      propertyIds: cascaded.propertyIds,
+      clientPropIds: cascaded.clientPropIds,
       dateFrom: next.dateFrom,
       dateTo: next.dateTo,
     });
@@ -473,9 +481,9 @@ export function ReportsPage() {
             dateTo,
           }}
           onChange={syncEntityFilters}
-          ownerOptions={ownerOptions}
-          propertyOptions={statusFilteredPropertyOptions}
-          propIdOptions={statusFilteredPropIdOptions}
+          ownerOptions={cascadedFilterOptions.ownerOptions}
+          propertyOptions={cascadedFilterOptions.propertyOptions}
+          propIdOptions={cascadedFilterOptions.propIdOptions}
           showAmounts={false}
           onSyncFromProperties={(nextPropertyIds) => ({
             propertyIds: nextPropertyIds,
@@ -492,13 +500,19 @@ export function ReportsPage() {
                 tip="Show transactions for active and/or inactive properties. Default is active only."
                 options={PROPERTY_STATUS_OPTIONS}
                 selected={propertyStatuses}
-                onChange={(next) =>
+                onChange={(next) => {
+                  const statuses = next as PropertyStatusFilter[];
+                  const pruned = pruneEntityFiltersByStatus(
+                    properties,
+                    statuses,
+                    propertyIds,
+                  );
                   patchFilters({
-                    propertyStatuses: next as PropertyStatusFilter[],
-                    propertyIds: [],
-                    clientPropIds: [],
-                  })
-                }
+                    propertyStatuses: statuses,
+                    propertyIds: pruned.propertyIds,
+                    clientPropIds: pruned.clientPropIds,
+                  });
+                }}
                 placeholder="All statuses"
                 searchPlaceholder="Search status…"
               />

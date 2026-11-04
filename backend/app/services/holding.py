@@ -18,6 +18,7 @@ UNASSIGNED_PROP_NAME = "Unassigned — needs handling"
 UNASSIGNED_REVIEW_REASON = "unassigned_bank"
 CREATED_FROM_VERIFICATION_REASON = "created_from_verification"
 COMPANY_OWNER_NAME = "My Israel Property (MIP)"
+BUFFER_OWNER_NAME = "BUFFER"
 BUFFER_PROP_ID = "BUFFER"
 BUFFER_PROP_NAME = "MIP Company Buffer"
 AWAITING_RETURN_PROP_ID = "AWAITING"
@@ -32,23 +33,31 @@ def is_awaiting_return_property(prop: Property | None) -> bool:
     return prop is not None and prop.client_prop_id == AWAITING_RETURN_PROP_ID
 
 
-def _company_owner(db: Session) -> Owner:
-    owner = db.scalars(select(Owner).where(Owner.name == COMPANY_OWNER_NAME)).first()
+def _owner_named(db: Session, name: str) -> Owner:
+    owner = db.scalars(select(Owner).where(Owner.name == name)).first()
     if owner is None:
-        owner = Owner(name=COMPANY_OWNER_NAME)
+        owner = Owner(name=name)
         db.add(owner)
         db.flush()
     return owner
 
 
+def _company_owner(db: Session) -> Owner:
+    return _owner_named(db, COMPANY_OWNER_NAME)
+
+
+def _buffer_owner(db: Session) -> Owner:
+    return _owner_named(db, BUFFER_OWNER_NAME)
+
+
 def _ensure_named_property(
     db: Session,
     *,
+    owner: Owner,
     client_prop_id: str,
     name: str,
     address: str,
 ) -> Property:
-    owner = _company_owner(db)
     prop = db.scalars(
         select(Property).where(Property.client_prop_id == client_prop_id)
     ).first()
@@ -80,6 +89,7 @@ def _ensure_named_property(
 def ensure_buffer_property(db: Session) -> Property:
     return _ensure_named_property(
         db,
+        owner=_buffer_owner(db),
         client_prop_id=BUFFER_PROP_ID,
         name=BUFFER_PROP_NAME,
         address="Company float / unallocated",
@@ -90,6 +100,7 @@ def ensure_awaiting_return_property(db: Session) -> Property:
     """Park money-left / service-not-delivered rows without locking Finish."""
     return _ensure_named_property(
         db,
+        owner=_company_owner(db),
         client_prop_id=AWAITING_RETURN_PROP_ID,
         name=AWAITING_RETURN_PROP_NAME,
         address="Money left; waiting for a return or Buffer write-off",

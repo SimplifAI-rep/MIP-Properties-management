@@ -60,6 +60,7 @@ def test_list_owners_with_summaries(client):
     assert "Needs assignment" not in names
     david = next(row for row in body if row["id"] == str(OWNER_DAVID_ID))
     assert david["property_count"] == 2
+    assert david["client_prop_ids"] == ["TEST-D45", "TEST-R12"]
     assert david["expense_count"] >= 2
     assert "balance" in david
 
@@ -70,6 +71,7 @@ def test_get_owner_detail(client):
     body = response.json()
     assert body["name"] == "David Cohen"
     assert len(body["properties"]) == 2
+    assert body["client_prop_ids"] == ["TEST-D45", "TEST-R12"]
     assert body["contact_email"] == "david.cohen@example.com"
     assert "balance" in body
     assert all("balance" in prop for prop in body["properties"])
@@ -92,6 +94,7 @@ def test_create_owner_and_property(client):
     owner = owner_response.json()
     assert owner["name"] == "New Client"
     assert owner["property_count"] == 0
+    assert owner["client_prop_ids"] == []
 
     duplicate = client.post("/api/v1/owners", json={"name": "new client"})
     assert duplicate.status_code == 409
